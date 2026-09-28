@@ -14,6 +14,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 
 namespace fs = std::filesystem;
 
@@ -21,6 +22,14 @@ namespace
 {
 // Rough guess for the prompt (dominated by the 256 MB cache flush per iteration).
 constexpr double kEstimatedMsPerIteration = 2.5;
+
+// --smoke: iterations per GPU x workload x algorithm (no warmup), one iteration in flight.
+constexpr uint32_t kSmokeIterations = 3;
+
+// A fence wait longer than this is treated as a hung GPU. Hardware batches take well under 0.1 s
+// (and Windows TDR fires after 2 s); WARP with GPU-based validation can be much slower.
+constexpr uint32_t kFenceTimeoutMsHardware = 10000;
+constexpr uint32_t kFenceTimeoutMsWarp = 300000;
 
 fs::path ExeDir()
 {
@@ -81,6 +90,11 @@ int RunMain(int argc, wchar_t** argv)
     {
         PrintAdapterList();
         return 0;
+    }
+    if (opt.smoke)
+    {
+        opt.iterations = kSmokeIterations;
+        opt.warmup = 0;
     }
 
     // --- shaders / algorithms -------------------------------------------------------------
@@ -158,8 +172,18 @@ int RunMain(int argc, wchar_t** argv)
     }
 
     // --- adapters -------------------------------------------------------------------------
-    if (opt.debugLayer && !EnableD3D12DebugLayer())
-        Log("warning: D3D12 debug layer not available\n");
+    // Both must happen before any device is created.
+    if (opt.debugLayer && !EnableD3D12DebugLayer(opt.gpuValidation))
+        Log("warning: D3D12 debug layer%s not available\n", opt.gpuValidation ? " / GPU-based validation" : "");
+    else if (opt.debugLayer)
+        Log("D3D12 debug layer enabled%s\n", opt.gpuValidation ? " with GPU-based validation" : "");
+    if (opt.dred)
+    {
+        if (EnableDred())
+            Log("DRED enabled (auto-breadcrumbs, breadcrumb contexts, page-fault reporting)\n");
+        else
+            Log("warning: DRED not available\n");
+    }
 
     RunInfo info;
     info.date = Now();
@@ -189,7 +213,13 @@ int RunMain(int argc, wchar_t** argv)
     // --- prompt ---------------------------------------------------------------------------
     if (!opt.warp && !opt.noPrompt)
     {
-        std::wstring text = L"GpuSort is about to run a GPU benchmark on:\n\n";
+        std::wstring text;
+        if (opt.smoke)
+            text = L"SMOKE TEST: a short safety check after the previous crash (GPU fault, TDR and a\n"
+                   L"VIDEO_SCHEDULER_INTERNAL_ERROR bugcheck during the last full run).\n\n"
+                   L"Every algorithm x workload runs a few iterations, one at a time with a fence wait\n"
+                   L"after each, and stops at the first GPU fault or hang.\n\n";
+        text += L"GpuSort is about to run a GPU benchmark on:\n\n";
         for (const auto& g : gpus)
             text += L"    " + Utf8ToWide(g.name) + L"\n";
         text += Utf8ToWide(Format("\n%zu workload(s) x %zu algorithm(s) x %u iterations (+%u warmup) per GPU.\n"
@@ -198,7 +228,7 @@ int RunMain(int argc, wchar_t** argv)
                                   estimatedSeconds < 1.0 ? 1.0 : estimatedSeconds));
         text += L"Please pause other GPU work now, then press OK to start.\nCancel exits without running.";
         Log("Waiting for confirmation (message box)...\n");
-        const int answer = MessageBoxW(nullptr, text.c_str(), L"GpuSort benchmark",
+        const int answer = MessageBoxW(nullptr, text.c_str(), opt.smoke ? L"GpuSort smoke test" : L"GpuSort benchmark",
                                        MB_OKCANCEL | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND);
         if (answer != IDOK)
         {
@@ -213,8 +243,17 @@ int RunMain(int argc, wchar_t** argv)
     if (!opt.warp)
         window.Start(L"GpuSort benchmark running - please keep the GPUs idle");
 
+    BenchmarkOptions benchOptions;
+    benchOptions.fenceTimeoutMs = opt.warp ? kFenceTimeoutMsWarp : kFenceTimeoutMsHardware;
+    benchOptions.serial = opt.smoke;
+    benchOptions.markers = opt.dred;
+    benchOptions.logAddresses = opt.dred;
+    benchOptions.testRemoveDevice = opt.testRemove;
+
     uint32_t totalFailures = 0;
-    for (size_t gi = 0; gi < gpus.size(); ++gi)
+    bool deviceLost = false;
+    bool smokeStopped = false; // --smoke stops at the first verification failure
+    for (size_t gi = 0; gi < gpus.size() && !deviceLost && !smokeStopped; ++gi)
     {
         const GpuInfo& gpu = gpus[gi];
         GpuRecord record;
@@ -222,16 +261,18 @@ int RunMain(int argc, wchar_t** argv)
         record.driver = gpu.driver;
         const auto gpuStart = std::chrono::steady_clock::now();
         Log("\n=== GPU %zu/%zu: %s ===\n", gi + 1, gpus.size(), gpu.name.c_str());
+        std::unique_ptr<GpuBenchmark> benchPtr;
         try
         {
-            GpuBenchmark bench(gpu.device.Get(), flushShader.Get(), compiled);
+            benchPtr = std::make_unique<GpuBenchmark>(gpu.device.Get(), flushShader.Get(), compiled, benchOptions);
+            GpuBenchmark& bench = *benchPtr;
             record.timestampFrequency = bench.TimestampFrequency();
             for (const auto& m : DrainDebugMessages(gpu.device.Get()))
                 Log("    %s\n", m.c_str());
-            for (size_t wi = 0; wi < workloadIds.size(); ++wi)
+            for (size_t wi = 0; wi < workloadIds.size() && !smokeStopped; ++wi)
             {
                 const uint32_t workloadId = workloadIds[wi];
-                for (size_t ai = 0; ai < compiled.size(); ++ai)
+                for (size_t ai = 0; ai < compiled.size() && !smokeStopped; ++ai)
                 {
                     const char* wname = Workloads()[workloadId].name;
                     const std::string& aname = compiled[ai].name;
@@ -255,26 +296,59 @@ int RunMain(int argc, wchar_t** argv)
                         }
                     };
                     progress(0, opt.iterations + opt.warmup, 0);
-                    ComboRecord combo;
-                    combo.workloadId = workloadId;
-                    combo.algorithm = aname;
-                    combo.result = bench.Run(workloadId, ai, opt.iterations, opt.warmup, progress);
-                    totalFailures += combo.result.failures;
-                    const Stats st = ComputeStats(combo.result.timesUs);
+                    // Recorded before running, so a device loss leaves the partial result in place.
+                    record.combos.push_back({workloadId, aname, {}});
+                    ComboResult& result = record.combos.back().result;
+                    const std::string label = gpu.name + "/" + aname + "/" + wname;
+                    Log("  starting %s\n", label.c_str());
+                    bench.Run(workloadId, ai, opt.iterations, opt.warmup, label, progress, result);
+                    totalFailures += result.failures;
+                    const Stats st = ComputeStats(result.timesUs);
                     Log("  %-14s %-20s done: median %8.2f us, mean %8.2f us, failures %u (%.1f s)\n", wname,
-                        aname.c_str(), st.median, st.mean, combo.result.failures, combo.result.wallSeconds);
-                    for (const auto& m : combo.result.failureMessages)
+                        aname.c_str(), st.median, st.mean, result.failures, result.wallSeconds);
+                    for (const auto& m : result.failureMessages)
                         Log("    FAIL %s\n", m.c_str());
                     for (const auto& m : DrainDebugMessages(gpu.device.Get()))
                         Log("    %s\n", m.c_str());
-                    record.combos.push_back(std::move(combo));
+                    if (opt.smoke && result.failures > 0)
+                    {
+                        // Wrong results can be the first sign of a GPU exception; do not keep going.
+                        smokeStopped = true;
+                        record.error = "smoke test stopped at the first verification failure (" + label + ")";
+                        Log("\nSmoke test: stopping at the first verification failure. Nothing more is submitted.\n");
+                    }
                 }
             }
         }
         catch (const std::exception& e)
         {
+            // Any failure while the device is removed (e.g. a Map or Close returning
+            // DXGI_ERROR_DEVICE_REMOVED) counts as a device loss, not just DeviceLostError.
+            const bool lost = dynamic_cast<const DeviceLostError*>(&e) != nullptr ||
+                              FAILED(gpu.device->GetDeviceRemovedReason());
             record.error = e.what();
             Log("  ERROR on %s: %s\n", gpu.name.c_str(), e.what());
+            if (!record.combos.empty())
+            {
+                const ComboRecord& c = record.combos.back();
+                Log("  (while running %s / %s, %u iterations completed)\n", Workloads()[c.workloadId].name,
+                    c.algorithm.c_str(), c.result.iterationsRun);
+            }
+            if (!record.combos.empty())
+                totalFailures += record.combos.back().result.failures;
+            for (const auto& m : DrainDebugMessages(gpu.device.Get()))
+                Log("    %s\n", m.c_str());
+            if (lost)
+            {
+                deviceLost = true;
+                // Work may still be in flight (a hung GPU, or WARP which keeps executing after
+                // removal): releasing the buffers now could free memory the GPU is still using.
+                // Leak the benchmark (and with it every resource) on purpose; the process exits soon.
+                (void)benchPtr.release();
+                record.error = "DEVICE LOST: " + record.error;
+                Log("\n%s", FormatDredReport(gpu.device.Get()).c_str());
+                Log("\nStopping: nothing more is submitted to any GPU. Writing partial results.\n");
+            }
         }
         record.wallSeconds =
             std::chrono::duration<double>(std::chrono::steady_clock::now() - gpuStart).count();
@@ -308,6 +382,8 @@ int RunMain(int argc, wchar_t** argv)
     bool anyError = false;
     for (const auto& g : info.gpus)
         anyError |= !g.error.empty();
+    if (deviceLost)
+        return 3;
     return (totalFailures > 0 || anyError) ? 1 : 0;
 }
 } // namespace

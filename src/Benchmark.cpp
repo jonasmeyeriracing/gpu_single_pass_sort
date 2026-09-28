@@ -54,11 +54,65 @@ static_assert(kFlushGroups <= 65535);
 enum RootParam : UINT
 {
     kRootConstants = 0, // b0, 4 x uint (sort: numSorts)
-    kRootSortDescs = 1, // t0, StructuredBuffer<uint2> {offset, count}
-    kRootInput = 2,     // t1, StructuredBuffer<uint>
-    kRootOutput = 3,    // u0, RWStructuredBuffer<uint>
+    kRootTable = 1,     // descriptor table: t0 StructuredBuffer<uint2> {offset, count}, t1 StructuredBuffer<uint>
+                        //                   input, u0 RWStructuredBuffer<uint> output (flush: <uint4> buffer)
     kRootParamCount
 };
+
+// Descriptor heap layout: two 3-descriptor tables {t0, t1, u0}.
+enum DescriptorSlot : UINT
+{
+    kSlotSortDescs = 0,
+    kSlotSortInput = 1,
+    kSlotSortOutput = 2,
+    kSlotFlushDescs = 3,
+    kSlotFlushInput = 4,
+    kSlotFlushBuffer = 5,
+    kDescriptorCount
+};
+
+void SetName(ID3D12Object* object, const std::string& name)
+{
+    object->SetName(Utf8ToWide(name).c_str());
+}
+
+void CreateStructuredSrv(ID3D12Device* device, ID3D12Resource* resource, uint32_t numElements, uint32_t stride,
+                         D3D12_CPU_DESCRIPTOR_HANDLE handle)
+{
+    D3D12_SHADER_RESOURCE_VIEW_DESC d{};
+    d.Format = DXGI_FORMAT_UNKNOWN;
+    d.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+    d.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    d.Buffer.FirstElement = 0;
+    d.Buffer.NumElements = numElements;
+    d.Buffer.StructureByteStride = stride;
+    device->CreateShaderResourceView(resource, &d, handle);
+}
+
+void CreateStructuredUav(ID3D12Device* device, ID3D12Resource* resource, uint32_t numElements, uint32_t stride,
+                         D3D12_CPU_DESCRIPTOR_HANDLE handle)
+{
+    D3D12_UNORDERED_ACCESS_VIEW_DESC d{};
+    d.Format = DXGI_FORMAT_UNKNOWN;
+    d.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+    d.Buffer.FirstElement = 0;
+    d.Buffer.NumElements = numElements;
+    d.Buffer.StructureByteStride = stride;
+    device->CreateUnorderedAccessView(resource, nullptr, &d, handle);
+}
+
+const char* RemovedReasonName(HRESULT hr)
+{
+    switch (hr)
+    {
+    case DXGI_ERROR_DEVICE_HUNG: return "DXGI_ERROR_DEVICE_HUNG";
+    case DXGI_ERROR_DEVICE_REMOVED: return "DXGI_ERROR_DEVICE_REMOVED";
+    case DXGI_ERROR_DEVICE_RESET: return "DXGI_ERROR_DEVICE_RESET";
+    case DXGI_ERROR_DRIVER_INTERNAL_ERROR: return "DXGI_ERROR_DRIVER_INTERNAL_ERROR";
+    case DXGI_ERROR_INVALID_CALL: return "DXGI_ERROR_INVALID_CALL";
+    default: return "unknown";
+    }
+}
 
 ComPtr<ID3D12Resource> CreateBuffer(ID3D12Device* device, uint64_t size, D3D12_HEAP_TYPE heapType,
                                     D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE)
@@ -119,28 +173,38 @@ constexpr D3D12_RESOURCE_STATES kSrvState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADE
 } // namespace
 
 GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader,
-                           const std::vector<CompiledAlgorithm>& algorithms)
-    : m_device(device)
+                           const std::vector<CompiledAlgorithm>& algorithms, const BenchmarkOptions& options)
+    : m_options(options), m_device(device)
 {
+    m_batchSize = m_options.serial ? 1 : kBatchSize;
+
     D3D12_COMMAND_QUEUE_DESC queueDesc{};
     queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     CHECK_HR(m_device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&m_queue)));
+    SetName(m_queue.Get(), "GpuSort direct queue");
     CHECK_HR(m_queue->GetTimestampFrequency(&m_timestampFrequency));
     CHECK_HR(m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence)));
+    SetName(m_fence.Get(), "GpuSort fence");
     m_fenceEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!m_fenceEvent)
         throw std::runtime_error("CreateEvent failed");
 
-    // Root signature: constants + root SRV/SRV/UAV (no descriptor heaps needed).
+    // Root signature: constants + one descriptor table {t0, t1, u0}. Descriptor tables (unlike
+    // root descriptors) are bounds-checked: out-of-bounds reads return 0, writes are dropped.
+    D3D12_DESCRIPTOR_RANGE ranges[2] = {};
+    ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    ranges[0].NumDescriptors = 2;
+    ranges[0].BaseShaderRegister = 0;
+    ranges[0].OffsetInDescriptorsFromTableStart = 0;
+    ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    ranges[1].NumDescriptors = 1;
+    ranges[1].BaseShaderRegister = 0;
+    ranges[1].OffsetInDescriptorsFromTableStart = 2;
     D3D12_ROOT_PARAMETER params[kRootParamCount] = {};
     params[kRootConstants].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     params[kRootConstants].Constants = {0, 0, 4};
-    params[kRootSortDescs].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
-    params[kRootSortDescs].Descriptor = {0, 0};
-    params[kRootInput].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
-    params[kRootInput].Descriptor = {1, 0};
-    params[kRootOutput].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
-    params[kRootOutput].Descriptor = {0, 0};
+    params[kRootTable].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[kRootTable].DescriptorTable = {_countof(ranges), ranges};
     for (auto& p : params)
         p.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     D3D12_ROOT_SIGNATURE_DESC rsDesc{};
@@ -153,6 +217,7 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader,
                                  (rsError ? static_cast<const char*>(rsError->GetBufferPointer()) : ""));
     CHECK_HR(m_device->CreateRootSignature(0, rsBlob->GetBufferPointer(), rsBlob->GetBufferSize(),
                                            IID_PPV_ARGS(&m_rootSignature)));
+    SetName(m_rootSignature.Get(), "GpuSort root signature");
 
     D3D12_INDIRECT_ARGUMENT_DESC arg{};
     arg.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH;
@@ -161,13 +226,18 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader,
     sigDesc.NumArgumentDescs = 1;
     sigDesc.pArgumentDescs = &arg;
     CHECK_HR(m_device->CreateCommandSignature(&sigDesc, nullptr, IID_PPV_ARGS(&m_dispatchSignature)));
+    SetName(m_dispatchSignature.Get(), "GpuSort dispatch command signature");
 
     m_flushPso = CreateComputePso(m_device.Get(), m_rootSignature.Get(), flushShader);
+    SetName(m_flushPso.Get(), "PSO flush");
     for (const auto& algorithm : algorithms)
     {
         std::vector<ComPtr<ID3D12PipelineState>> psos;
         for (const auto& shader : algorithm.shaders)
+        {
             psos.push_back(CreateComputePso(m_device.Get(), m_rootSignature.Get(), shader.Get()));
+            SetName(psos.back().Get(), Format("PSO %s dispatch %zu", algorithm.name.c_str(), psos.size() - 1));
+        }
         m_algorithmPsos.push_back(std::move(psos));
     }
 
@@ -179,9 +249,42 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader,
     m_flushBuffer = CreateBuffer(m_device.Get(), kFlushBytes, D3D12_HEAP_TYPE_DEFAULT,
                                  D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     m_argsBuffer = CreateBuffer(m_device.Get(), sizeof(D3D12_DISPATCH_ARGUMENTS), D3D12_HEAP_TYPE_DEFAULT);
+    SetName(m_descBuffer.Get(), "buffer sortDescs (t0)");
+    SetName(m_inputBuffer.Get(), "buffer sortInput (t1)");
+    SetName(m_outputBuffer.Get(), "buffer sortOutput (u0)");
+    SetName(m_poisonBuffer.Get(), "buffer poison");
+    SetName(m_flushBuffer.Get(), "buffer flush256MB (flush u0)");
+    SetName(m_argsBuffer.Get(), "buffer indirectArgs");
 
-    for (auto& f : m_frames)
+    // Structured buffer views with exact sizes: 20 sort descriptors, the full element buffers and
+    // the full flush buffer. Accesses past NumElements read 0 / are dropped.
     {
+        D3D12_DESCRIPTOR_HEAP_DESC hd{};
+        hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        hd.NumDescriptors = kDescriptorCount;
+        hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        CHECK_HR(m_device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&m_descriptorHeap)));
+        SetName(m_descriptorHeap.Get(), "GpuSort descriptor heap");
+        const UINT inc = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        const D3D12_CPU_DESCRIPTOR_HANDLE cpu0 = m_descriptorHeap->GetCPUDescriptorHandleForHeapStart();
+        const D3D12_GPU_DESCRIPTOR_HANDLE gpu0 = m_descriptorHeap->GetGPUDescriptorHandleForHeapStart();
+        auto cpu = [&](UINT slot) { return D3D12_CPU_DESCRIPTOR_HANDLE{cpu0.ptr + SIZE_T(slot) * inc}; };
+        ID3D12Device* d = m_device.Get();
+        static_assert(sizeof(SortDesc) == 8, "must match StructuredBuffer<uint2>");
+        constexpr uint32_t kDescStride = sizeof(SortDesc);
+        CreateStructuredSrv(d, m_descBuffer.Get(), kSortsPerIteration, kDescStride, cpu(kSlotSortDescs));
+        CreateStructuredSrv(d, m_inputBuffer.Get(), kMaxElementsPerIteration, 4, cpu(kSlotSortInput));
+        CreateStructuredUav(d, m_outputBuffer.Get(), kMaxElementsPerIteration, 4, cpu(kSlotSortOutput));
+        CreateStructuredSrv(d, m_descBuffer.Get(), kSortsPerIteration, kDescStride, cpu(kSlotFlushDescs));
+        CreateStructuredSrv(d, m_inputBuffer.Get(), kMaxElementsPerIteration, 4, cpu(kSlotFlushInput));
+        CreateStructuredUav(d, m_flushBuffer.Get(), kFlushElements, 16, cpu(kSlotFlushBuffer));
+        m_sortTable = {gpu0.ptr + UINT64(kSlotSortDescs) * inc};
+        m_flushTable = {gpu0.ptr + UINT64(kSlotFlushDescs) * inc};
+    }
+
+    for (uint32_t fi = 0; fi < kFrames; ++fi)
+    {
+        Frame& f = m_frames[fi];
         CHECK_HR(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&f.allocator)));
         CHECK_HR(m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, f.allocator.Get(), nullptr,
                                              IID_PPV_ARGS(&f.list)));
@@ -194,6 +297,12 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader,
         qh.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
         qh.Count = 2 * kBatchSize;
         CHECK_HR(m_device->CreateQueryHeap(&qh, IID_PPV_ARGS(&f.queryHeap)));
+        SetName(f.allocator.Get(), Format("frame%u allocator", fi));
+        SetName(f.list.Get(), Format("frame%u list", fi));
+        SetName(f.upload.Get(), Format("frame%u upload", fi));
+        SetName(f.readback.Get(), Format("frame%u readback", fi));
+        SetName(f.timestampReadback.Get(), Format("frame%u timestampReadback", fi));
+        SetName(f.queryHeap.Get(), Format("frame%u timestamp queries", fi));
         const D3D12_RANGE noRead{0, 0};
         CHECK_HR(f.upload->Map(0, &noRead, reinterpret_cast<void**>(&f.uploadPtr)));
         f.data.resize(kBatchSize);
@@ -221,11 +330,35 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader,
         CHECK_HR(m_queue->Signal(m_fence.Get(), ++m_fenceValue));
         WaitForFence(m_fenceValue);
     }
+
+    if (m_options.logAddresses)
+    {
+        const std::pair<const char*, ID3D12Resource*> buffers[] = {
+            {"sortDescs", m_descBuffer.Get()},
+            {"sortInput", m_inputBuffer.Get()},
+            {"sortOutput", m_outputBuffer.Get()},
+            {"poison", m_poisonBuffer.Get()},
+            {"flush256MB", m_flushBuffer.Get()},
+            {"indirectArgs", m_argsBuffer.Get()},
+            {"frame0 upload", m_frames[0].upload.Get()},
+            {"frame0 readback", m_frames[0].readback.Get()},
+            {"frame1 upload", m_frames[1].upload.Get()},
+            {"frame1 readback", m_frames[1].readback.Get()},
+        };
+        Log("  Buffer GPU VAs (to match a DRED page-fault VA):\n");
+        for (const auto& [name, res] : buffers)
+        {
+            const D3D12_GPU_VIRTUAL_ADDRESS va = res->GetGPUVirtualAddress();
+            Log("    %-16s 0x%016llX - 0x%016llX\n", name, static_cast<unsigned long long>(va),
+                static_cast<unsigned long long>(va + res->GetDesc().Width));
+        }
+    }
 }
 
 GpuBenchmark::~GpuBenchmark()
 {
-    if (m_queue && m_fence)
+    // Never touch a removed / hung device again: no Signal, no wait.
+    if (m_queue && m_fence && !m_deviceLost)
     {
         if (SUCCEEDED(m_queue->Signal(m_fence.Get(), ++m_fenceValue)))
         {
@@ -242,27 +375,68 @@ GpuBenchmark::~GpuBenchmark()
         CloseHandle(m_fenceEvent);
 }
 
-void GpuBenchmark::WaitForFence(uint64_t value)
+void GpuBenchmark::CheckDevice(const char* where)
 {
-    if (m_fence->GetCompletedValue() >= value)
-        return;
-    CHECK_HR(m_fence->SetEventOnCompletion(value, m_fenceEvent));
-    for (int seconds = 0; WaitForSingleObject(m_fenceEvent, 1000) == WAIT_TIMEOUT; ++seconds)
+    const HRESULT reason = m_device->GetDeviceRemovedReason();
+    if (FAILED(reason))
     {
-        const HRESULT removed = m_device->GetDeviceRemovedReason();
-        if (FAILED(removed))
-            ThrowHr(removed, "GPU device removed", __FILE__, __LINE__);
-        if (seconds >= 120)
-            throw std::runtime_error("timed out waiting for the GPU (120 s)");
+        m_deviceLost = true;
+        throw DeviceLostError(Format("GPU device removed (detected %s): GetDeviceRemovedReason = 0x%08X (%s)", where,
+                                     static_cast<unsigned>(reason), RemovedReasonName(reason)));
     }
 }
 
-void GpuBenchmark::Record(Frame& f, size_t algorithmIndex)
+void GpuBenchmark::WaitForFence(uint64_t value)
+{
+    if (m_deviceLost)
+        throw DeviceLostError("GPU device already lost");
+    // A removed device reports every fence as complete (UINT64_MAX), so the removal check at the
+    // end must run even when no wait was needed.
+    if (m_fence->GetCompletedValue() < value)
+    {
+        CHECK_HR(m_fence->SetEventOnCompletion(value, m_fenceEvent));
+        const auto start = std::chrono::steady_clock::now();
+        for (;;)
+        {
+            const DWORD r = WaitForSingleObject(m_fenceEvent, 100);
+            if (r == WAIT_OBJECT_0)
+                break;
+            if (r != WAIT_TIMEOUT)
+            {
+                m_deviceLost = true;
+                throw DeviceLostError(Format("waiting for the fence event failed (%lu)", GetLastError()));
+            }
+            CheckDevice("while waiting for a fence");
+            const double ms =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            if (ms >= m_options.fenceTimeoutMs)
+            {
+                m_deviceLost = true;
+                throw DeviceLostError(Format("GPU did not reach fence %llu within %u ms (completed value %llu); "
+                                             "treating the device as hung",
+                                             static_cast<unsigned long long>(value), m_options.fenceTimeoutMs,
+                                             static_cast<unsigned long long>(m_fence->GetCompletedValue())));
+            }
+        }
+    }
+    CheckDevice("after a fence wait");
+}
+
+void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& label)
 {
     ID3D12GraphicsCommandList* cl = f.list.Get();
     CHECK_HR(f.allocator->Reset());
     CHECK_HR(cl->Reset(f.allocator.Get(), nullptr));
+    SetName(cl, Format("%s iterations %u-%u", label.c_str(), f.firstIteration, f.firstIteration + f.count - 1));
+    ID3D12DescriptorHeap* heaps[] = {m_descriptorHeap.Get()};
+    cl->SetDescriptorHeaps(1, heaps);
     cl->SetComputeRootSignature(m_rootSignature.Get());
+    auto marker = [&](const char* what, uint32_t s) {
+        if (!m_options.markers)
+            return;
+        const std::wstring w = Utf8ToWide(Format("%s iter %u %s", label.c_str(), f.firstIteration + s, what));
+        cl->SetMarker(0, w.c_str(), static_cast<UINT>((w.size() + 1) * sizeof(wchar_t)));
+    };
 
     ID3D12Resource* desc = m_descBuffer.Get();
     ID3D12Resource* input = m_inputBuffer.Get();
@@ -291,13 +465,12 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex)
         if (bytes)
             memcpy(f.uploadPtr + uploadOffset + kDescRegionBytes, d.elements.data(), bytes);
 
-        // 1) upload + poison the output
+        // 1) upload + poison the whole output (stray writes anywhere in it are detected)
+        marker("upload", s);
         cl->CopyBufferRegion(desc, 0, f.upload.Get(), uploadOffset, kDescBytes);
         if (bytes)
-        {
             cl->CopyBufferRegion(input, 0, f.upload.Get(), uploadOffset + kDescRegionBytes, bytes);
-            cl->CopyBufferRegion(output, 0, m_poisonBuffer.Get(), 0, bytes);
-        }
+        cl->CopyBufferRegion(output, 0, m_poisonBuffer.Get(), 0, kElementBytes);
         {
             const D3D12_RESOURCE_BARRIER b[] = {
                 Transition(desc, D3D12_RESOURCE_STATE_COPY_DEST, kSrvState),
@@ -309,11 +482,10 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex)
 
         // 2) cache flush
         const uint32_t flushConstants[4] = {kFlushElements, kFlushThreads, 0, 0};
+        marker("flush", s);
         cl->SetPipelineState(m_flushPso.Get());
         cl->SetComputeRoot32BitConstants(kRootConstants, 4, flushConstants, 0);
-        cl->SetComputeRootShaderResourceView(kRootSortDescs, desc->GetGPUVirtualAddress());
-        cl->SetComputeRootShaderResourceView(kRootInput, input->GetGPUVirtualAddress());
-        cl->SetComputeRootUnorderedAccessView(kRootOutput, m_flushBuffer->GetGPUVirtualAddress());
+        cl->SetComputeRootDescriptorTable(kRootTable, m_flushTable);
         cl->Dispatch(kFlushGroups, 1, 1);
         {
             const D3D12_RESOURCE_BARRIER b = UavBarrier(nullptr);
@@ -324,10 +496,11 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex)
         const uint32_t sortConstants[4] = {kSortsPerIteration, 0, 0, 0};
         cl->EndQuery(f.queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * s);
         cl->SetComputeRoot32BitConstants(kRootConstants, 4, sortConstants, 0);
-        cl->SetComputeRootUnorderedAccessView(kRootOutput, output->GetGPUVirtualAddress());
-        for (const auto& pso : psos)
+        cl->SetComputeRootDescriptorTable(kRootTable, m_sortTable);
+        for (size_t p = 0; p < psos.size(); ++p)
         {
-            cl->SetPipelineState(pso.Get());
+            marker(Format("sort dispatch %zu", p).c_str(), s);
+            cl->SetPipelineState(psos[p].Get());
             cl->ExecuteIndirect(m_dispatchSignature.Get(), 1, m_argsBuffer.Get(), 0, nullptr, 0);
         }
         cl->EndQuery(f.queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * s + 1);
@@ -341,8 +514,8 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex)
             };
             cl->ResourceBarrier(_countof(b), b);
         }
-        if (bytes)
-            cl->CopyBufferRegion(f.readback.Get(), s * kElementBytes, output, 0, bytes);
+        marker("readback", s);
+        cl->CopyBufferRegion(f.readback.Get(), s * kElementBytes, output, 0, kElementBytes);
         {
             const D3D12_RESOURCE_BARRIER b =
                 Transition(output, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -368,11 +541,23 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex)
 
 void GpuBenchmark::Submit(Frame& f)
 {
+    if (m_deviceLost)
+        throw DeviceLostError("GPU device already lost");
+    CheckDevice("before submitting");
     ID3D12CommandList* lists[] = {f.list.Get()};
     m_queue->ExecuteCommandLists(1, lists);
     CHECK_HR(m_queue->Signal(m_fence.Get(), ++m_fenceValue));
     f.fenceValue = m_fenceValue;
     f.pending = true;
+
+    if (m_options.testRemoveDevice && !m_removeRequested)
+    {
+        m_removeRequested = true;
+        ComPtr<ID3D12Device5> device5;
+        CHECK_HR(m_device.As(&device5));
+        Log("  --test-device-removal: calling ID3D12Device5::RemoveDevice()\n");
+        device5->RemoveDevice();
+    }
 }
 
 void GpuBenchmark::Process(Frame& f, uint32_t warmup, ComboResult& result)
@@ -424,11 +609,11 @@ void GpuBenchmark::Process(Frame& f, uint32_t warmup, ComboResult& result)
     f.timestampReadback->Unmap(0, &noWrite);
 }
 
-ComboResult GpuBenchmark::Run(uint32_t workloadId, size_t algorithmIndex, uint32_t iterations, uint32_t warmup,
-                              const ProgressFn& progress)
+void GpuBenchmark::Run(uint32_t workloadId, size_t algorithmIndex, uint32_t iterations, uint32_t warmup,
+                       const std::string& label, const ProgressFn& progress, ComboResult& result)
 {
     const auto start = std::chrono::steady_clock::now();
-    ComboResult result;
+    result = ComboResult{};
     result.timesUs.reserve(iterations);
     const uint32_t total = warmup + iterations;
 
@@ -446,7 +631,7 @@ ComboResult GpuBenchmark::Run(uint32_t workloadId, size_t algorithmIndex, uint32
         if (next < total)
         {
             f.firstIteration = next;
-            f.count = std::min(kBatchSize, total - next);
+            f.count = std::min(m_batchSize, total - next);
             std::vector<uint32_t> slots(f.count);
             std::iota(slots.begin(), slots.end(), 0u);
             std::for_each(std::execution::par, slots.begin(), slots.end(), [&](uint32_t s) {
@@ -454,9 +639,17 @@ ComboResult GpuBenchmark::Run(uint32_t workloadId, size_t algorithmIndex, uint32
                 const uint32_t iteration = global < warmup ? kWarmupIterationBase + global : global - warmup;
                 GenerateIteration(workloadId, iteration, f.data[s]);
             });
-            Record(f, algorithmIndex);
+            Record(f, algorithmIndex, label);
             Submit(f);
             next += f.count;
+            if (m_options.serial)
+            {
+                // Smoke mode: this iteration must finish before anything else is recorded, so a
+                // fault is attributed to exactly this iteration.
+                Process(f, warmup, result);
+                if (progress)
+                    progress(result.iterationsRun, total, result.failures);
+            }
         }
         frameIndex = (frameIndex + 1) % kFrames;
 
@@ -468,5 +661,4 @@ ComboResult GpuBenchmark::Run(uint32_t workloadId, size_t algorithmIndex, uint32
     }
 
     result.wallSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    return result;
 }

@@ -7,6 +7,7 @@
 #include <dxcapi.h>
 
 #include <functional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -28,23 +29,49 @@ struct ComboResult
 // done / total iterations (including warmup), failures so far
 using ProgressFn = std::function<void(uint32_t done, uint32_t total, uint32_t failures)>;
 
+// The device was removed, or a fence wait timed out (hung GPU). Once thrown, the GpuBenchmark
+// submits nothing more to the device (not even from its destructor).
+class DeviceLostError : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
+};
+
+struct BenchmarkOptions
+{
+    uint32_t fenceTimeoutMs = 10000; // a fence wait longer than this is treated as a hung GPU
+    bool serial = false;             // one iteration per command list, wait for it before recording the next
+    bool markers = false;            // SetMarker before every flush / sort dispatch (DRED breadcrumb contexts)
+    bool logAddresses = false;       // print the GPU VA ranges of all buffers (to match DRED page faults)
+    bool testRemoveDevice = false;   // call ID3D12Device5::RemoveDevice after the first submission
+};
+
 // Owns the queue, pipelines and buffers for one device and runs (workload, algorithm) combos.
 //
 // Per iteration, recorded into batched command lists (two batches in flight):
-//   1) copy the iteration's descriptors + elements from the upload heap, poison the output
+//   1) copy the iteration's descriptors + elements from the upload heap, poison the whole output
 //   2) cache flush: a compute pass reading + writing a 256 MB buffer
 //   3) UAV barrier, timestamp, the algorithm's ExecuteIndirect dispatches, timestamp
-//   4) copy the output to a readback slot; the CPU verifies it after the batch completes
+//   4) copy the whole output to a readback slot; the CPU verifies it after the batch completes
+//
+// All buffers are bound through a descriptor table (structured buffer views with exact sizes), not
+// root descriptors, so an out-of-bounds shader access reads 0 / is dropped instead of page-faulting.
+// Every fence wait has a timeout and checks GetDeviceRemovedReason(); failures throw DeviceLostError.
 class GpuBenchmark
 {
 public:
-    GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader, const std::vector<CompiledAlgorithm>& algorithms);
+    GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader, const std::vector<CompiledAlgorithm>& algorithms,
+                 const BenchmarkOptions& options);
     ~GpuBenchmark();
     GpuBenchmark(const GpuBenchmark&) = delete;
     GpuBenchmark& operator=(const GpuBenchmark&) = delete;
 
-    ComboResult Run(uint32_t workloadId, size_t algorithmIndex, uint32_t iterations, uint32_t warmup,
-                    const ProgressFn& progress);
+    // Fills 'result' as it goes, so it holds the partial result if this throws. 'label'
+    // ("gpu/algorithm/workload") names command lists and markers for DRED.
+    void Run(uint32_t workloadId, size_t algorithmIndex, uint32_t iterations, uint32_t warmup,
+             const std::string& label, const ProgressFn& progress, ComboResult& result);
+
+    bool DeviceLost() const { return m_deviceLost; }
 
     uint64_t TimestampFrequency() const { return m_timestampFrequency; }
 
@@ -67,10 +94,15 @@ private:
         std::vector<IterationData> data;
     };
 
-    void Record(Frame& frame, size_t algorithmIndex);
+    void Record(Frame& frame, size_t algorithmIndex, const std::string& label);
     void Submit(Frame& frame);
     void WaitForFence(uint64_t value);
+    void CheckDevice(const char* where);
     void Process(Frame& frame, uint32_t warmup, ComboResult& result);
+
+    BenchmarkOptions m_options;
+    bool m_deviceLost = false;
+    bool m_removeRequested = false;
 
     ComPtr<ID3D12Device> m_device;
     ComPtr<ID3D12CommandQueue> m_queue;
@@ -80,6 +112,9 @@ private:
     uint64_t m_timestampFrequency = 0;
 
     ComPtr<ID3D12RootSignature> m_rootSignature;
+    ComPtr<ID3D12DescriptorHeap> m_descriptorHeap; // shader visible: [sort table][flush table]
+    D3D12_GPU_DESCRIPTOR_HANDLE m_sortTable{};     // t0 descs, t1 input, u0 output
+    D3D12_GPU_DESCRIPTOR_HANDLE m_flushTable{};    // t0 descs, t1 input, u0 flush buffer
     ComPtr<ID3D12CommandSignature> m_dispatchSignature;
     ComPtr<ID3D12PipelineState> m_flushPso;
     std::vector<std::vector<ComPtr<ID3D12PipelineState>>> m_algorithmPsos;
@@ -93,6 +128,7 @@ private:
 
     static constexpr uint32_t kFrames = 2;
     Frame m_frames[kFrames];
+    uint32_t m_batchSize = 0; // iterations per command list (1 in serial mode)
 };
 
 // HLSL source of the cache flush shader (compiled at runtime together with the sort shaders).

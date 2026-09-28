@@ -18,8 +18,18 @@ struct GpuInfo
     bool isWarp = false;
 };
 
-// Enables the D3D12 debug layer (must be called before any device is created).
-bool EnableD3D12DebugLayer();
+// Enables the D3D12 debug layer, optionally with GPU-based validation (must be called before any
+// device is created). Returns false if the layer (or GBV) is not available.
+bool EnableD3D12DebugLayer(bool gpuBasedValidation);
+
+// Enables DRED auto-breadcrumbs, breadcrumb contexts and page-fault reporting (must be called
+// before any device is created). Returns false if DRED is not available.
+bool EnableDred();
+
+// Human-readable DRED report for a removed device: removal reason, per command list the last
+// completed breadcrumb op (plus the ops around it and marker strings), and the page-fault VA with
+// the allocations it hit. Returns a note instead if DRED data is unavailable.
+std::string FormatDredReport(ID3D12Device* device);
 
 // Returns (and clears) messages stored by the debug layer's info queue; empty if the layer is off.
 std::vector<std::string> DrainDebugMessages(ID3D12Device* device);

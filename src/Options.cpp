@@ -56,6 +56,14 @@ bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
             o.noPrompt = true;
         else if (arg == L"--debug")
             o.debugLayer = true;
+        else if (arg == L"--gbv")
+            o.gpuValidation = o.debugLayer = true;
+        else if (arg == L"--dred")
+            o.dred = true;
+        else if (arg == L"--smoke")
+            o.smoke = true;
+        else if (arg == L"--test-device-removal")
+            o.testRemove = true;
         else if (arg == L"--list-adapters")
             o.listAdapters = true;
         else if (arg == L"--shaders")
@@ -124,6 +132,14 @@ void PrintUsage()
         "  --warp               Run only on the WARP software adapter (no prompt, no window)\n"
         "  --no-prompt          Skip the confirmation message box\n"
         "  --debug              Enable the D3D12 debug layer\n"
-        "  --list-adapters      Print all DXGI adapters (LUID, ids, flags) and exit\n"
+        "  --gbv                Enable GPU-based validation (implies --debug; slow)\n"
+        "  --dred               Enable DRED auto-breadcrumbs + page-fault reporting; on device removal\n"
+        "                       print the last completed GPU operation and the faulting allocation\n"
+        "  --smoke              Safety check: 3 iterations (no warmup) of every algorithm x workload,\n"
+        "                       one iteration in flight at a time (overrides --iterations/--warmup)\n"
+        "  --test-device-removal\n"
+        "                       Debug aid: call ID3D12Device5::RemoveDevice after the first batch to\n"
+        "                       exercise the device-lost path (use with --warp)\n"
+        "  --list-adapters     Print all DXGI adapters (LUID, ids, flags) and exit\n"
         "  --help               Show this help\n");
 }

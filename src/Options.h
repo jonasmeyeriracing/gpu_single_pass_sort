@@ -16,6 +16,10 @@ struct Options
     bool warp = false;                   // --warp: run only on WARP (no prompt, no window)
     bool noPrompt = false;               // --no-prompt
     bool debugLayer = false;             // --debug: enable the D3D12 debug layer
+    bool gpuValidation = false;          // --gbv: GPU-based validation (implies --debug)
+    bool dred = false;                   // --dred: DRED auto-breadcrumbs + page-fault reporting
+    bool smoke = false;                  // --smoke: 3 iterations, no warmup, one iteration in flight
+    bool testRemove = false;             // --test-device-removal: remove the device after the first batch
     bool listAdapters = false;           // --list-adapters: print DXGI adapters and exit
     bool help = false;
 };

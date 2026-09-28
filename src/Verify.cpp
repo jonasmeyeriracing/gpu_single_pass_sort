@@ -54,5 +54,17 @@ bool VerifyIteration(const IterationData& input, const uint32_t* output, std::st
             return false;
         }
     }
+
+    // Stray writes past the last sort (e.g. a rank >= count) land here.
+    for (uint32_t i = static_cast<uint32_t>(input.elements.size()); i < kMaxElementsPerIteration; ++i)
+    {
+        if (output[i] != kPoisonValue)
+        {
+            if (message)
+                *message = Format("element %u past the end of the last sort (end %zu) was overwritten (0x%08X)", i,
+                                  input.elements.size(), output[i]);
+            return false;
+        }
+    }
     return true;
 }
