@@ -66,6 +66,8 @@ bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
             o.testRemove = true;
         else if (arg == L"--list-adapters")
             o.listAdapters = true;
+        else if (arg == L"--wave-probe")
+            o.waveProbe = true;
         else if (arg == L"--shaders")
         {
             if (!next(o.shaderDir))
@@ -190,5 +192,14 @@ void PrintUsage()
         "                       exercise the device-lost path (use with --warp)\n"
         "  --list-adapters      Print all DXGI adapters (LUID, ids, flags), then the adapters a benchmark\n"
         "                       run would use (with wave lane ranges) and the skipped ones, and exit\n"
+        "  --wave-probe         Only run the wave probe on every selected GPU and exit (on hardware after\n"
+        "                       the prompt). Every run does it before the first sort: a tiny shader,\n"
+        "                       compiled like the sort shaders (WAVE_SIZE, [WaveSize]) and without\n"
+        "                       [WaveSize], reports the lane count the driver really uses, whether\n"
+        "                       lane = SV_GroupIndex %% WAVE_SIZE, and checks WaveReadLaneAt (lane ^ 32,\n"
+        "                       lane ^ 1, +16, last lane), WavePrefixSum, WaveActiveSum / CountBits /\n"
+        "                       Ballot. --out <file> also writes the report there. If the lane count\n"
+        "                       or mapping is wrong, a run prints a WARNING; --smoke then marks the\n"
+        "                       algorithms that use wave ops as failed without running them\n"
         "  --help               Show this help\n");
 }

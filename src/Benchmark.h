@@ -17,6 +17,7 @@ struct CompiledAlgorithm
     std::string name;
     std::vector<ComPtr<IDxcBlob>> shaders; // one per dispatch, in order
     FlushMode flush = FlushMode::Full;     // see FlushMode (Algorithms.h)
+    bool usesWaveOps = false;              // some dispatch uses wave intrinsics (depends on the wave size)
 };
 
 struct ComboResult
@@ -75,6 +76,18 @@ public:
     // ("gpu/algorithm/workload") names command lists and markers for DRED.
     void Run(uint32_t workloadId, size_t algorithmIndex, uint32_t iterations, uint32_t warmup,
              const std::string& label, const ProgressFn& progress, ComboResult& result);
+
+    // Wave probe (see WaveProbe.h): one command list with one group of each shader, dispatched with
+    // root constant 0 = i * wordsPerDispatch (the shader's first output word). The output buffer is
+    // poisoned first. Returns per shader its wordsPerDispatch output words, or an empty vector and an
+    // error message if its PSO could not be created. Must be called before (not during) Run.
+    // Throws DeviceLostError on a device loss / fence timeout.
+    struct ProbeOutput
+    {
+        std::vector<uint32_t> words;
+        std::string error;
+    };
+    std::vector<ProbeOutput> RunProbe(const std::vector<IDxcBlob*>& shaders, uint32_t wordsPerDispatch);
 
     bool DeviceLost() const { return m_deviceLost; }
 

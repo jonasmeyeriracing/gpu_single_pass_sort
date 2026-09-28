@@ -682,6 +682,112 @@ void GpuBenchmark::Process(Frame& f, uint32_t warmup, ComboResult& result)
     f.timestampReadback->Unmap(0, &noWrite);
 }
 
+std::vector<GpuBenchmark::ProbeOutput> GpuBenchmark::RunProbe(const std::vector<IDxcBlob*>& shaders,
+                                                              uint32_t wordsPerDispatch)
+{
+    if (uint64_t(wordsPerDispatch) * shaders.size() > kMaxElementsPerIteration)
+        throw std::runtime_error("wave probe: too many probe dispatches for the output buffer");
+    Frame& f = m_frames[0];
+    if (f.pending || m_frames[1].pending)
+        throw std::runtime_error("wave probe: called while iterations are in flight");
+
+    std::vector<ProbeOutput> outputs(shaders.size());
+    std::vector<ComPtr<ID3D12PipelineState>> psos(shaders.size());
+    for (size_t i = 0; i < shaders.size(); ++i)
+    {
+        D3D12_COMPUTE_PIPELINE_STATE_DESC desc{};
+        desc.pRootSignature = m_rootSignature.Get();
+        desc.CS = {shaders[i]->GetBufferPointer(), shaders[i]->GetBufferSize()};
+        const HRESULT hr = m_device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&psos[i]));
+        if (FAILED(hr))
+        {
+            psos[i].Reset();
+            outputs[i].error = Format("CreateComputePipelineState failed (HRESULT 0x%08X)", static_cast<unsigned>(hr));
+        }
+        else
+        {
+            SetName(psos[i].Get(), Format("PSO wave probe %zu", i));
+        }
+    }
+    CheckDevice("after creating the wave probe PSOs");
+
+    ID3D12GraphicsCommandList* cl = f.list.Get();
+    ID3D12Resource* output = m_outputBuffer.Get();
+    CHECK_HR(f.allocator->Reset());
+    CHECK_HR(cl->Reset(f.allocator.Get(), nullptr));
+    SetName(cl, "wave probe");
+    ID3D12DescriptorHeap* heaps[] = {m_descriptorHeap.Get()};
+    cl->SetDescriptorHeaps(1, heaps);
+    cl->SetComputeRootSignature(m_rootSignature.Get());
+    {
+        const D3D12_RESOURCE_BARRIER b[] = {
+            Transition(output, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST),
+            Transition(m_poisonBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE),
+        };
+        cl->ResourceBarrier(_countof(b), b);
+    }
+    cl->CopyBufferRegion(output, 0, m_poisonBuffer.Get(), 0, kElementBytes);
+    {
+        const D3D12_RESOURCE_BARRIER b =
+            Transition(output, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        cl->ResourceBarrier(1, &b);
+    }
+    cl->SetComputeRootDescriptorTable(kRootTable, m_sortTable);
+    for (size_t i = 0; i < shaders.size(); ++i)
+    {
+        if (!psos[i])
+            continue;
+        const uint32_t constants[4] = {static_cast<uint32_t>(i) * wordsPerDispatch, 0, 0, 0};
+        if (m_options.markers)
+        {
+            const std::wstring w = Utf8ToWide(Format("wave probe dispatch %zu", i));
+            cl->SetMarker(0, w.c_str(), static_cast<UINT>((w.size() + 1) * sizeof(wchar_t)));
+        }
+        cl->SetPipelineState(psos[i].Get());
+        cl->SetComputeRoot32BitConstants(kRootConstants, 4, constants, 0);
+        cl->Dispatch(1, 1, 1);
+    }
+    const uint64_t bytes = uint64_t(wordsPerDispatch) * shaders.size() * sizeof(uint32_t);
+    {
+        const D3D12_RESOURCE_BARRIER b =
+            Transition(output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        cl->ResourceBarrier(1, &b);
+    }
+    if (bytes)
+        cl->CopyBufferRegion(f.readback.Get(), 0, output, 0, bytes);
+    {
+        const D3D12_RESOURCE_BARRIER b[] = {
+            Transition(output, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON),
+            Transition(m_poisonBuffer.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON),
+        };
+        cl->ResourceBarrier(_countof(b), b);
+    }
+    CHECK_HR(cl->Close());
+
+    if (m_deviceLost)
+        throw DeviceLostError("GPU device already lost");
+    CheckDevice("before submitting the wave probe");
+    ID3D12CommandList* lists[] = {cl};
+    m_queue->ExecuteCommandLists(1, lists);
+    CHECK_HR(m_queue->Signal(m_fence.Get(), ++m_fenceValue));
+    WaitForFence(m_fenceValue);
+
+    if (bytes)
+    {
+        const D3D12_RANGE range{0, static_cast<SIZE_T>(bytes)};
+        uint32_t* words = nullptr;
+        CHECK_HR(f.readback->Map(0, &range, reinterpret_cast<void**>(&words)));
+        for (size_t i = 0; i < shaders.size(); ++i)
+        {
+            if (psos[i])
+                outputs[i].words.assign(words + i * wordsPerDispatch, words + (i + 1) * wordsPerDispatch);
+        }
+        const D3D12_RANGE noWrite{0, 0};
+        f.readback->Unmap(0, &noWrite);
+    }
+    return outputs;
+}
+
 void GpuBenchmark::Run(uint32_t workloadId, size_t algorithmIndex, uint32_t iterations, uint32_t warmup,
                        const std::string& label, const ProgressFn& progress, ComboResult& result)
 {

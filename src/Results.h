@@ -24,6 +24,7 @@ struct SmokeFailure
 {
     std::string algorithm;
     std::string workload; // the first failing workload
+    std::string reason;   // if non-empty: not run at all, for this reason (e.g. the wave probe)
 };
 
 struct GpuRecord
@@ -38,6 +39,8 @@ struct GpuRecord
     uint32_t waveLaneCountMax = 0;
     uint32_t waveSize = 0;          // WAVE_SIZE the shaders were compiled with
     bool waveSizeAttribute = false; // compiled with [WaveSize(WAVE_SIZE)]
+    std::vector<std::string> waveProbe; // wave probe report lines (WaveProbeReport::lines)
+    bool waveProbeWarning = false;      // the probe found the wrong lane count / a broken lane mapping
     double wallSeconds = 0;
     std::vector<ComboRecord> combos;
     std::vector<SmokeFailure> smokeFailed; // --smoke only

@@ -7,6 +7,7 @@
 #include "ProgressWindow.h"
 #include "Results.h"
 #include "ShaderCompiler.h"
+#include "WaveProbe.h"
 #include "Workloads.h"
 
 #include <algorithm>
@@ -251,7 +252,10 @@ int RunMain(int argc, wchar_t** argv)
                                             g.waveLaneCountMin, g.waveLaneCountMax, g.name.c_str()));
     }
     std::deque<std::pair<std::pair<uint32_t, bool>, std::vector<CompiledAlgorithm>>> compiledByWave; // stable references
+    const std::vector<CompiledAlgorithm> noAlgorithms;
     auto compileFor = [&](const WaveConfig& wc) -> const std::vector<CompiledAlgorithm>& {
+        if (opt.waveProbe)
+            return noAlgorithms; // --wave-probe runs no sort
         for (const auto& entry : compiledByWave)
         {
             if (entry.first == std::make_pair(wc.size, wc.attribute))
@@ -277,13 +281,15 @@ int RunMain(int argc, wchar_t** argv)
                         d.entry.c_str(), log.c_str());
                 if (!blob)
                     throw std::runtime_error("failed to compile " + d.file + " for algorithm " + algorithm.name);
+                ca.usesWaveOps |= compiler.UsesWaveOps(blob.Get());
                 ca.shaders.push_back(blob);
             }
             std::string sizes;
             for (const auto& s : ca.shaders)
                 sizes += Format("%s%zu", sizes.empty() ? "" : " + ", static_cast<size_t>(s->GetBufferSize()));
-            Log("Compiled algorithm %s (%zu dispatch%s, DXIL %s bytes, flush mode %s)\n", ca.name.c_str(),
-                ca.shaders.size(), ca.shaders.size() == 1 ? "" : "es", sizes.c_str(), FlushModeName(ca.flush));
+            Log("Compiled algorithm %s (%zu dispatch%s, DXIL %s bytes, flush mode %s%s)\n", ca.name.c_str(),
+                ca.shaders.size(), ca.shaders.size() == 1 ? "" : "es", sizes.c_str(), FlushModeName(ca.flush),
+                ca.usesWaveOps ? ", wave ops" : ", no wave ops");
             compiled.push_back(std::move(ca));
         }
         compiledByWave.push_back({{wc.size, wc.attribute}, std::move(compiled)});
@@ -306,7 +312,31 @@ int RunMain(int argc, wchar_t** argv)
         info.dxilWaveSize = compiledByWave.front().first.first;
     }
 
-    Log("\n%s\n", FormatSizeDistribution(workloadIds, opt.iterations).c_str());
+    // Wave probe (WaveProbe.h), per wave configuration: group sizes 64 / 512 / 1024 plus every group
+    // size the selected algorithms use.
+    std::vector<uint32_t> probeGroupSizes = {64, 512, 1024};
+    for (const auto& a : algorithms)
+    {
+        for (const auto& d : a.dispatches)
+            probeGroupSizes.push_back(d.groupSize);
+    }
+    std::sort(probeGroupSizes.begin(), probeGroupSizes.end());
+    probeGroupSizes.erase(std::unique(probeGroupSizes.begin(), probeGroupSizes.end()), probeGroupSizes.end());
+    std::deque<WaveProbeSet> probeSets; // stable references
+    auto probeFor = [&](const WaveConfig& wc) -> const WaveProbeSet& {
+        for (const auto& s : probeSets)
+        {
+            if (s.waveSize == wc.size && s.attribute == wc.attribute)
+                return s;
+        }
+        probeSets.push_back(CompileWaveProbe(compiler, wc.size, wc.attribute, probeGroupSizes));
+        return probeSets.back();
+    };
+    for (const auto& wc : gpuWave)
+        probeFor(wc);
+
+    if (!opt.waveProbe)
+        Log("\n%s\n", FormatSizeDistribution(workloadIds, opt.iterations).c_str());
 
     const uint64_t totalIterations = uint64_t(opt.iterations + opt.warmup) * workloadIds.size() * algorithms.size();
     const double estimatedSeconds = static_cast<double>(totalIterations * gpus.size()) * kEstimatedMsPerIteration / 1000.0;
@@ -317,21 +347,34 @@ int RunMain(int argc, wchar_t** argv)
         std::wstring text;
         if (!opt.label.empty())
             text = L"Run " + Utf8ToWide(opt.label) + L"\n\n";
-        if (opt.smoke)
-            text += L"SMOKE TEST: a short safety check before any full benchmark run (a GPU fault, TDR or\n"
-                    L"bugcheck in new shader code is much cheaper to hit here).\n\n"
-                    L"Every algorithm x workload runs a few iterations, one at a time with a fence wait\n"
-                    L"after each, and stops at the first GPU fault or hang.\n\n";
-        text += L"GpuSort is about to run a GPU benchmark on:\n\n";
-        for (const auto& g : gpus)
-            text += L"    " + Utf8ToWide(g.name) + L"\n";
-        text += Utf8ToWide(Format("\n%zu workload(s) x %zu algorithm(s) x %u iterations (+%u warmup) per GPU.\n"
-                                  "Estimated duration: roughly %.0f seconds.\n\n",
-                                  workloadIds.size(), algorithms.size(), opt.iterations, opt.warmup,
-                                  estimatedSeconds < 1.0 ? 1.0 : estimatedSeconds));
+        if (opt.waveProbe)
+        {
+            text += L"WAVE PROBE: GpuSort is about to run only its wave probe (a few one-group dispatches of\n"
+                    L"a tiny diagnostic shader, well under a second, no sorts) on:\n\n";
+            for (const auto& g : gpus)
+                text += L"    " + Utf8ToWide(g.name) + L"\n";
+            text += L"\n";
+        }
+        else
+        {
+            if (opt.smoke)
+                text += L"SMOKE TEST: a short safety check before any full benchmark run (a GPU fault, TDR or\n"
+                        L"bugcheck in new shader code is much cheaper to hit here).\n\n"
+                        L"Every algorithm x workload runs a few iterations, one at a time with a fence wait\n"
+                        L"after each, and stops at the first GPU fault or hang.\n\n";
+            text += L"GpuSort is about to run a GPU benchmark on:\n\n";
+            for (const auto& g : gpus)
+                text += L"    " + Utf8ToWide(g.name) + L"\n";
+            text += Utf8ToWide(Format("\n%zu workload(s) x %zu algorithm(s) x %u iterations (+%u warmup) per GPU.\n"
+                                      "Estimated duration: roughly %.0f seconds.\n\n",
+                                      workloadIds.size(), algorithms.size(), opt.iterations, opt.warmup,
+                                      estimatedSeconds < 1.0 ? 1.0 : estimatedSeconds));
+        }
         text += L"Please pause other GPU work now, then press OK to start.\nCancel exits without running.";
         Log("Waiting for confirmation (message box)...\n");
-        std::wstring caption = opt.smoke ? L"GpuSort smoke test" : L"GpuSort benchmark";
+        std::wstring caption = opt.waveProbe ? L"GpuSort wave probe"
+                               : opt.smoke   ? L"GpuSort smoke test"
+                                             : L"GpuSort benchmark";
         if (!opt.label.empty())
             caption += L" - " + Utf8ToWide(opt.label);
         const int answer = MessageBoxW(nullptr, text.c_str(), caption.c_str(),
@@ -384,6 +427,40 @@ int RunMain(int argc, wchar_t** argv)
             record.timestampFrequency = bench.TimestampFrequency();
             for (const auto& m : DrainDebugMessages(gpu.device.Get()))
                 Log("    %s\n", m.c_str());
+
+            // Wave probe: what wave does the driver really run (before any sort).
+            const WaveProbeReport probe = RunWaveProbe(bench, probeFor(gpuWave[gi]));
+            record.waveProbe = probe.lines;
+            record.waveProbeWarning = !probe.configOk;
+            for (const auto& line : probe.lines)
+                Log("  %s\n", line.c_str());
+            for (const auto& m : DrainDebugMessages(gpu.device.Get()))
+                Log("    %s\n", m.c_str());
+            if (!probe.configOk)
+            {
+                Log("\n  ********************************************************************************\n"
+                    "  WARNING: WAVE PROBE on %s: the shaders are compiled for WAVE_SIZE=%u%s, but\n"
+                    "  %s.\n"
+                    "  Results of algorithms that use wave ops are not meaningful in this configuration.\n",
+                    gpu.name.c_str(), gpuWave[gi].size, gpuWave[gi].attribute ? " + [WaveSize]" : "",
+                    probe.problem.c_str());
+                if (opt.smoke && !opt.waveProbe)
+                {
+                    // Smoke mode: do not run them (their sort failures would only be confusing).
+                    size_t marked = 0;
+                    for (const auto& ca : compiled)
+                    {
+                        if (!ca.usesWaveOps)
+                            continue;
+                        record.smokeFailed.push_back({ca.name, "", "wave probe: " + probe.problem});
+                        ++marked;
+                    }
+                    Log("  Smoke test: %zu algorithm(s) that use wave ops are marked failed without running.\n",
+                        marked);
+                }
+                Log("  ********************************************************************************\n\n");
+            }
+
             for (size_t wi = 0; wi < workloadIds.size(); ++wi)
             {
                 const uint32_t workloadId = workloadIds[wi];
@@ -393,11 +470,13 @@ int RunMain(int argc, wchar_t** argv)
                     const std::string& aname = compiled[ai].name;
                     // --smoke: an algorithm with a verification failure on this GPU skips its remaining
                     // workloads; the other algorithms keep running.
-                    if (std::any_of(record.smokeFailed.begin(), record.smokeFailed.end(),
-                                    [&](const SmokeFailure& sf) { return sf.algorithm == aname; }))
+                    const auto failed = std::find_if(record.smokeFailed.begin(), record.smokeFailed.end(),
+                                                     [&](const SmokeFailure& sf) { return sf.algorithm == aname; });
+                    if (failed != record.smokeFailed.end())
                     {
-                        Log("  %-14s %-20s skipped (failed verification earlier in this smoke run)\n", wname,
-                            aname.c_str());
+                        Log("  %-14s %-20s skipped (%s)\n", wname, aname.c_str(),
+                            failed->reason.empty() ? "failed verification earlier in this smoke run"
+                                                   : failed->reason.c_str());
                         continue;
                     }
                     uint32_t lastLogged = 0;
@@ -484,6 +563,64 @@ int RunMain(int argc, wchar_t** argv)
 
     info.totalSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - runStart).count();
 
+    bool anyError = false;
+    bool anySmokeFailed = false;
+    bool anyProbeWarning = false;
+    for (const auto& g : info.gpus)
+    {
+        anyError |= !g.error.empty();
+        anySmokeFailed |= !g.smokeFailed.empty();
+        anyProbeWarning |= g.waveProbeWarning;
+    }
+
+    // --- --wave-probe: probe report only ---------------------------------------------------
+    if (opt.waveProbe)
+    {
+        std::string text = "GpuSort wave probe\n==================\n";
+        text += Format("Date:         %s\nComputer:     %s\n", info.date.c_str(), info.computerName.c_str());
+        if (!info.label.empty())
+            text += Format("Label:        %s\n", info.label.c_str());
+        text += Format("Command line: %s\n", info.commandLine.c_str());
+        for (size_t g = 0; g < info.gpus.size(); ++g)
+        {
+            const GpuRecord& gpu = info.gpus[g];
+            text += Format("[%zu] %s  (driver %s, vendor %04X device %04X)\n", g, gpu.name.c_str(), gpu.driver.c_str(),
+                           gpu.vendorId, gpu.deviceId);
+            text += Format("      wave lanes %u-%u, sort shaders would be compiled with WAVE_SIZE=%u%s\n",
+                           gpu.waveLaneCountMin, gpu.waveLaneCountMax, gpu.waveSize,
+                           gpu.waveSizeAttribute ? " + [WaveSize]" : "");
+            for (const auto& line : gpu.waveProbe)
+                text += Format("      %s\n", line.c_str());
+            if (!gpu.error.empty())
+                text += Format("      ERROR: %s\n", gpu.error.c_str());
+        }
+        for (const auto& s : info.skippedAdapters)
+            text += Format("  skipped: %s\n", s.c_str());
+        Log("\n%s", text.c_str());
+        if (!opt.outPath.empty())
+        {
+            const fs::path outPath(opt.outPath);
+            if (outPath.has_parent_path())
+            {
+                std::error_code ec;
+                fs::create_directories(outPath.parent_path(), ec);
+            }
+            std::ofstream out(outPath, std::ios::binary);
+            if (out)
+            {
+                out << text;
+                Log("\nWave probe report written to %s\n", fs::absolute(outPath).string().c_str());
+            }
+            else
+            {
+                Log("\nerror: could not write %s\n", outPath.string().c_str());
+            }
+        }
+        if (deviceLost)
+            return 3;
+        return (anyError || anyProbeWarning) ? 1 : 0;
+    }
+
     // --- results --------------------------------------------------------------------------
     const std::string text = FormatResults(info);
     Log("\n%s", text.c_str());
@@ -505,12 +642,11 @@ int RunMain(int argc, wchar_t** argv)
         Log("\nerror: could not write %s\n", outPath.string().c_str());
     }
 
-    bool anyError = false;
-    for (const auto& g : info.gpus)
-        anyError |= !g.error.empty();
+    if (anyProbeWarning)
+        Log("\nWARNING: the wave probe found a wrong lane count or lane mapping (see \"WAVE PROBE WARNING\" above).\n");
     if (deviceLost)
         return 3;
-    return (totalFailures > 0 || anyError) ? 1 : 0;
+    return (totalFailures > 0 || anyError || anySmokeFailed) ? 1 : 0;
 }
 } // namespace
 

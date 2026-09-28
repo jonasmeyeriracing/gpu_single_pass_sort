@@ -1,5 +1,7 @@
 #include "ShaderCompiler.h"
 
+#include <d3d12shader.h>
+
 #include <vector>
 
 ShaderCompiler::ShaderCompiler()
@@ -72,4 +74,13 @@ ComPtr<IDxcBlob> ShaderCompiler::Compile(const DxcBuffer& source, const std::wst
         object->GetBufferSize() == 0)
         return nullptr;
     return object;
+}
+
+bool ShaderCompiler::UsesWaveOps(IDxcBlob* shader)
+{
+    const DxcBuffer buffer{shader->GetBufferPointer(), shader->GetBufferSize(), 0};
+    ComPtr<ID3D12ShaderReflection> reflection;
+    if (FAILED(m_utils->CreateReflection(&buffer, IID_PPV_ARGS(&reflection))) || !reflection)
+        return true;
+    return (reflection->GetRequiresFlags() & D3D_SHADER_REQUIRES_WAVE_OPS) != 0;
 }

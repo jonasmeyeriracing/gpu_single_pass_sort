@@ -18,6 +18,10 @@ rem loss (GPU fault / hang, exit code 3) stops the script at once. Every GPU run
 rem shows GpuSort's OK/Cancel prompt ("Run k/N ..."); Cancel stops the script.
 rem If a GPU reports a wave size range (e.g. AMD RDNA: 32-64), every shader set also runs with
 rem --wave-size <max> (e.g. wave64), on the GPUs that support it.
+rem Every GPU run first runs GpuSort's wave probe (the lane count the driver really uses, the lane
+rem mapping and a few cross-lane ops, for the run's wave configuration and without [WaveSize]); the
+rem script collects those lines in wave_probe.txt, and WAVE PROBE WARNING lines in summary.txt. There
+rem is no separate --wave-probe step, so it adds no extra prompt.
 rem
 rem Dry run (prints the GpuSort commands instead of running them; for testing this script):
 rem   set DRYRUN=1                       required
@@ -304,6 +308,13 @@ if "!RC!"=="2" set "RC_TEXT=cancelled at the prompt"
 if "!RC!"=="3" set "RC_TEXT=DEVICE LOST - GPU fault or hang, see !FILE!.log"
 echo Run !LAST_LABEL! finished: exit code !RC! ^(!RC_TEXT!^)
 >> "%SUMMARY%" echo [!LAST_LABEL!] exit code !RC! (!RC_TEXT!) -^> !FILE!.txt / !FILE!.log
+rem Every GPU run starts with GpuSort's wave probe (lane count / lane mapping / cross-lane checks per
+rem GPU, in the .txt header). Collect those lines in wave_probe.txt; warnings also go to summary.txt.
+if exist "%OUT%\!FILE!.txt" (
+    >> "%OUT%\wave_probe.txt" echo [!LAST_LABEL!] !FILE!.txt
+    findstr /i /c:"wave probe" "%OUT%\!FILE!.txt" >> "%OUT%\wave_probe.txt"
+    findstr /c:"WAVE PROBE WARNING" "%OUT%\!FILE!.txt" >> "%SUMMARY%"
+)
 exit /b 0
 
 :end

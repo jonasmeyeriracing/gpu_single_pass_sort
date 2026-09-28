@@ -20,6 +20,10 @@ public:
     ComPtr<IDxcBlob> CompileSource(const std::string& source, const std::wstring& name, const std::string& entry,
                                    const ShaderDefines& defines, std::string& log);
 
+    // True if the compiled shader uses wave intrinsics (DXIL shader flag "wave ops", from the
+    // container's reflection). Also true if the reflection cannot be read (conservative).
+    bool UsesWaveOps(IDxcBlob* shader);
+
 private:
     ComPtr<IDxcBlob> Compile(const DxcBuffer& source, const std::wstring& name, const std::string& entry,
                              const ShaderDefines& defines, const std::filesystem::path& includeDir, std::string& log);

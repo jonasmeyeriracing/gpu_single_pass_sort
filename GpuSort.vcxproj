@@ -88,6 +88,7 @@ if errorlevel 1 exit 1</Command>
     <ClCompile Include="src\Results.cpp" />
     <ClCompile Include="src\ShaderCompiler.cpp" />
     <ClCompile Include="src\Verify.cpp" />
+    <ClCompile Include="src\WaveProbe.cpp" />
     <ClCompile Include="src\Workloads.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -100,6 +101,7 @@ if errorlevel 1 exit 1</Command>
     <ClInclude Include="src\Results.h" />
     <ClInclude Include="src\ShaderCompiler.h" />
     <ClInclude Include="src\Verify.h" />
+    <ClInclude Include="src\WaveProbe.h" />
     <ClInclude Include="src\Workloads.h" />
   </ItemGroup>
   <ItemGroup>

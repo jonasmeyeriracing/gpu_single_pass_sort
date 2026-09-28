@@ -42,6 +42,13 @@ If a GPU reports a range of wave sizes (AMD RDNA: WaveLaneCountMin 32, Max 64), 
 twice per shader set: with the default (WAVE_SIZE = 32, forced with [WaveSize(32)]) and with
 --wave-size 64 (only on the GPUs that support 64). Expect roughly 1-3 minutes per full run on a
 fast GPU, longer on an integrated GPU.
+Every GPU run (after its OK) first runs a wave probe: a tiny shader, compiled like the sort shaders
+of that run and also without [WaveSize], reports the wave lane count the driver really uses, checks
+lane = SV_GroupIndex % WAVE_SIZE and a few cross-lane operations (WaveReadLaneAt lane ^ 32, ...).
+The report is in the header of every results .txt ("Wave probe: ..."). If the lane count or the
+lane mapping is not what the shaders were compiled for, it prints "WAVE PROBE WARNING", and a smoke
+test marks the algorithms that use wave ops as "SMOKE FAILED ... (not run: wave probe: ...)"
+instead of running them. No extra prompt: there is no separate probe step.
 
 Results folder contents
 -----------------------
@@ -49,6 +56,7 @@ Results folder contents
     package_info.txt            which build / git commit this package is
     adapters.txt                --list-adapters output (vendor/device ids, driver, wave lane ranges)
     dxdiag.txt                  dxdiag report
+    wave_probe.txt              the wave probe lines of every run (see "What it runs")
     smoke_<set>[_waveNN].txt    smoke test results; .log = full console output
     <set>[_waveNN].txt          benchmark results (timings per GPU x workload x algorithm);
                                 .log = full console output
@@ -81,4 +89,5 @@ Running GpuSort.exe directly
 ----------------------------
     GpuSort.exe --help
     GpuSort.exe --shaders _test\pass2 --wave-size 64 --out my_results.txt
+    GpuSort.exe --wave-probe --wave-size 64      (only the wave probe; still asks first)
 The exe finds shaders\ next to itself; --shaders selects a snapshot.

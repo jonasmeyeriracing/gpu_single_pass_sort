@@ -29,6 +29,7 @@ struct Options
     bool smoke = false;                  // --smoke: 3 iterations (unless --iterations), no warmup, one iteration in flight
     bool testRemove = false;             // --test-device-removal: remove the device after the first batch
     bool listAdapters = false;           // --list-adapters: print DXGI adapters and exit
+    bool waveProbe = false;              // --wave-probe: only run the wave probe (after the prompt) and exit
     bool help = false;
 };
 

@@ -84,6 +84,8 @@ std::string FormatResults(const RunInfo& info)
                       static_cast<unsigned long long>(gpu.dedicatedVideoMemory >> 20));
         out += Format("      wave lanes %u-%u, shaders compiled with WAVE_SIZE=%u%s\n", gpu.waveLaneCountMin,
                       gpu.waveLaneCountMax, gpu.waveSize, gpu.waveSizeAttribute ? " + [WaveSize]" : "");
+        for (const auto& line : gpu.waveProbe)
+            out += Format("      %s\n", line.c_str());
     }
     for (const auto& s : info.skippedAdapters)
         out += Format("  skipped: %s\n", s.c_str());
@@ -173,8 +175,15 @@ std::string FormatResults(const RunInfo& info)
             out += Format("  ERROR: %s\n", gpu.error.c_str());
         // Fixed prefix "SMOKE FAILED:" (tools/run_all.bat copies these lines into summary.txt).
         for (const auto& sf : gpu.smokeFailed)
-            out += Format("  SMOKE FAILED: %s on %s (first failing workload %s; its remaining workloads were skipped)\n",
-                          sf.algorithm.c_str(), gpu.name.c_str(), sf.workload.c_str());
+        {
+            if (!sf.reason.empty())
+                out += Format("  SMOKE FAILED: %s on %s (not run: %s)\n", sf.algorithm.c_str(), gpu.name.c_str(),
+                              sf.reason.c_str());
+            else
+                out += Format("  SMOKE FAILED: %s on %s (first failing workload %s; its remaining workloads were "
+                              "skipped)\n",
+                              sf.algorithm.c_str(), gpu.name.c_str(), sf.workload.c_str());
+        }
         for (const auto& c : gpu.combos)
         {
             for (const auto& m : c.result.failureMessages)
