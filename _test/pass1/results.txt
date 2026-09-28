@@ -1,0 +1,116 @@
+GpuSort benchmark results
+=========================
+Date:         2026-09-28 12:42:19
+Command line: D:\git\gpu_single_pass_sort\bin\Release\GpuSort.exe --out D:/git/gpu_single_pass_sort/_test/pass1/results.txt
+Shader dir:   D:\git\gpu_single_pass_sort\shaders
+Iterations:   1000 measured + 5 warmup per GPU x workload x algorithm, 20 sorts per iteration
+Cache flush:  256 MB read+write compute pass before every timed sort
+Timing:       GPU timestamps around the sort ExecuteIndirect dispatches only, per iteration (all 20 sorts)
+GPUs:
+  [0] NVIDIA GeForce RTX 5080  (driver 32.0.16.1088, timestamp freq 1000000000 Hz, wall time 30.9 s)
+  [1] NVIDIA GeForce RTX 2060  (driver 32.0.16.1088, timestamp freq 1000000000 Hz, wall time 90.2 s)
+  skipped: Microsoft Basic Render Driver: software adapter
+  skipped: NVIDIA GeForce RTX 5080 (LUID 00000000:0005A025): indirect display / non-render adapter
+Total benchmark time: 121.2 s (after confirmation)
+
+Workload size distribution (1000 measured iterations x 20 sorts; counts are sorts per size tier)
+  workload         total elems elems/iter         0      1-64    65-128   129-512  513-2048 2049-8192    max  distribution
+  mostly_empty          193276      193.3     14054      5946         0         0         0         0     64  70% empty, rest 1-64
+  mostly_small         1275951     1276.0       156      9992      9852         0         0         0    128  uniform 0-128
+  realistic_mix        9400912     9400.9      2973      1469      1813     11156      1982       607   8186  15% empty, 72% 16-512, 10% 513-2048, 3% 2049-8192
+  mostly_large       102411996   102412.0         0         0         0         0         1     19999   8192  uniform 2048-8192
+  worst_case         163840000   163840.0         0         0         0         0         0     20000   8192  all 8192
+  edges               27222759    27222.8       667      5336      2001      4002      3998      3996   8192  tier boundaries 0-8192 (30 fixed sizes, cycled)
+  mostly_mid          25649194    25649.2         0         0         0         0     20000         0   2048  uniform 513-2048
+
+Sort timings in microseconds (per iteration = 20 sorts)
+
+[0] NVIDIA GeForce RTX 5080
+  workload       algorithm                                   min    median      mean       p95       max  fails
+  mostly_empty   pass0_bitonic                              4.00      5.22      6.01      5.92    567.26      0
+                 t2_rank512_bitonic                         2.91      4.22      4.65      5.73    180.26      0
+                 t3_rank128_rank512_bitonic                 2.98      4.32      5.43      6.43    496.61      0
+                 t3_rank64_rank512_bitonic                  3.01      4.42      5.46      6.53    257.02      0
+                 t4_rank128_rank512_rank1024_bitonic        2.91      4.48      5.48      6.27    251.55      0
+                 t4_rank128_rank512_rank1024x2_bitonic      2.88      4.45      5.81      6.30    249.44      0
+  mostly_small   pass0_bitonic                              4.67      5.82      6.45      6.50    247.17      0
+                 t2_rank512_bitonic                         3.23      4.19      5.23      5.92    258.14      0
+                 t3_rank128_rank512_bitonic                 3.17      4.35      5.22      6.37    246.82      0
+                 t3_rank64_rank512_bitonic                  3.36      5.09      5.35      6.43    248.45      0
+                 t4_rank128_rank512_rank1024_bitonic        3.20      4.48      4.63      6.34      7.58      0
+                 t4_rank128_rank512_rank1024x2_bitonic      2.78      4.54      5.02      6.46    176.93      0
+  realistic_mix  pass0_bitonic                              6.75     13.98     24.56     45.41    248.48      0
+                 t2_rank512_bitonic                         4.83     16.03     25.27     46.53    172.58      0
+                 t3_rank128_rank512_bitonic                 5.50     16.43     26.58     46.66    295.68      0
+                 t3_rank64_rank512_bitonic                  5.02     16.50     25.53     46.56    172.61      0
+                 t4_rank128_rank512_rank1024_bitonic        5.44     16.62     25.96     46.94    258.08      0
+                 t4_rank128_rank512_rank1024x2_bitonic      5.73     30.85     31.61     46.75    240.06      0
+  mostly_large   pass0_bitonic                             44.06     45.79     45.98     46.62    246.94      0
+                 t2_rank512_bitonic                        44.54     46.72     47.36     48.22    283.78      0
+                 t3_rank128_rank512_bitonic                44.74     46.82     47.14     48.48    290.40      0
+                 t3_rank64_rank512_bitonic                 45.02     46.78     47.47     48.48    289.82      0
+                 t4_rank128_rank512_rank1024_bitonic       45.15     47.01     47.75     48.70    289.28      0
+                 t4_rank128_rank512_rank1024x2_bitonic     45.06     47.04     47.11     48.74     49.95      0
+  worst_case     pass0_bitonic                             44.29     46.37     46.56     47.07    235.78      0
+                 t2_rank512_bitonic                        45.09     47.33     47.52     48.61    200.80      0
+                 t3_rank128_rank512_bitonic                45.47     47.46     48.27     49.09    295.81      0
+                 t3_rank64_rank512_bitonic                 45.60     47.42     47.95     48.86    299.81      0
+                 t4_rank128_rank512_rank1024_bitonic       45.92     47.68     48.53     49.02    291.68      0
+                 t4_rank128_rank512_rank1024x2_bitonic     45.79     47.58     47.92     48.99    295.20      0
+  edges          pass0_bitonic                              7.87     45.39     33.82     46.34    287.20      0
+                 t2_rank512_bitonic                         8.74     46.11     35.35     47.74    281.70      0
+                 t3_rank128_rank512_bitonic                 8.35     46.24     35.44     47.94    210.85      0
+                 t3_rank64_rank512_bitonic                  8.83     46.27     35.15     48.03    201.25      0
+                 t4_rank128_rank512_rank1024_bitonic       11.42     46.40     36.00     48.00    289.63      0
+                 t4_rank128_rank512_rank1024x2_bitonic     11.46     46.34     35.77     48.19    167.71      0
+  mostly_mid     pass0_bitonic                             12.42     13.66     14.58     14.34    252.42      0
+                 t2_rank512_bitonic                        13.06     14.88     14.96     16.58     21.66      0
+                 t3_rank128_rank512_bitonic                13.34     15.04     15.98     17.09    269.76      0
+                 t3_rank64_rank512_bitonic                 13.38     15.04     15.31     16.93    172.22      0
+                 t4_rank128_rank512_rank1024_bitonic       13.50     15.20     16.74     17.34    274.18      0
+                 t4_rank128_rank512_rank1024x2_bitonic     25.82     32.80     34.15     35.14    340.38      0
+
+[1] NVIDIA GeForce RTX 2060
+  workload       algorithm                                   min    median      mean       p95       max  fails
+  mostly_empty   pass0_bitonic                              6.14      8.26      8.56     10.59     18.40      0
+                 t2_rank512_bitonic                         4.10      5.81      5.69      6.14      8.06      0
+                 t3_rank128_rank512_bitonic                 4.10      5.95      5.83      6.14      9.28      0
+                 t3_rank64_rank512_bitonic                  4.16      5.92      5.81      6.14      7.71      0
+                 t4_rank128_rank512_rank1024_bitonic        4.70      6.43      6.57      7.49      8.19      0
+                 t4_rank128_rank512_rank1024x2_bitonic      4.54      6.46      6.58      7.46      8.42      0
+  mostly_small   pass0_bitonic                              8.19      9.44      9.41     10.24     21.47      0
+                 t2_rank512_bitonic                         4.10      6.08      5.97      6.14      8.19      0
+                 t3_rank128_rank512_bitonic                 4.29      6.21      6.30      7.26      8.10      0
+                 t3_rank64_rank512_bitonic                  4.80      6.66      6.76      7.68     18.43      0
+                 t4_rank128_rank512_rank1024_bitonic        4.93      6.85      6.91      7.84      8.67      0
+                 t4_rank128_rank512_rank1024x2_bitonic      4.96      6.78      6.85      7.78      9.31      0
+  realistic_mix  pass0_bitonic                             11.01     24.53     36.87     66.88     89.28      0
+                 t2_rank512_bitonic                         8.19     25.54     37.22     67.58     88.77      0
+                 t3_rank128_rank512_bitonic                 8.51     24.58     37.92     68.93     88.86      0
+                 t3_rank64_rank512_bitonic                  8.38     24.86     37.71     67.49     88.86      0
+                 t4_rank128_rank512_rank1024_bitonic        8.58     26.58     38.80     67.90     89.98      0
+                 t4_rank128_rank512_rank1024x2_bitonic      8.80     69.15     66.64     85.86   3082.53      0
+  mostly_large   pass0_bitonic                             76.38     89.47     92.07     95.55   2969.15      0
+                 t2_rank512_bitonic                        76.67     89.06     92.82     95.30   2877.89      0
+                 t3_rank128_rank512_bitonic                77.82     90.18     90.67     96.51    100.35      0
+                 t3_rank64_rank512_bitonic                 77.82     90.11     90.39     96.26    100.35      0
+                 t4_rank128_rank512_rank1024_bitonic       78.30     90.30     91.16     96.51    100.67      0
+                 t4_rank128_rank512_rank1024x2_bitonic     77.82     90.11     91.02     96.42     98.30      0
+  worst_case     pass0_bitonic                             88.80     91.39     92.44     97.50    104.32      0
+                 t2_rank512_bitonic                        88.86     91.38     92.53     97.70    104.51      0
+                 t3_rank128_rank512_bitonic                90.75     92.26     93.80     99.10    102.46      0
+                 t3_rank64_rank512_bitonic                 90.62     92.22     93.80     99.04    103.20      0
+                 t4_rank128_rank512_rank1024_bitonic       90.30     92.16     93.70     98.85    103.20      0
+                 t4_rank128_rank512_rank1024x2_bitonic     90.30     92.16     93.60     98.62    115.33      0
+  edges          pass0_bitonic                             14.34     65.28     49.19     71.01     73.31      0
+                 t2_rank512_bitonic                        14.69     65.50     49.73     71.55     73.73      0
+                 t3_rank128_rank512_bitonic                14.46     65.94     51.70     77.82     90.11      0
+                 t3_rank64_rank512_bitonic                 14.94     65.95     50.89     71.87     77.63      0
+                 t4_rank128_rank512_rank1024_bitonic       23.52     71.81     60.31     89.76     98.34      0
+                 t4_rank128_rank512_rank1024x2_bitonic     24.48     86.05     66.59     92.16     97.73      0
+  mostly_mid     pass0_bitonic                             22.50     24.06     24.38     29.50     45.12      0
+                 t2_rank512_bitonic                        22.53     24.51     24.80     30.27     31.39      0
+                 t3_rank128_rank512_bitonic                22.72     24.90     25.66     30.78     36.83      0
+                 t3_rank64_rank512_bitonic                 22.88     24.90     25.59     30.72     34.46      0
+                 t4_rank128_rank512_rank1024_bitonic       24.58     26.37     26.69     32.38     37.66      0
+                 t4_rank128_rank512_rank1024x2_bitonic     68.67     85.70     84.97     90.85     95.49      0

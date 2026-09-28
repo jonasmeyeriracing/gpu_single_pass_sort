@@ -9,7 +9,17 @@ enum WorkloadId : uint32_t
     kRealisticMix = 2,
     kMostlyLarge = 3,
     kWorstCase = 4,
+    kEdges = 5,
+    kMostlyMid = 6,
 };
+
+// Deterministic sizes around every size-tier boundary the shaders use (powers of two and their
+// neighbours), cycled through in order so a few iterations cover all of them.
+constexpr uint32_t kEdgeSizes[] = {
+    0,   1,   2,   3,   31,  32,   33,   63,   64,   65,   127,  128,  129,  255,  256,
+    257, 511, 512, 513, 1023, 1024, 1025, 2047, 2048, 2049, 4095, 4096, 4097, 8191, 8192,
+};
+constexpr uint32_t kNumEdgeSizes = static_cast<uint32_t>(sizeof(kEdgeSizes) / sizeof(kEdgeSizes[0]));
 
 uint64_t SplitMix64(uint64_t x)
 {
@@ -45,6 +55,8 @@ uint32_t DrawSize(uint32_t workloadId, Pcg32& rng)
     }
     case kMostlyLarge:
         return rng.Range(2048, 8192);
+    case kMostlyMid:
+        return rng.Range(513, 2048);
     case kWorstCase:
     default:
         return kMaxSortSize;
@@ -60,6 +72,8 @@ const std::vector<WorkloadDesc>& Workloads()
         {"realistic_mix", "15% empty, 72% 16-512, 10% 513-2048, 3% 2049-8192"},
         {"mostly_large", "uniform 2048-8192"},
         {"worst_case", "all 8192"},
+        {"edges", "tier boundaries 0-8192 (30 fixed sizes, cycled)"},
+        {"mostly_mid", "uniform 513-2048"},
     };
     return list;
 }
@@ -77,6 +91,12 @@ int FindWorkload(const std::string& name)
 
 void GenerateSizes(uint32_t workloadId, uint32_t iteration, uint32_t sizes[kSortsPerIteration])
 {
+    if (workloadId == kEdges)
+    {
+        for (uint32_t i = 0; i < kSortsPerIteration; ++i)
+            sizes[i] = kEdgeSizes[(uint64_t(iteration) * kSortsPerIteration + i) % kNumEdgeSizes];
+        return;
+    }
     Pcg32 rng(IterationSeed(workloadId, iteration), 1);
     for (uint32_t i = 0; i < kSortsPerIteration; ++i)
         sizes[i] = DrawSize(workloadId, rng);
