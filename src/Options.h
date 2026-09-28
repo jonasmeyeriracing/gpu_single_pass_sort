@@ -8,12 +8,15 @@ struct Options
 {
     std::wstring shaderDir;              // --shaders <dir>; empty = auto-detect
     std::wstring outPath;                // --out <file>; empty = results.txt next to the exe
+    std::wstring logPath;                // --log <file>: also write the console output to this file
+    std::string label;                   // --label <text>: shown in the prompt, window and results header
     uint32_t iterations = 1000;          // --iterations N (measured iterations per gpu/workload/algorithm)
     uint32_t warmup = 5;                 // --warmup N (extra iterations excluded from stats)
     std::vector<std::string> algorithms; // --algo name[,name]; empty = all registered
     std::vector<std::string> workloads;  // --workload name[,name]; empty = all
     std::string gpuFilter;               // --gpu <substring>; empty = all qualifying GPUs
     uint32_t waveSize = 0;               // --wave-size N: compile with WAVE_SIZE=N + [WaveSize(N)]; 0 = device min
+                                         // (GPUs whose lane range does not contain N are skipped)
     bool warp = false;                   // --warp: run only on WARP (no prompt, no window)
     bool noPrompt = false;               // --no-prompt
     bool debugLayer = false;             // --debug: enable the D3D12 debug layer

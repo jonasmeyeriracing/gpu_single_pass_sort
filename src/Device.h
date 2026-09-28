@@ -15,6 +15,8 @@ struct GpuInfo
     std::string name;
     std::string driver;          // UMD driver version, e.g. "32.0.16.1088"
     uint64_t dedicatedVideoMemory = 0;
+    uint32_t vendorId = 0;       // PCI ids from DXGI_ADAPTER_DESC1 (0x10DE NVIDIA, 0x1002 AMD, 0x8086 Intel)
+    uint32_t deviceId = 0;
     bool isWarp = false;
     // D3D12_FEATURE_DATA_D3D12_OPTIONS1 (0 if wave ops are not supported).
     uint32_t waveLaneCountMin = 0;
@@ -37,7 +39,9 @@ std::string FormatDredReport(ID3D12Device* device);
 // Returns (and clears) messages stored by the debug layer's info queue; empty if the layer is off.
 std::vector<std::string> DrainDebugMessages(ID3D12Device* device);
 
-// Prints every DXGI adapter with its LUID / ids / flags (diagnostics, no GPU work).
+// Prints every DXGI adapter with its LUID / ids / flags, then the adapters EnumerateGpus would
+// pick for a hardware run (with their wave lane ranges) and the skipped ones (diagnostics, no GPU
+// work).
 void PrintAdapterList();
 
 // Enumerates qualifying adapters (hardware, D3D12 device creation succeeds, SM 6.6+), in

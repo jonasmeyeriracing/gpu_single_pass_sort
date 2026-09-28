@@ -25,5 +25,13 @@ std::wstring Utf8ToWide(const std::string& s);
 // printf-style formatting into a std::string.
 std::string Format(const char* fmt, ...);
 
-// Prints to stdout and flushes (so progress is visible when stdout is redirected).
+// Prints to stdout and flushes (so progress is visible when stdout is redirected). Also appends to
+// the log file, if one was opened with OpenLogFile.
 void Log(const char* fmt, ...);
+
+// Like Log, but prints to stderr (and to the log file).
+void LogError(const char* fmt, ...);
+
+// --log <file>: from now on Log / LogError also write to this file (truncated). Returns false if it
+// cannot be opened.
+bool OpenLogFile(const std::wstring& path);

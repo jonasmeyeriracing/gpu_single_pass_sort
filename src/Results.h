@@ -23,6 +23,9 @@ struct GpuRecord
 {
     std::string name;
     std::string driver;
+    uint32_t vendorId = 0;
+    uint32_t deviceId = 0;
+    uint64_t dedicatedVideoMemory = 0;
     uint64_t timestampFrequency = 0;
     uint32_t waveLaneCountMin = 0;  // D3D12_FEATURE_DATA_D3D12_OPTIONS1
     uint32_t waveLaneCountMax = 0;
@@ -36,6 +39,8 @@ struct GpuRecord
 struct RunInfo
 {
     std::string date;
+    std::string computerName;
+    std::string label; // --label
     std::string shaderDir;
     std::string commandLine;
     uint32_t iterations = 0;
