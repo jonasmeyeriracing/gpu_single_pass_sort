@@ -1,0 +1,40 @@
+GpuSort benchmark results
+=========================
+Date:         2026-09-28 10:46:53
+Command line: "D:\git\gpu_single_pass_sort\bin\Release\GpuSort.exe" --out D:\git\gpu_single_pass_sort\_test\pass0\results.txt
+Shader dir:   D:\git\gpu_single_pass_sort\shaders
+Iterations:   1000 measured + 5 warmup per GPU x workload x algorithm, 20 sorts per iteration
+Cache flush:  256 MB read+write compute pass before every timed sort
+Timing:       GPU timestamps around the sort ExecuteIndirect dispatches only, per iteration (all 20 sorts)
+GPUs:
+  [0] NVIDIA GeForce RTX 5080  (driver 32.0.16.1088, timestamp freq 1000000000 Hz, wall time 3.8 s)
+  [1] NVIDIA GeForce RTX 2060  (driver 32.0.16.1088, timestamp freq 1000000000 Hz, wall time 10.9 s)
+  skipped: Microsoft Basic Render Driver: software adapter
+  skipped: NVIDIA GeForce RTX 5080 (LUID 00000000:0005D532): indirect display / non-render adapter
+Total run time: 18.7 s
+
+Workload size distribution (1000 measured iterations x 20 sorts; counts are sorts per size tier)
+  workload         total elems elems/iter         0      1-64    65-128   129-512  513-2048 2049-8192    max  distribution
+  mostly_empty          193276      193.3     14054      5946         0         0         0         0     64  70% empty, rest 1-64
+  mostly_small         1275951     1276.0       156      9992      9852         0         0         0    128  uniform 0-128
+  realistic_mix        9400912     9400.9      2973      1469      1813     11156      1982       607   8186  15% empty, 72% 16-512, 10% 513-2048, 3% 2049-8192
+  mostly_large       102411996   102412.0         0         0         0         0         1     19999   8192  uniform 2048-8192
+  worst_case         163840000   163840.0         0         0         0         0         0     20000   8192  all 8192
+
+Sort timings in microseconds (per iteration = 20 sorts)
+
+[0] NVIDIA GeForce RTX 5080
+  workload       algorithm           min    median      mean       p95       max  fails
+  mostly_empty   pass0_bitonic      2.08      4.26      5.59      5.12    530.62      0
+  mostly_small   pass0_bitonic      4.03      4.80      5.48      5.70    252.13      0
+  realistic_mix  pass0_bitonic      5.76     13.18     23.45     43.68    243.20      0
+  mostly_large   pass0_bitonic     42.85     44.16     44.41     45.02    283.62      0
+  worst_case     pass0_bitonic     43.46     44.86     44.85     45.66     47.42      0
+
+[1] NVIDIA GeForce RTX 2060
+  workload       algorithm           min    median      mean       p95       max  fails
+  mostly_empty   pass0_bitonic      4.80      8.19      8.37     10.27     14.21      0
+  mostly_small   pass0_bitonic      8.13      9.09     16.15     10.05   7028.74      0
+  realistic_mix  pass0_bitonic     10.24     23.44     36.51     65.73     88.03      0
+  mostly_large   pass0_bitonic     75.90     89.34    110.35     96.26   7126.98      0
+  worst_case     pass0_bitonic     89.06     91.36     99.45     98.18   7090.11      0

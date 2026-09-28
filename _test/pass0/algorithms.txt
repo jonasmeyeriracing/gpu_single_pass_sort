@@ -1,0 +1,15 @@
+# Algorithm registry for this shader directory (read by GpuSort at startup).
+#
+#   algorithm <name>
+#   dispatch <file.hlsl> <entryPoint> <groupSize> [NAME=VALUE ...]
+#
+# Each 'dispatch' line is one ExecuteIndirect(DISPATCH {numSorts, 1, 1}) of that shader, compiled
+# at runtime for cs_6_6 with -O3. The framework always adds -D GROUP_SIZE=<groupSize>; extra
+# NAME=VALUE tokens become further defines (e.g. the size tier bounds MIN_COUNT / MAX_COUNT).
+# One group handles one sort (SV_GroupID.x = sort index). The dispatches of an algorithm are
+# issued back-to-back WITHOUT barriers, so each one must early-out for sorts outside its tier.
+#
+# Bindings (see common.hlsli): b0 root constants, t0 sort descriptors, t1 input, u0 output.
+
+algorithm pass0_bitonic
+dispatch pass0_bitonic.hlsl main 1024 MIN_COUNT=1 MAX_COUNT=8192
