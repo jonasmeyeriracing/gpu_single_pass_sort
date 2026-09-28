@@ -1,0 +1,275 @@
+GpuSort benchmark results
+=========================
+Date:         2026-09-28 13:59:33
+Command line: "D:\git\gpu_single_pass_sort\bin\Release\GpuSort.exe" --out D:/git/gpu_single_pass_sort/_test/pass2/results.txt
+Shader dir:   D:\git\gpu_single_pass_sort\shaders
+Iterations:   1000 measured + 5 warmup per GPU x workload x algorithm, 20 sorts per iteration
+Cache flush:  256 MB read+write compute pass before every timed sort
+Timing:       GPU timestamps around the sort ExecuteIndirect dispatches only, per iteration (all 20 sorts)
+GPUs:
+  [0] NVIDIA GeForce RTX 5080  (driver 32.0.16.1088, timestamp freq 1000000000 Hz, wall time 86.5 s)
+      wave lanes 32-32, shaders compiled with WAVE_SIZE=32
+  [1] NVIDIA GeForce RTX 2060  (driver 32.0.16.1088, timestamp freq 1000000000 Hz, wall time 255.0 s)
+      wave lanes 32-32, shaders compiled with WAVE_SIZE=32
+  skipped: Microsoft Basic Render Driver: software adapter
+  skipped: NVIDIA GeForce RTX 5080 (LUID 00000000:0005A025): indirect display / non-render adapter
+Total benchmark time: 341.6 s (after confirmation)
+
+Workload size distribution (1000 measured iterations x 20 sorts; counts are sorts per size tier)
+  workload         total elems elems/iter         0      1-64    65-128   129-512  513-2048 2049-8192    max  distribution
+  mostly_empty          193276      193.3     14054      5946         0         0         0         0     64  70% empty, rest 1-64
+  mostly_small         1275951     1276.0       156      9992      9852         0         0         0    128  uniform 0-128
+  realistic_mix        9400912     9400.9      2973      1469      1813     11156      1982       607   8186  15% empty, 72% 16-512, 10% 513-2048, 3% 2049-8192
+  mostly_large       102411996   102412.0         0         0         0         0         1     19999   8192  uniform 2048-8192
+  worst_case         163840000   163840.0         0         0         0         0         0     20000   8192  all 8192
+  edges               27222759    27222.8       667      5336      2001      4002      3998      3996   8192  tier boundaries 0-8192 (30 fixed sizes, cycled)
+  mostly_mid          25649194    25649.2         0         0         0         0     20000         0   2048  uniform 513-2048
+  mostly_medium        6400095     6400.1         0         0         0     20000         0         0    512  uniform 129-512
+
+Sort timings in microseconds (per iteration = 20 sorts)
+
+[0] NVIDIA GeForce RTX 5080  (WAVE_SIZE 32)
+  workload       algorithm                         min    median      mean       p95       max  fails
+  mostly_empty   pass0_bitonic                    2.94      5.09      6.13      5.86    209.02      0
+                 t2_rank512_bitonic               2.56      4.10      5.39      5.76    296.45      0
+                 t2_rank512_bitreg                2.56      4.18      5.24      5.79    254.56      0
+                 t2_rank512_bitreg16              2.46      4.13      4.78      5.92    210.30      0
+                 t2_rank512_bitreg32              2.66      4.13      5.80      6.11    266.82      0
+                 t2_rank512_radix                 2.53      4.19      4.96      6.21    244.13      0
+                 t2_rank512_radix_waveops         2.53      4.22      4.53      6.27    215.01      0
+                 s1_rank512_bitreg                2.56      3.68      4.08      4.70    211.04      0
+                 s1_rank1024_bitreg               2.40      3.68      4.14      4.74    244.10      0
+                 s1_rank512_radix                 2.37      3.74      3.94      4.70    166.98      0
+                 s1_rank1024_radix                2.37      3.71      3.76      4.74      5.47      0
+                 s1_rank512_bitreg2048_radix      2.40      3.68      4.08      4.64    242.18      0
+                 s1_rank512_bitreg4096_radix      2.46      3.68      3.90      4.77    166.11      0
+                 s1_bitreg                        4.42      5.57      6.07      6.50    246.11      0
+                 s1_radix                        10.18     11.39     13.28     13.92    259.78      0
+  mostly_small   pass0_bitonic                    4.58      5.76      6.51      6.46    249.25      0
+                 t2_rank512_bitonic               2.72      4.13      5.65      5.73    250.85      0
+                 t2_rank512_bitreg                2.75      4.16      4.92      6.05    413.60      0
+                 t2_rank512_bitreg16              2.66      4.16      4.68      5.73    213.25      0
+                 t2_rank512_bitreg32              2.56      4.13      4.71      5.98    213.63      0
+                 t2_rank512_radix                 2.66      4.19      5.62      6.18    250.30      0
+                 t2_rank512_radix_waveops         2.66      4.13      4.51      6.24    165.92      0
+                 s1_rank512_bitreg                2.59      3.81      3.97      4.70    157.63      0
+                 s1_rank1024_bitreg               2.59      3.81      4.33      4.74    209.47      0
+                 s1_rank512_radix                 2.75      3.94      4.32      4.77    205.89      0
+                 s1_rank1024_radix                2.62      3.81      4.23      4.99    214.05      0
+                 s1_rank512_bitreg2048_radix      2.53      3.84      4.08      4.64    240.99      0
+                 s1_rank512_bitreg4096_radix      2.59      3.81      5.32      4.80    249.28      0
+                 s1_bitreg                        4.48      5.57      6.26      6.43    244.90      0
+                 s1_radix                        10.21     11.26     11.67     14.02    167.36      0
+  realistic_mix  pass0_bitonic                    6.40     13.94     24.63     45.02    251.23      0
+                 t2_rank512_bitonic               4.38     15.55     25.19     46.08    215.81      0
+                 t2_rank512_bitreg                4.42     12.30     18.19     30.94    226.30      0
+                 t2_rank512_bitreg16              4.96     12.61     17.37     29.06    250.82      0
+                 t2_rank512_bitreg32              4.29     15.36     19.44     31.52    275.14      0
+                 t2_rank512_radix                 4.67     13.98     14.61     18.08    261.98      0
+                 t2_rank512_radix_waveops         4.45     19.42     19.00     24.61    233.38      0
+                 s1_rank512_bitreg                4.83     10.61     16.92     29.34    281.92      0
+                 s1_rank1024_bitreg               4.58     11.14     16.80     29.38    251.97      0
+                 s1_rank512_radix                 4.83     13.76     13.57     17.09    218.62      0
+                 s1_rank1024_radix                4.42     13.84     13.72     17.02    253.34      0
+                 s1_rank512_bitreg2048_radix      4.64     10.56     12.41     17.63    223.04      0
+                 s1_rank512_bitreg4096_radix      4.74     10.56     12.80     17.73    249.66      0
+                 s1_bitreg                        5.95     10.64     16.50     29.31    216.93      0
+                 s1_radix                        10.27     12.26     13.56     16.80    254.59      0
+  mostly_large   pass0_bitonic                   43.71     45.41     45.56     46.27    204.22      0
+                 t2_rank512_bitonic              44.16     46.27     46.96     47.90    288.48      0
+                 t2_rank512_bitreg               29.25     32.35     32.64     34.05    271.20      0
+                 t2_rank512_bitreg16             26.78     30.30     31.06     32.10    238.34      0
+                 t2_rank512_bitreg32             29.34     32.32     33.19     33.89    264.35      0
+                 t2_rank512_radix                15.58     18.53     18.98     20.45    227.33      0
+                 t2_rank512_radix_waveops        18.08     21.57     22.49     27.68    267.74      0
+                 s1_rank512_bitreg               29.09     31.17     31.32     32.13    187.20      0
+                 s1_rank1024_bitreg              28.06     31.15     31.15     32.19     33.02      0
+                 s1_rank512_radix                14.88     18.02     18.65     19.49    255.42      0
+                 s1_rank1024_radix               14.66     17.66     18.22     19.23    220.19      0
+                 s1_rank512_bitreg2048_radix     14.11     17.60     17.79     19.20    164.64      0
+                 s1_rank512_bitreg4096_radix     15.17     17.34     17.95     19.14    223.17      0
+                 s1_bitreg                       28.99     31.17     31.50     32.13    199.90      0
+                 s1_radix                        14.72     17.89     18.25     19.36    263.90      0
+  worst_case     pass0_bitonic                   44.51     46.08     47.25     46.88    286.37      0
+                 t2_rank512_bitonic              44.86     47.01     47.82     48.38    289.38      0
+                 t2_rank512_bitreg               31.81     33.60     34.62     35.07    274.69      0
+                 t2_rank512_bitreg16             29.86     31.74     32.35     33.34    236.13      0
+                 t2_rank512_bitreg32             30.94     33.22     33.84     35.07    238.21      0
+                 t2_rank512_radix                18.78     20.51     20.88     22.98    180.83      0
+                 t2_rank512_radix_waveops        22.02     23.65     25.08     30.43    271.36      0
+                 s1_rank512_bitreg               31.23     32.32     32.89     33.25    254.05      0
+                 s1_rank1024_bitreg              31.17     32.35     32.97     33.34    238.72      0
+                 s1_rank512_radix                18.62     20.03     20.47     22.14    226.62      0
+                 s1_rank1024_radix               18.66     19.74     20.52     21.70    233.50      0
+                 s1_rank512_bitreg2048_radix     18.30     19.62     20.49     22.18    259.90      0
+                 s1_rank512_bitreg4096_radix     17.92     19.04     20.15     21.73    257.06      0
+                 s1_bitreg                       31.20     32.35     32.39     33.15     33.76      0
+                 s1_radix                        18.94     19.97     20.47     21.47    222.98      0
+  edges          pass0_bitonic                    7.71     44.74     33.77     46.05    323.07      0
+                 t2_rank512_bitonic               8.26     45.60     34.65     47.26    291.20      0
+                 t2_rank512_bitreg                7.36     31.33     25.24     34.14    250.82      0
+                 t2_rank512_bitreg16              8.13     29.25     23.77     32.54     41.12      0
+                 t2_rank512_bitreg32             10.50     32.22     26.11     34.21    236.10      0
+                 t2_rank512_radix                10.78     18.94     17.62     21.47    272.83      0
+                 t2_rank512_radix_waveops        13.41     22.37     21.31     27.14    225.18      0
+                 s1_rank512_bitreg                6.59     31.65     24.60     32.67    235.84      0
+                 s1_rank1024_bitreg              10.27     31.68     25.39     32.58    183.78      0
+                 s1_rank512_radix                10.53     19.55     17.80     20.48    252.54      0
+                 s1_rank1024_radix               10.37     19.23     17.50     20.19    252.06      0
+                 s1_rank512_bitreg2048_radix      6.66     19.10     15.64     20.03    172.29      0
+                 s1_rank512_bitreg4096_radix      6.75     18.53     15.84     19.87    263.71      0
+                 s1_bitreg                        6.72     31.81     24.33     32.70    268.93      0
+                 s1_radix                        10.50     19.52     17.22     20.48    173.47      0
+  mostly_mid     pass0_bitonic                   12.22     13.63     14.12     14.37    263.04      0
+                 t2_rank512_bitonic              12.83     14.72     15.02     16.48    225.15      0
+                 t2_rank512_bitreg                9.66     11.46     12.75     13.18    256.19      0
+                 t2_rank512_bitreg16             10.18     11.87     12.38     13.70    282.30      0
+                 t2_rank512_bitreg32             12.86     14.66     15.48     16.77    294.08      0
+                 t2_rank512_radix                11.33     13.09     13.93     16.42    228.03      0
+                 t2_rank512_radix_waveops        14.02     15.81     17.10     24.35    174.78      0
+                 s1_rank512_bitreg                9.18     10.34     10.99     11.14    221.15      0
+                 s1_rank1024_bitreg               9.38     11.04     11.36     11.90    211.94      0
+                 s1_rank512_radix                10.91     12.22     13.35     15.07    258.11      0
+                 s1_rank1024_radix               10.69     11.94     13.03     14.94    253.92      0
+                 s1_rank512_bitreg2048_radix      9.06     10.27     10.49     11.10    214.27      0
+                 s1_rank512_bitreg4096_radix      8.99     10.24     10.63     11.07    214.14      0
+                 s1_bitreg                        9.22     10.27     10.44     11.01    169.15      0
+                 s1_radix                        10.91     12.10     12.77     14.37    166.75      0
+  mostly_medium  pass0_bitonic                    6.27      7.42      7.95      8.16    212.64      0
+                 t2_rank512_bitonic               4.45      5.60      6.48      6.37    251.04      0
+                 t2_rank512_bitreg                4.42      5.57      5.98      6.40    249.60      0
+                 t2_rank512_bitreg16              4.26      5.54      6.19      6.43    251.81      0
+                 t2_rank512_bitreg32              4.32      5.60      6.21      6.46    245.31      0
+                 t2_rank512_radix                 4.32      5.57      6.59      6.59    246.11      0
+                 t2_rank512_radix_waveops         4.29      5.60      6.24      6.53    228.06      0
+                 s1_rank512_bitreg                4.35      5.73      6.19      6.46    177.57      0
+                 s1_rank1024_bitreg               4.35      5.70      6.10      6.50    247.49      0
+                 s1_rank512_radix                 4.64      5.82      6.55      6.56    247.78      0
+                 s1_rank1024_radix                4.42      5.73      5.90      6.50    171.04      0
+                 s1_rank512_bitreg2048_radix      4.38      5.76      6.08      6.53    167.74      0
+                 s1_rank512_bitreg4096_radix      4.58      5.76      6.35      6.53    244.67      0
+                 s1_bitreg                        5.57      6.62      7.14      7.49    281.60      0
+                 s1_radix                        10.24     11.30     12.67     13.95    256.03      0
+
+[1] NVIDIA GeForce RTX 2060  (WAVE_SIZE 32)
+  workload       algorithm                         min    median      mean       p95       max  fails
+  mostly_empty   pass0_bitonic                    6.14      8.32      8.68     10.82     19.87      0
+                 t2_rank512_bitonic               4.45      5.86      5.79      6.14     20.10      0
+                 t2_rank512_bitreg                4.10      5.79      5.70      6.14      9.60      0
+                 t2_rank512_bitreg16              4.10      6.08      5.97      6.14     12.32      0
+                 t2_rank512_bitreg32              4.10      5.95      5.87      6.14     30.56      0
+                 t2_rank512_radix                 4.10      5.82      5.76      6.14     30.72      0
+                 t2_rank512_radix_waveops         4.10      5.82      5.71      6.14     12.29      0
+                 s1_rank512_bitreg                4.10      5.95      5.83      6.14      9.82      0
+                 s1_rank1024_bitreg               4.16      5.95      5.84      6.14     12.03      0
+                 s1_rank512_radix                 4.10      5.98      5.85      6.14     11.78      0
+                 s1_rank1024_radix                4.10      5.98      5.87      6.14     10.08      0
+                 s1_rank512_bitreg2048_radix      4.10      6.08      5.92      6.14     10.66      0
+                 s1_rank512_bitreg4096_radix      4.10      6.05      5.92      6.14      9.06      0
+                 s1_bitreg                        8.58     10.40     10.49     11.42     12.32      0
+                 s1_radix                        17.02     18.40     18.33     18.46     32.77      0
+  mostly_small   pass0_bitonic                    8.19      9.47      9.46     10.24     21.44      0
+                 t2_rank512_bitonic               4.10      6.08      5.97      6.14      7.97      0
+                 t2_rank512_bitreg                4.10      6.05      5.96      6.14     18.62      0
+                 t2_rank512_bitreg16              4.83      6.70      6.82      7.78      8.38      0
+                 t2_rank512_bitreg32              4.99      6.59      6.70      7.62     16.42      0
+                 t2_rank512_radix                 4.19      6.06      5.96      6.14     10.24      0
+                 t2_rank512_radix_waveops         4.10      6.08      5.97      6.14     17.18      0
+                 s1_rank512_bitreg                4.16      6.14      6.09      6.24     18.43      0
+                 s1_rank1024_bitreg               4.19      6.14      6.05      6.21     18.75      0
+                 s1_rank512_radix                 4.10      6.14      6.02      6.21      7.68      0
+                 s1_rank1024_radix                4.10      6.14      6.09      6.30     10.27      0
+                 s1_rank512_bitreg2048_radix      4.35      6.14      6.14      6.40     10.94      0
+                 s1_rank512_bitreg4096_radix      4.19      6.14      6.15      6.37     10.24      0
+                 s1_bitreg                        8.77     10.43     10.52     11.46     13.25      0
+                 s1_radix                        16.93     18.43     18.39     18.56     24.58      0
+  realistic_mix  pass0_bitonic                   10.59     24.64     36.89     67.07     89.25      0
+                 t2_rank512_bitonic               8.35     23.98     37.06     66.91     87.62      0
+                 t2_rank512_bitreg                8.35     23.46     26.97     45.06     51.65      0
+                 t2_rank512_bitreg16              8.19     23.68     27.81     47.10     73.15      0
+                 t2_rank512_bitreg32              8.19     30.58     33.61     52.77     76.58      0
+                 t2_rank512_radix                 8.03     22.69     23.19     28.67     45.28      0
+                 t2_rank512_radix_waveops         8.19     40.70     39.32     45.18     64.96      0
+                 s1_rank512_bitreg                8.32     17.66     25.77     44.77     51.10      0
+                 s1_rank1024_bitreg               8.19     22.85     26.61     44.77     51.20      0
+                 s1_rank512_radix                 8.19     19.84     20.96     27.49    489.47      0
+                 s1_rank1024_radix                8.26     20.48     20.97     28.22     34.53      0
+                 s1_rank512_bitreg2048_radix      8.51     18.14     19.89     28.06     34.82      0
+                 s1_rank512_bitreg4096_radix      8.19     18.27     20.43     28.67     34.59      0
+                 s1_bitreg                       10.91     18.16     26.19     44.54     51.20      0
+                 s1_radix                        17.22     19.31     20.68     26.98     47.10      0
+  mostly_large   pass0_bitonic                   76.06     89.50     89.38     95.68    100.38      0
+                 t2_rank512_bitonic              76.45     89.30     89.79     95.52    110.14      0
+                 t2_rank512_bitreg               44.74     49.06     49.44     55.30     67.04      0
+                 t2_rank512_bitreg16             45.34     75.70     73.71     83.97     91.84      0
+                 t2_rank512_bitreg32             53.09     79.87     78.24     90.11    100.35      0
+                 t2_rank512_radix                27.49     31.04     32.25     37.82     42.91      0
+                 t2_rank512_radix_waveops        43.14     47.90     48.70     54.46     66.59      0
+                 s1_rank512_bitreg               43.01     48.67     49.30     55.04    367.71      0
+                 s1_rank1024_bitreg              43.46     48.74     49.02     54.98     58.75      0
+                 s1_rank512_radix                24.58     30.85     31.70     37.66     43.36      0
+                 s1_rank1024_radix               24.29     31.25     32.01     38.34     45.12      0
+                 s1_rank512_bitreg2048_radix     25.12     30.72     31.45     36.86     43.01      0
+                 s1_rank512_bitreg4096_radix     25.47     30.72     31.48     36.86     53.54      0
+                 s1_bitreg                       43.01     49.09     49.27     55.23     59.04      0
+                 s1_radix                        22.72     31.07     31.67     37.06     65.12      0
+  worst_case     pass0_bitonic                   90.11     92.16     93.19     98.30    104.67      0
+                 t2_rank512_bitonic              90.11     92.13     93.13     98.30    117.54      0
+                 t2_rank512_bitreg               49.54     52.56     54.18     59.01    526.34      0
+                 t2_rank512_bitreg16             53.82     90.34     89.82     96.80    102.40      0
+                 t2_rank512_bitreg32             66.43    102.40    101.21    108.80    117.06      0
+                 t2_rank512_radix                36.74     38.40     39.41     44.67     63.49      0
+                 t2_rank512_radix_waveops        51.71     53.71     55.07     59.68     65.22      0
+                 s1_rank512_bitreg               50.37     52.45     53.50     58.56     78.05      0
+                 s1_rank1024_bitreg              49.44     52.46     53.47     58.69     66.72      0
+                 s1_rank512_radix                36.86     38.91     39.96     45.06     46.75      0
+                 s1_rank1024_radix               36.86     38.91     40.51     45.06    518.78      0
+                 s1_rank512_bitreg2048_radix     36.86     38.53     39.59     44.77     55.74      0
+                 s1_rank512_bitreg4096_radix     36.67     38.24     39.22     44.35     49.44      0
+                 s1_bitreg                       51.20     52.74     57.37     58.88   3630.08      0
+                 s1_radix                        36.86     38.82     39.87     45.06     51.07      0
+  edges          pass0_bitonic                   13.25     65.54     49.68     71.68     77.95      0
+                 t2_rank512_bitonic              14.85     65.57     50.12     71.68     86.02      0
+                 t2_rank512_bitreg               14.34     45.06     36.08     51.14     52.61      0
+                 t2_rank512_bitreg16             16.10     48.99     41.84     61.15     79.87      0
+                 t2_rank512_bitreg32             20.51     53.31     46.90     66.53     86.02      0
+                 t2_rank512_radix                20.35     28.67     27.37     34.50     36.86      0
+                 t2_rank512_radix_waveops        38.91     44.54     43.79     49.98     52.80      0
+                 s1_rank512_bitreg               12.29     45.06     35.44     51.10     53.70      0
+                 s1_rank1024_bitreg              22.53     45.06     38.89     50.88    366.88      0
+                 s1_rank512_radix                17.70     28.45     25.90     33.60     36.26      0
+                 s1_rank1024_radix               22.85     28.67     27.79     34.66     36.58      0
+                 s1_rank512_bitreg2048_radix     12.80     27.46     23.90     32.99     36.67      0
+                 s1_rank512_bitreg4096_radix     12.86     28.10     24.21     33.54     45.06      0
+                 s1_bitreg                       12.54     45.06     35.42     50.14     57.54      0
+                 s1_radix                        17.22     28.38     25.73     33.66     36.86      0
+  mostly_mid     pass0_bitonic                   22.53     24.27     24.52     29.79     30.78      0
+                 t2_rank512_bitonic              22.53     24.54     24.83     30.11     51.20      0
+                 t2_rank512_bitreg               16.51     18.43     19.02     23.71     28.42      0
+                 t2_rank512_bitreg16             18.59     24.48     24.44     29.89     36.51      0
+                 t2_rank512_bitreg32             26.56     32.67     32.30     38.46     40.96      0
+                 t2_rank512_radix                21.47     23.17     23.77     28.99     36.83      0
+                 t2_rank512_radix_waveops        38.91     40.80     41.07     46.30     52.96      0
+                 s1_rank512_bitreg               16.38     17.28     17.90     23.90     30.37      0
+                 s1_rank1024_bitreg              16.45     22.75     22.71     28.67     34.98      0
+                 s1_rank512_radix                18.18     19.81     20.11     24.29     32.77      0
+                 s1_rank1024_radix               18.43     23.10     23.18     28.90     30.72      0
+                 s1_rank512_bitreg2048_radix     16.26     17.86     18.28     23.74     28.00      0
+                 s1_rank512_bitreg4096_radix     16.38     17.89     18.30     23.94     28.67      0
+                 s1_bitreg                       16.22     17.76     18.24     23.90     32.03      0
+                 s1_radix                        18.43     19.33     19.80     23.26     36.19      0
+  mostly_medium  pass0_bitonic                   10.40     12.29     12.95     12.70    453.31      0
+                 t2_rank512_bitonic               8.32     10.24     10.13     10.37     14.27      0
+                 t2_rank512_bitreg                8.19     10.24     10.11     10.34     16.29      0
+                 t2_rank512_bitreg16              8.19     10.24     10.09     10.34     22.56      0
+                 t2_rank512_bitreg32              8.19     10.24     10.08     10.34     18.43      0
+                 t2_rank512_radix                 8.19     10.24     10.15     10.40     21.86      0
+                 t2_rank512_radix_waveops         8.19     10.24     10.11     10.37     16.38      0
+                 s1_rank512_bitreg                8.19     10.24     10.17     10.50     14.27      0
+                 s1_rank1024_bitreg               8.26     10.24     10.13     10.40     19.42      0
+                 s1_rank512_radix                 8.29     10.24     10.21     10.56     16.38      0
+                 s1_rank1024_radix                8.19     10.24     10.29     11.30     12.29      0
+                 s1_rank512_bitreg2048_radix      8.32     10.24     10.31     11.30     14.02      0
+                 s1_rank512_bitreg4096_radix      8.19     10.24     10.33     11.36     19.23      0
+                 s1_bitreg                       10.24     12.22     12.13     12.29     23.17      0
+                 s1_radix                        17.25     18.43     18.66     19.52     28.54      0
