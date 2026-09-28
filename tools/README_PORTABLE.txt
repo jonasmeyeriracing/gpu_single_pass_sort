@@ -19,16 +19,20 @@ How to run
    and zips it to results\<COMPUTERNAME>_<yyyymmdd_hhmm>.zip. Bring back the zip (or the folder).
 
 Options (from a command prompt in this folder):
-    run_all.bat            current shaders\ + the latest _test\passN snapshot (default)
+    run_all.bat            current shaders\ + the latest _test\passN snapshot that differs from
+                           shaders\ (default)
     run_all.bat all        current shaders\ + every _test\passN snapshot
     run_all.bat current    current shaders\ only
 A snapshot whose shaders are identical to shaders\ is skipped (package_info.txt says which).
+Typically the newest snapshot is the current pass itself, so the default compares the current
+shaders with the previous pass.
 
 What it runs
 ------------
 1. GpuSort.exe --list-adapters: every adapter, and which ones a benchmark run uses.
 2. dxdiag /t: driver details (dxdiag.txt).
-3. Smoke tests: GpuSort.exe --smoke --dred for every shader set: 3 iterations of every algorithm x
+3. Smoke tests: GpuSort.exe --smoke --dred --iterations 16 for every shader set: 16 iterations
+   (enough for the sweep workload to reach each of its 16 sort sizes once) of every algorithm x
    workload, one at a time, with DRED fault reporting. If any smoke test fails, the script stops
    before the long runs.
 4. Full runs: 1000 iterations (+5 warmup) of every algorithm x workload for every shader set.

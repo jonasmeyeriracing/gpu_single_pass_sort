@@ -2,13 +2,16 @@
 rem GpuSort portable runner: runs the benchmark on this machine and collects everything in
 rem results\<COMPUTERNAME>_<yyyymmdd_hhmm>\ (plus a .zip of it) next to this script.
 rem
-rem   run_all.bat            current shaders\ + the latest _test\passN snapshot
-rem   run_all.bat all        current shaders\ + every _test\passN snapshot
+rem   run_all.bat            current shaders\ + the latest _test\passN snapshot that differs from
+rem                          shaders\ (the packager marks identical ones with SAME_AS_SHADERS.txt)
+rem   run_all.bat all        current shaders\ + every _test\passN snapshot (identical ones skipped)
 rem   run_all.bat current    current shaders\ only
 rem   extra argument nopause: do not wait for a key at the end
 rem
 rem Order: adapter list, then a --smoke --dred safety run of every shader set x wave configuration,
-rem then the full runs. Any smoke failure stops the script before the first full run. Every GPU run
+rem then the full runs. The smoke runs use --iterations 16 (SMOKE_ITERS) so the sweep workload (which
+rem cycles through 16 sort sizes, one per iteration) reaches every size once. Any smoke failure
+rem stops the script before the first full run. Every GPU run
 rem shows GpuSort's OK/Cancel prompt ("Run k/N ..."); Cancel stops the script.
 rem If a GPU reports a wave size range (e.g. AMD RDNA: 32-64), every shader set also runs with
 rem --wave-size <max> (e.g. wave64), on the GPUs that support it.
@@ -23,6 +26,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 set "ROOT=%~dp0"
 set "EXE=%ROOT%GpuSort.exe"
 set "MODE=latest"
+set "SMOKE_ITERS=16"
 set "FINAL_RC=0"
 set "SKIPPED_SETS="
 set "NOPAUSE="
@@ -117,14 +121,24 @@ set "SET_COUNT=1"
 set "SET_1_NAME=current"
 set "SET_1_DIR=%ROOT%shaders"
 if /i "%MODE%"=="current" goto :sets_done
-set "LATEST="
-for /l %%i in (0,1,99) do if exist "%ROOT%_test\pass%%i\algorithms.txt" set "LATEST=%%i"
-if not defined LATEST goto :sets_done
 if /i "%MODE%"=="all" (
     for /l %%i in (0,1,99) do if exist "%ROOT%_test\pass%%i\algorithms.txt" call :add_set pass%%i
-) else (
-    call :add_set pass!LATEST!
+    goto :sets_done
 )
+rem latest: the newest snapshot that differs from shaders\. Newer snapshots identical to shaders\
+rem (typically the one of the current pass) are reported as skipped.
+set "LATEST="
+set "NEWER_SAME="
+for /l %%i in (0,1,99) do if exist "%ROOT%_test\pass%%i\algorithms.txt" (
+    if exist "%ROOT%_test\pass%%i\SAME_AS_SHADERS.txt" (
+        set "NEWER_SAME=!NEWER_SAME! pass%%i"
+    ) else (
+        set "LATEST=%%i"
+        set "NEWER_SAME="
+    )
+)
+set "SKIPPED_SETS=%NEWER_SAME%"
+if defined LATEST call :add_set pass%LATEST%
 :sets_done
 
 set "WAVE_COUNT=1"
@@ -241,7 +255,7 @@ if not "!WS!"=="0" (
 set "KARGS="
 if "!KIND!"=="smoke" (
     set "FILE=smoke_!FILE!"
-    set "KARGS=--smoke --dred"
+    set "KARGS=--smoke --dred --iterations %SMOKE_ITERS%"
 )
 set "LAST_LABEL=!RUNNO!/!NRUNS!: !KIND! !SNAME! !WDESC!"
 set CMD="%EXE%" --shaders "!SDIR!" !KARGS! !WARG! --label "!LAST_LABEL!" --out "%OUT%\!FILE!.txt" --log "%OUT%\!FILE!.log"
