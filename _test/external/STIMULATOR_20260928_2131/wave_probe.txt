@@ -1,0 +1,36 @@
+GpuSort wave probe
+==================
+Date:         2026-09-28 21:31:55
+Computer:     STIMULATOR
+Label:        1/1: wave probe
+Command line: "C:\Users\jonas\Desktop\GpuSort-portable-095c4a9\GpuSort-portable-095c4a9\GpuSort.exe"  --wave-probe --label "1/1: wave probe" --out "C:\Users\jonas\Desktop\GpuSort-portable-095c4a9\GpuSort-portable-095c4a9\results\STIMULATOR_20260928_2131\wave_probe.txt" --log "C:\Users\jonas\Desktop\GpuSort-portable-095c4a9\GpuSort-portable-095c4a9\results\STIMULATOR_20260928_2131\wave_probe.log"
+[0] AMD Radeon RX 7900 XTX  (driver 32.0.11037.4004, vendor 1002 device 744C)
+      wave lanes 32-64, sort shaders would be compiled with WAVE_SIZE=32 + [WaveSize]
+      probed: without [WaveSize], [WaveSize(32)], [WaveSize(64)]; groups 64/512/1024
+      Wave probe: compiled without [WaveSize] (driver's choice), groups 64/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK
+      Wave probe: compiled WAVE_SIZE=32 [WaveSize(32)], groups 64/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK
+      Wave probe: compiled WAVE_SIZE=64 [WaveSize(64)], groups 64/512/1024: observed lanes 64, lane mapping OK, waves OK, readlane^32 OK, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK
+      Wave probe verdict, without [WaveSize]: OK, the driver chose lanes 32 and lane = SV_GroupIndex % lane count
+      Wave probe verdict, [WaveSize(32)]: OK, runs with 32 lanes and lane = SV_GroupIndex % 32 (the sort shaders' configuration: WAVE_SIZE=32 + [WaveSize(32)])
+      Wave probe verdict, [WaveSize(64)]: OK, runs with 64 lanes and lane = SV_GroupIndex % 64
+[1] AMD Radeon(TM) Graphics  (driver 32.0.11037.4004, vendor 1002 device 164E)
+      wave lanes 32-64, sort shaders would be compiled with WAVE_SIZE=32 + [WaveSize]
+      probed: without [WaveSize], [WaveSize(32)], [WaveSize(64)]; groups 64/512/1024
+      Wave probe: compiled without [WaveSize] (driver's choice), groups 64/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK
+      Wave probe: compiled WAVE_SIZE=32 [WaveSize(32)], groups 64/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK
+      Wave probe: compiled WAVE_SIZE=64 [WaveSize(64)], groups 64/512/1024: observed lanes 64, lane mapping OK, waves OK, readlane^32 OK, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK
+      Wave probe verdict, without [WaveSize]: OK, the driver chose lanes 32 and lane = SV_GroupIndex % lane count
+      Wave probe verdict, [WaveSize(32)]: OK, runs with 32 lanes and lane = SV_GroupIndex % 32 (the sort shaders' configuration: WAVE_SIZE=32 + [WaveSize(32)])
+      Wave probe verdict, [WaveSize(64)]: OK, runs with 64 lanes and lane = SV_GroupIndex % 64
+  skipped: Microsoft Basic Render Driver: software adapter
+  skipped: AMD Radeon RX 7900 XTX (LUID 00000000:00059E9B): indirect display / non-render adapter
+
+Summary
+-------
+[0] AMD Radeon RX 7900 XTX, without [WaveSize]: OK, lanes 32 (driver's choice)
+[0] AMD Radeon RX 7900 XTX, [WaveSize(32)]: OK, lanes 32
+[0] AMD Radeon RX 7900 XTX, [WaveSize(64)]: OK, lanes 64
+[1] AMD Radeon(TM) Graphics, without [WaveSize]: OK, lanes 32 (driver's choice)
+[1] AMD Radeon(TM) Graphics, [WaveSize(32)]: OK, lanes 32
+[1] AMD Radeon(TM) Graphics, [WaveSize(64)]: OK, lanes 64
+Overall: OK (exit code 0)

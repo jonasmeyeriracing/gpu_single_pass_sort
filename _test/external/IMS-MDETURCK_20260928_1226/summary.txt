@@ -1,0 +1,8 @@
+GpuSort portable run on IMS-MDETURCK, started Mon 09/28/2026 12:26:02.75
+Mode: current
+Qualifying GPUs: 1 (details in adapters.txt)
+Plan: 2 GPU runs
+  shader set current: C:\Users\Mike.DeTurck\Downloads\GpuSort-portable-b8d5c19\GpuSort-portable-b8d5c19\shaders
+[1/2: smoke current default wave size] exit code 0 (ok) -> smoke_current.txt / smoke_current.log
+[2/2: full current default wave size] exit code 0 (ok) -> current.txt / current.log
+Finished Mon 09/28/2026 12:46:40.89, overall exit code 0

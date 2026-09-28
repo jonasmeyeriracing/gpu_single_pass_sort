@@ -1,0 +1,6 @@
+[1/2: smoke current default wave size] smoke_current.txt
+      Wave probe: compiled without [WaveSize] (driver's choice), groups 64/512/1024: observed lanes 16, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK
+      Wave probe verdict: OK, the sort shaders' configuration (WAVE_SIZE=16) runs with 16 lanes and lane = SV_GroupIndex % 16
+[2/2: full current default wave size] current.txt
+      Wave probe: compiled without [WaveSize] (driver's choice), groups 64/512/1024: observed lanes 16, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK
+      Wave probe verdict: OK, the sort shaders' configuration (WAVE_SIZE=16) runs with 16 lanes and lane = SV_GroupIndex % 16

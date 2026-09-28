@@ -29,6 +29,25 @@ void main(uint3 id : SV_DispatchThreadID)
             gFlush[i] = gFlush[i] + 1;
     }
 }
+
+// Read-only variant (flush mode full_ro): the same loads, no stores, so the flush leaves no dirty
+// lines behind. The store condition keeps the loads alive and is never true: every element holds
+// the number of read+write flush passes so far (the same in all 4 components), so the sum of the
+// 16 components a thread reads is a multiple of 16, never the odd 0xDEADBEEF.
+[numthreads(256, 1, 1)]
+void main_ro(uint3 id : SV_DispatchThreadID)
+{
+    uint4 acc = 0;
+    [unroll]
+    for (uint k = 0; k < 4; ++k)
+    {
+        const uint i = id.x + k * gNumThreads;
+        if (i < gNumElements)
+            acc += gFlush[i];
+    }
+    if (acc.x + acc.y + acc.z + acc.w == 0xDEADBEEFu)
+        gFlush[id.x] = acc;
+}
 )";
 
 namespace
@@ -50,6 +69,10 @@ constexpr uint64_t kUploadSlotBytes = kDescRegionBytes + kElementBytes;
 static_assert(kDescBytes <= kDescRegionBytes);
 static_assert(kFlushGroups <= 65535);
 
+// Drain (see Record): the flush shader, one group, on the 4 KB drain buffer (one uint4 per thread).
+constexpr uint32_t kDrainElements = static_cast<uint32_t>(GpuBenchmark::kDrainBytes / 16);
+static_assert(kDrainElements == kFlushGroupSize, "the drain is one flush group, one element per thread");
+
 // Root signature layout (shared by the flush and all sort shaders).
 enum RootParam : UINT
 {
@@ -59,7 +82,9 @@ enum RootParam : UINT
     kRootParamCount
 };
 
-// Descriptor heap layout: three 3-descriptor tables {t0, t1, u0}.
+// Descriptor heap layout: four 3-descriptor tables {t0, t1, u0}. The drain table sits 128
+// descriptors (>= 4 KB) after the others, so the drain dispatch's descriptor fetches do not share a
+// cache line with the sort table (the timed sort's descriptors stay as cold as in legacy mode).
 enum DescriptorSlot : UINT
 {
     kSlotSortDescs = 0,
@@ -71,6 +96,9 @@ enum DescriptorSlot : UINT
     kSlotWarmDescs = 6,
     kSlotWarmInput = 7,
     kSlotWarmOutput = 8,
+    kSlotDrainDescs = 128, // null SRV
+    kSlotDrainInput = 129, // null SRV
+    kSlotDrainBuffer = 130,
     kDescriptorCount
 };
 
@@ -175,7 +203,7 @@ ComPtr<ID3D12PipelineState> CreateComputePso(ID3D12Device* device, ID3D12RootSig
 constexpr D3D12_RESOURCE_STATES kSrvState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 } // namespace
 
-GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader,
+GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader, IDxcBlob* flushReadOnlyShader,
                            const std::vector<CompiledAlgorithm>& algorithms, const BenchmarkOptions& options)
     : m_options(options), m_device(device)
 {
@@ -233,6 +261,8 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader,
 
     m_flushPso = CreateComputePso(m_device.Get(), m_rootSignature.Get(), flushShader);
     SetName(m_flushPso.Get(), "PSO flush");
+    m_flushReadOnlyPso = CreateComputePso(m_device.Get(), m_rootSignature.Get(), flushReadOnlyShader);
+    SetName(m_flushReadOnlyPso.Get(), "PSO flush read-only");
     for (const auto& algorithm : algorithms)
     {
         std::vector<ComPtr<ID3D12PipelineState>> psos;
@@ -252,6 +282,8 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader,
     m_poisonBuffer = CreateBuffer(m_device.Get(), kElementBytes, D3D12_HEAP_TYPE_DEFAULT);
     m_flushBuffer = CreateBuffer(m_device.Get(), kFlushBytes, D3D12_HEAP_TYPE_DEFAULT,
                                  D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    m_drainBuffer = CreateBuffer(m_device.Get(), kDrainBytes, D3D12_HEAP_TYPE_DEFAULT,
+                                 D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     m_argsBuffer = CreateBuffer(m_device.Get(), sizeof(D3D12_DISPATCH_ARGUMENTS), D3D12_HEAP_TYPE_DEFAULT);
     m_warmDescBuffer = CreateBuffer(m_device.Get(), kDescRegionBytes, D3D12_HEAP_TYPE_DEFAULT);
     m_warmInputBuffer = CreateBuffer(m_device.Get(), kElementBytes, D3D12_HEAP_TYPE_DEFAULT);
@@ -262,6 +294,7 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader,
     SetName(m_outputBuffer.Get(), "buffer sortOutput (u0)");
     SetName(m_poisonBuffer.Get(), "buffer poison");
     SetName(m_flushBuffer.Get(), "buffer flush256MB (flush u0)");
+    SetName(m_drainBuffer.Get(), "buffer drain4KB (drain u0)");
     SetName(m_argsBuffer.Get(), "buffer indirectArgs");
     SetName(m_warmDescBuffer.Get(), "buffer warmSortDescs (flush mode data, t0)");
     SetName(m_warmInputBuffer.Get(), "buffer warmSortInput (flush mode data, t1)");
@@ -292,9 +325,22 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader,
         CreateStructuredSrv(d, m_warmDescBuffer.Get(), kSortsPerIteration, kDescStride, cpu(kSlotWarmDescs));
         CreateStructuredSrv(d, m_warmInputBuffer.Get(), kMaxElementsPerIteration, 4, cpu(kSlotWarmInput));
         CreateStructuredUav(d, m_warmOutputBuffer.Get(), kMaxElementsPerIteration, 4, cpu(kSlotWarmOutput));
+        for (UINT slot : {kSlotDrainDescs, kSlotDrainInput})
+        {
+            // Null descriptors (the flush shader does not read t0 / t1).
+            D3D12_SHADER_RESOURCE_VIEW_DESC nullSrv{};
+            nullSrv.Format = DXGI_FORMAT_UNKNOWN;
+            nullSrv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+            nullSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            nullSrv.Buffer.NumElements = 1;
+            nullSrv.Buffer.StructureByteStride = 4;
+            d->CreateShaderResourceView(nullptr, &nullSrv, cpu(slot));
+        }
+        CreateStructuredUav(d, m_drainBuffer.Get(), kDrainElements, 16, cpu(kSlotDrainBuffer));
         m_sortTable = {gpu0.ptr + UINT64(kSlotSortDescs) * inc};
         m_flushTable = {gpu0.ptr + UINT64(kSlotFlushDescs) * inc};
         m_warmTable = {gpu0.ptr + UINT64(kSlotWarmDescs) * inc};
+        m_drainTable = {gpu0.ptr + UINT64(kSlotDrainDescs) * inc};
     }
 
     for (uint32_t fi = 0; fi < kFrames; ++fi)
@@ -354,6 +400,7 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader,
             {"sortOutput", m_outputBuffer.Get()},
             {"poison", m_poisonBuffer.Get()},
             {"flush256MB", m_flushBuffer.Get()},
+            {"drain4KB", m_drainBuffer.Get()},
             {"indirectArgs", m_argsBuffer.Get()},
             {"warmSortDescs", m_warmDescBuffer.Get()},
             {"warmSortInput", m_warmInputBuffer.Get()},
@@ -440,7 +487,8 @@ void GpuBenchmark::WaitForFence(uint64_t value)
     CheckDevice("after a fence wait");
 }
 
-void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& label)
+void GpuBenchmark::Record(Frame& f, const std::vector<ComPtr<ID3D12PipelineState>>& psos, FlushMode flushMode,
+                          const std::string& label)
 {
     ID3D12GraphicsCommandList* cl = f.list.Get();
     CHECK_HR(f.allocator->Reset());
@@ -462,8 +510,9 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& la
     ID3D12Resource* warmDesc = m_warmDescBuffer.Get();
     ID3D12Resource* warmInput = m_warmInputBuffer.Get();
     ID3D12Resource* warmOutput = m_warmOutputBuffer.Get();
-    const FlushMode flushMode = m_algorithmFlush[algorithmIndex];
     const bool warmRun = flushMode == FlushMode::Data; // the warm buffers are only touched in this mode
+    // pass5: every mode except the two diagnostics without it drains right before the start timestamp.
+    const bool drain = flushMode != FlushMode::FullLegacy && flushMode != FlushMode::FullRo;
 
     // Buffers decay to COMMON after every ExecuteCommandLists; start each list from there.
     {
@@ -473,6 +522,7 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& la
             Transition(output, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST),
             Transition(m_poisonBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE),
             Transition(m_flushBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+            Transition(m_drainBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
             Transition(m_argsBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT),
         };
         if (warmRun)
@@ -484,17 +534,28 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& la
         cl->ResourceBarrier(static_cast<UINT>(b.size()), b.data());
     }
 
-    const auto& psos = m_algorithmPsos[algorithmIndex];
     const uint32_t sortConstants[4] = {kSortsPerIteration, 0, 0, 0};
-    auto flush = [&](uint32_t s) {
+    const D3D12_RESOURCE_BARRIER uavBarrier = UavBarrier(nullptr);
+    auto flush = [&](uint32_t s, bool readOnly) {
         const uint32_t flushConstants[4] = {kFlushElements, kFlushThreads, 0, 0};
-        marker("flush", s);
-        cl->SetPipelineState(m_flushPso.Get());
+        marker(readOnly ? "flush (read-only)" : "flush", s);
+        cl->SetPipelineState(readOnly ? m_flushReadOnlyPso.Get() : m_flushPso.Get());
         cl->SetComputeRoot32BitConstants(kRootConstants, 4, flushConstants, 0);
         cl->SetComputeRootDescriptorTable(kRootTable, m_flushTable);
         cl->Dispatch(kFlushGroups, 1, 1);
-        const D3D12_RESOURCE_BARRIER b = UavBarrier(nullptr);
-        cl->ResourceBarrier(1, &b);
+        cl->ResourceBarrier(1, &uavBarrier);
+    };
+    // Drain: one group of the flush shader on the private 4 KB drain buffer (its own descriptor table,
+    // nothing the sort uses), then a UAV barrier. A driver may defer a barrier's wait and cache
+    // maintenance to the next dispatch, which without this is the timed sort (see FlushMode).
+    auto drainDispatch = [&](uint32_t s) {
+        const uint32_t drainConstants[4] = {kDrainElements, kFlushGroupSize, 0, 0};
+        marker("drain", s);
+        cl->SetPipelineState(m_flushPso.Get());
+        cl->SetComputeRoot32BitConstants(kRootConstants, 4, drainConstants, 0);
+        cl->SetComputeRootDescriptorTable(kRootTable, m_drainTable);
+        cl->Dispatch(1, 1, 1);
+        cl->ResourceBarrier(1, &uavBarrier);
     };
     for (uint32_t s = 0; s < f.count; ++s)
     {
@@ -507,7 +568,7 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& la
 
         // FlushMode::Code: flush first, so the uploaded data is the most recent write (warm in L2).
         if (flushMode == FlushMode::Code)
-            flush(s);
+            flush(s, false);
 
         // 1) upload + poison the whole output (stray writes anywhere in it are detected)
         marker("upload", s);
@@ -535,9 +596,11 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& la
             cl->ResourceBarrier(static_cast<UINT>(b.size()), b.data());
         }
 
-        // 2) cache flush (FlushMode::Full and Data)
-        if (flushMode == FlushMode::Full || flushMode == FlushMode::Data)
-            flush(s);
+        // 2) cache flush (FlushMode::Full, FullLegacy, FullRo and Data)
+        if (flushMode == FlushMode::Full || flushMode == FlushMode::FullLegacy || flushMode == FlushMode::Data)
+            flush(s, false);
+        else if (flushMode == FlushMode::FullRo)
+            flush(s, true);
 
         // FlushMode::Data: untimed run of the same dispatches on the private copy, so the shader code
         // (and everything else except the sort's own buffers) is warm for the timed run.
@@ -551,11 +614,14 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& la
                 cl->SetPipelineState(psos[p].Get());
                 cl->ExecuteIndirect(m_dispatchSignature.Get(), 1, m_argsBuffer.Get(), 0, nullptr, 0);
             }
-            const D3D12_RESOURCE_BARRIER b = UavBarrier(nullptr);
-            cl->ResourceBarrier(1, &b);
+            cl->ResourceBarrier(1, &uavBarrier);
         }
 
-        // 3) timed sort
+        // 3) drain: everything recorded so far has executed before the timed window opens
+        if (drain)
+            drainDispatch(s);
+
+        // 4) timed sort
         cl->EndQuery(f.queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * s);
         cl->SetComputeRoot32BitConstants(kRootConstants, 4, sortConstants, 0);
         cl->SetComputeRootDescriptorTable(kRootTable, m_sortTable);
@@ -567,7 +633,7 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& la
         }
         cl->EndQuery(f.queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * s + 1);
 
-        // 4) readback
+        // 5) readback
         {
             std::vector<D3D12_RESOURCE_BARRIER> b = {
                 Transition(output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE),
@@ -599,6 +665,7 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& la
             Transition(output, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON),
             Transition(m_poisonBuffer.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON),
             Transition(m_flushBuffer.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
+            Transition(m_drainBuffer.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
             Transition(m_argsBuffer.Get(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, D3D12_RESOURCE_STATE_COMMON),
         };
         if (warmRun)
@@ -612,7 +679,7 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& la
     CHECK_HR(cl->Close());
 }
 
-void GpuBenchmark::Submit(Frame& f)
+void GpuBenchmark::SubmitList(Frame& f)
 {
     if (m_deviceLost)
         throw DeviceLostError("GPU device already lost");
@@ -622,6 +689,11 @@ void GpuBenchmark::Submit(Frame& f)
     CHECK_HR(m_queue->Signal(m_fence.Get(), ++m_fenceValue));
     f.fenceValue = m_fenceValue;
     f.pending = true;
+}
+
+void GpuBenchmark::Submit(Frame& f)
+{
+    SubmitList(f);
 
     if (m_options.testRemoveDevice && !m_removeRequested)
     {
@@ -631,6 +703,40 @@ void GpuBenchmark::Submit(Frame& f)
         Log("  --test-device-removal: calling ID3D12Device5::RemoveDevice()\n");
         device5->RemoveDevice();
     }
+}
+
+double GpuBenchmark::Calibrate(uint32_t workloadId, uint32_t iterations)
+{
+    if (m_frames[0].pending || m_frames[1].pending)
+        throw std::runtime_error("calibration: called while iterations are in flight");
+    Frame& f = m_frames[0];
+    const std::vector<ComPtr<ID3D12PipelineState>> noSort;
+    // Generates outside the timed part (a run generates the next batch while the GPU works).
+    auto batch = [&](uint32_t first, uint32_t count) -> double {
+        f.firstIteration = first;
+        f.count = count;
+        std::vector<uint32_t> slots(count);
+        std::iota(slots.begin(), slots.end(), 0u);
+        std::for_each(std::execution::par, slots.begin(), slots.end(), [&](uint32_t s) {
+            GenerateIteration(workloadId, kWarmupIterationBase + first + s, f.data[s]);
+        });
+        const auto start = std::chrono::steady_clock::now();
+        Record(f, noSort, FlushMode::Full, "calibration");
+        SubmitList(f);
+        WaitForFence(f.fenceValue);
+        f.pending = false;
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    };
+    // Untimed first batch: first use of the buffers, clocks ramping up.
+    batch(0, std::min(m_batchSize, std::max(1u, iterations / 4)));
+    double seconds = 0.0;
+    for (uint32_t done = 0; done < iterations;)
+    {
+        const uint32_t n = std::min(m_batchSize, iterations - done);
+        seconds += batch(done, n);
+        done += n;
+    }
+    return iterations ? seconds / iterations : 0.0;
 }
 
 void GpuBenchmark::Process(Frame& f, uint32_t warmup, ComboResult& result)
@@ -818,7 +924,7 @@ void GpuBenchmark::Run(uint32_t workloadId, size_t algorithmIndex, uint32_t iter
                 const uint32_t iteration = global < warmup ? kWarmupIterationBase + global : global - warmup;
                 GenerateIteration(workloadId, iteration, f.data[s]);
             });
-            Record(f, algorithmIndex, label);
+            Record(f, m_algorithmPsos[algorithmIndex], m_algorithmFlush[algorithmIndex], label);
             Submit(f);
             next += f.count;
             if (m_options.serial)

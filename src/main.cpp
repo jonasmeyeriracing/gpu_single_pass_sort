@@ -22,8 +22,31 @@ namespace fs = std::filesystem;
 
 namespace
 {
-// Rough guess for the prompt (dominated by the 256 MB cache flush per iteration).
-constexpr double kEstimatedMsPerIteration = 2.5;
+// Rough guess of the wall time per iteration for the prompt (before any GPU work; dominated by the
+// 256 MB cache flush), and the fallback if the calibration fails. Measured full runs (1000
+// iterations): RTX 5080 0.73 ms, RX 7900 XTX 0.78 ms, Ryzen iGPU 9.7 ms, Intel UHD 770 7.6 ms.
+// Serial smoke runs (a fence wait per iteration) take longer per iteration.
+double GuessSecondsPerIteration(const GpuInfo& g, bool serial)
+{
+    const double ms = g.uma ? (serial ? 70.0 : 10.0) : (serial ? 20.0 : 0.8);
+    return ms / 1000.0;
+}
+
+// Run-time estimate: iterations per GPU of the up-front calibration (GpuBenchmark::Calibrate).
+constexpr uint32_t kCalibrationIterations = 32;
+constexpr uint32_t kCalibrationIterationsSerial = 4; // --smoke
+constexpr uint32_t kCalibrationIterationsWarp = 2;
+// While a GPU runs, its measured rate replaces the calibration once this many iterations are done.
+constexpr uint64_t kMeasuredRateMinIterations = 256;
+
+std::string FormatDuration(double seconds)
+{
+    if (seconds < 90.0)
+        return Format("%.0f s", seconds);
+    if (seconds < 90.0 * 60.0)
+        return Format("%.1f min", seconds / 60.0);
+    return Format("%.1f h", seconds / 3600.0);
+}
 
 // --smoke: iterations per GPU x workload x algorithm (no warmup), one iteration in flight.
 constexpr uint32_t kSmokeIterations = 3;
@@ -172,6 +195,10 @@ int RunMain(int argc, wchar_t** argv)
     ComPtr<IDxcBlob> flushShader = compiler.CompileSource(kFlushShaderSource, L"flush.hlsl", "main", {}, log);
     if (!flushShader)
         throw std::runtime_error("flush shader failed to compile:\n" + log);
+    ComPtr<IDxcBlob> flushReadOnlyShader =
+        compiler.CompileSource(kFlushShaderSource, L"flush.hlsl", "main_ro", {}, log);
+    if (!flushReadOnlyShader)
+        throw std::runtime_error("read-only flush shader failed to compile:\n" + log);
 
     // --- adapters -------------------------------------------------------------------------
     // Both must happen before any device is created.
@@ -345,8 +372,11 @@ int RunMain(int argc, wchar_t** argv)
     if (!opt.waveProbe)
         Log("\n%s\n", FormatSizeDistribution(workloadIds, opt.iterations).c_str());
 
+    // Iterations per GPU (every GPU runs every workload x algorithm).
     const uint64_t totalIterations = uint64_t(opt.iterations + opt.warmup) * workloadIds.size() * algorithms.size();
-    const double estimatedSeconds = static_cast<double>(totalIterations * gpus.size()) * kEstimatedMsPerIteration / 1000.0;
+    double estimatedSeconds = 0.0; // rough guess for the prompt; calibrated after the prompt
+    for (const auto& g : gpus)
+        estimatedSeconds += static_cast<double>(totalIterations) * GuessSecondsPerIteration(g, opt.smoke);
 
     // --- prompt ---------------------------------------------------------------------------
     if (!opt.warp && !opt.noPrompt)
@@ -374,9 +404,10 @@ int RunMain(int argc, wchar_t** argv)
             for (const auto& g : gpus)
                 text += L"    " + Utf8ToWide(g.name) + L"\n";
             text += Utf8ToWide(Format("\n%zu workload(s) x %zu algorithm(s) x %u iterations (+%u warmup) per GPU.\n"
-                                      "Estimated duration: roughly %.0f seconds.\n\n",
+                                      "Estimated duration: roughly %s (a rough guess; a calibrated estimate is\n"
+                                      "shown in the progress window and the console right after the start).\n\n",
                                       workloadIds.size(), algorithms.size(), opt.iterations, opt.warmup,
-                                      estimatedSeconds < 1.0 ? 1.0 : estimatedSeconds));
+                                      FormatDuration(estimatedSeconds < 1.0 ? 1.0 : estimatedSeconds).c_str()));
         }
         text += L"Please pause other GPU work now, then press OK to start.\nCancel exits without running.";
         Log("Waiting for confirmation (message box)...\n");
@@ -408,10 +439,7 @@ int RunMain(int argc, wchar_t** argv)
     benchOptions.logAddresses = opt.dred;
     benchOptions.testRemoveDevice = opt.testRemove;
 
-    uint32_t totalFailures = 0;
-    bool deviceLost = false;
-    for (size_t gi = 0; gi < gpus.size() && !deviceLost; ++gi)
-    {
+    auto newRecord = [&](size_t gi) {
         const GpuInfo& gpu = gpus[gi];
         GpuRecord record;
         record.name = gpu.name;
@@ -423,6 +451,83 @@ int RunMain(int argc, wchar_t** argv)
         record.waveLaneCountMax = gpu.waveLaneCountMax;
         record.waveSize = gpuWave[gi].size;
         record.waveSizeAttribute = gpuWave[gi].attribute;
+        return record;
+    };
+
+    uint32_t totalFailures = 0;
+    bool deviceLost = false;
+
+    // --- run-time estimate: calibrate every GPU up front ----------------------------------
+    // A short batch of the per-iteration work without a sort (upload, 256 MB flush, drain,
+    // readback) on each GPU, before any sort shader runs. That fixed cost dominates an iteration on
+    // every GPU measured so far, so it predicts the run time well; while a GPU runs, its measured
+    // rate takes over (the progress window and the console show the refined estimate).
+    std::vector<double> gpuSecondsPerIteration(gpus.size());
+    std::vector<double> gpuEstimateSeconds(gpus.size());
+    std::vector<bool> gpuCalibrated(gpus.size(), false);
+    const uint32_t calibrationIterations =
+        opt.warp ? kCalibrationIterationsWarp : opt.smoke ? kCalibrationIterationsSerial : kCalibrationIterations;
+    if (!opt.waveProbe)
+    {
+        info.calibrationIterations = calibrationIterations;
+        window.SetText(L"Calibrating the run-time estimate (a few flush passes per GPU) ...");
+        Log("\nRun-time estimate (calibrated per GPU: %u iterations of the upload + flush + drain + readback work,\n"
+            "without a sort; refined with the measured rate while the run progresses):\n",
+            calibrationIterations);
+        for (size_t gi = 0; gi < gpus.size() && !deviceLost; ++gi)
+        {
+            const GpuInfo& gpu = gpus[gi];
+            gpuSecondsPerIteration[gi] = GuessSecondsPerIteration(gpu, opt.smoke);
+            std::unique_ptr<GpuBenchmark> calibration;
+            try
+            {
+                calibration = std::make_unique<GpuBenchmark>(gpu.device.Get(), flushShader.Get(),
+                                                             flushReadOnlyShader.Get(), noAlgorithms, benchOptions);
+                gpuSecondsPerIteration[gi] = calibration->Calibrate(workloadIds[0], calibrationIterations);
+                gpuCalibrated[gi] = true;
+                calibration.reset();
+            }
+            catch (const std::exception& e)
+            {
+                if (dynamic_cast<const DeviceLostError*>(&e) != nullptr || FAILED(gpu.device->GetDeviceRemovedReason()))
+                {
+                    // As in the run below: never release resources the GPU may still use; stop at once.
+                    (void)calibration.release();
+                    deviceLost = true;
+                    GpuRecord record = newRecord(gi);
+                    record.error =
+                        std::string("DEVICE LOST (during the run-time calibration, before any sort): ") + e.what();
+                    Log("  ERROR on %s: %s\n", gpu.name.c_str(), record.error.c_str());
+                    Log("\n%s", FormatDredReport(gpu.device.Get()).c_str());
+                    Log("\nStopping: nothing more is submitted to any GPU. Writing partial results.\n");
+                    info.gpus.push_back(std::move(record));
+                    break;
+                }
+                calibration.reset();
+                Log("  [%zu] %s: calibration failed (%s); using a rough guess\n", gi, gpu.name.c_str(), e.what());
+            }
+            for (const auto& m : DrainDebugMessages(gpu.device.Get()))
+                Log("    %s\n", m.c_str());
+            gpuEstimateSeconds[gi] = static_cast<double>(totalIterations) * gpuSecondsPerIteration[gi];
+            Log("  [%zu] %-32s %6.2f ms per iteration%s x %llu iterations = ~%s\n", gi, gpu.name.c_str(),
+                gpuSecondsPerIteration[gi] * 1000.0, gpuCalibrated[gi] ? "" : " (guess)",
+                static_cast<unsigned long long>(totalIterations), FormatDuration(gpuEstimateSeconds[gi]).c_str());
+        }
+        double total = 0.0;
+        for (double e : gpuEstimateSeconds)
+            total += e;
+        info.estimatedSeconds = total;
+        if (!deviceLost)
+            Log("  Estimated total run time: ~%s\n", FormatDuration(total).c_str());
+    }
+
+    for (size_t gi = 0; gi < gpus.size() && !deviceLost; ++gi)
+    {
+        const GpuInfo& gpu = gpus[gi];
+        GpuRecord record = newRecord(gi);
+        record.calibrated = gpuCalibrated[gi];
+        record.secondsPerIterationEstimate = gpuSecondsPerIteration[gi];
+        record.estimatedSeconds = gpuEstimateSeconds[gi];
         const std::vector<CompiledAlgorithm>& compiled = compileFor(gpuWave[gi]);
         const auto gpuStart = std::chrono::steady_clock::now();
         Log("\n=== GPU %zu/%zu: %s (WAVE_SIZE %u%s) ===\n", gi + 1, gpus.size(), gpu.name.c_str(),
@@ -430,7 +535,8 @@ int RunMain(int argc, wchar_t** argv)
         std::unique_ptr<GpuBenchmark> benchPtr;
         try
         {
-            benchPtr = std::make_unique<GpuBenchmark>(gpu.device.Get(), flushShader.Get(), compiled, benchOptions);
+            benchPtr = std::make_unique<GpuBenchmark>(gpu.device.Get(), flushShader.Get(), flushReadOnlyShader.Get(),
+                                                      compiled, benchOptions);
             GpuBenchmark& bench = *benchPtr;
             record.timestampFrequency = bench.TimestampFrequency();
             for (const auto& m : DrainDebugMessages(gpu.device.Get()))
@@ -477,6 +583,21 @@ int RunMain(int argc, wchar_t** argv)
                 Log("  ********************************************************************************\n\n");
             }
 
+            // Run-time estimate: the iterations still to run on this GPU at its measured rate (the
+            // calibration until kMeasuredRateMinIterations are done), plus the later GPUs' estimates.
+            uint64_t gpuIterationsDone = 0; // completed combos on this GPU (skipped ones count as done)
+            auto remainingSeconds = [&](uint64_t doneNow) {
+                const double gpuElapsed =
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - gpuStart).count();
+                const double rate = doneNow >= kMeasuredRateMinIterations
+                                        ? gpuElapsed / static_cast<double>(doneNow)
+                                        : gpuSecondsPerIteration[gi];
+                double remaining = static_cast<double>(totalIterations - std::min(doneNow, totalIterations)) * rate;
+                for (size_t later = gi + 1; later < gpus.size(); ++later)
+                    remaining += gpuEstimateSeconds[later];
+                return remaining;
+            };
+
             for (size_t wi = 0; wi < workloadIds.size(); ++wi)
             {
                 const uint32_t workloadId = workloadIds[wi];
@@ -490,6 +611,7 @@ int RunMain(int argc, wchar_t** argv)
                                                      [&](const SmokeFailure& sf) { return sf.algorithm == aname; });
                     if (failed != record.smokeFailed.end())
                     {
+                        gpuIterationsDone += opt.iterations + opt.warmup;
                         Log("  %-14s %-20s skipped (%s)\n", wname, aname.c_str(),
                             failed->reason.empty() ? "failed verification earlier in this smoke run"
                                                    : failed->reason.c_str());
@@ -499,13 +621,15 @@ int RunMain(int argc, wchar_t** argv)
                     auto progress = [&](uint32_t done, uint32_t total, uint32_t failures) {
                         const double elapsed =
                             std::chrono::duration<double>(std::chrono::steady_clock::now() - runStart).count();
+                        const double remaining = remainingSeconds(gpuIterationsDone + done);
                         window.SetText(Utf8ToWide(Format(
                             "GPU %zu/%zu: %s\nWorkload %zu/%zu: %s\nAlgorithm %zu/%zu: %s\n"
                             "Iteration %u / %u (incl. %u warmup)\nVerification failures: %u (this run), %u (total)\n"
-                            "Elapsed: %.0f s",
+                            "Elapsed: %s, estimated remaining: ~%s (total ~%s)",
                             gi + 1, gpus.size(), gpu.name.c_str(), wi + 1, workloadIds.size(), wname, ai + 1,
                             compiled.size(), aname.c_str(), done, total, opt.warmup, failures,
-                            totalFailures + failures, elapsed)));
+                            totalFailures + failures, FormatDuration(elapsed).c_str(),
+                            FormatDuration(remaining).c_str(), FormatDuration(elapsed + remaining).c_str())));
                         if (done == total || done - lastLogged >= 250)
                         {
                             lastLogged = done;
@@ -521,6 +645,7 @@ int RunMain(int argc, wchar_t** argv)
                     const std::string label = gpu.name + "/" + aname + "/" + wname;
                     Log("  starting %s\n", label.c_str());
                     bench.Run(workloadId, ai, opt.iterations, opt.warmup, label, progress, result);
+                    gpuIterationsDone += result.iterationsRun;
                     totalFailures += result.failures;
                     const Stats st = ComputeStats(result.timesUs);
                     Log("  %-14s %-20s done: median %8.2f us, mean %8.2f us, failures %u (%.1f s)\n", wname,
@@ -539,6 +664,12 @@ int RunMain(int argc, wchar_t** argv)
                             aname.c_str(), wname);
                     }
                 }
+                const double elapsed =
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - runStart).count();
+                const double remaining = remainingSeconds(gpuIterationsDone);
+                Log("  [workload %zu/%zu done on this GPU] elapsed %s, estimated remaining ~%s (total ~%s)\n", wi + 1,
+                    workloadIds.size(), FormatDuration(elapsed).c_str(), FormatDuration(remaining).c_str(),
+                    FormatDuration(elapsed + remaining).c_str());
             }
         }
         catch (const std::exception& e)

@@ -43,6 +43,11 @@ struct GpuRecord
     std::vector<std::string> waveProbeSummary; // one verdict per wave configuration (WaveProbeReport::summary)
     bool waveProbeWarning = false;      // the probe found the wrong lane count / a broken lane mapping
     double wallSeconds = 0;
+    // Run-time estimate made up front (main.cpp): wall seconds per iteration from the calibration
+    // (or a rough guess if !calibrated) and the estimate for this GPU's whole run.
+    bool calibrated = false;
+    double secondsPerIterationEstimate = 0;
+    double estimatedSeconds = 0;
     std::vector<ComboRecord> combos;
     std::vector<SmokeFailure> smokeFailed; // --smoke only
     std::string error; // non-empty if the GPU run aborted
@@ -72,6 +77,8 @@ struct RunInfo
     std::vector<std::string> skippedAdapters;
     std::vector<GpuRecord> gpus;
     double totalSeconds = 0;
+    double estimatedSeconds = 0;        // up-front run-time estimate, all GPUs (0: none, e.g. --wave-probe)
+    uint32_t calibrationIterations = 0; // iterations per GPU of the calibration behind it
 };
 
 // Workload size distribution table (over the measured iterations).

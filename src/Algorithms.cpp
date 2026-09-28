@@ -10,6 +10,8 @@ const char* FlushModeName(FlushMode mode)
     switch (mode)
     {
     case FlushMode::Full: return "full";
+    case FlushMode::FullLegacy: return "full_legacy";
+    case FlushMode::FullRo: return "full_ro";
     case FlushMode::Code: return "code";
     case FlushMode::Data: return "data";
     case FlushMode::None: return "none";
@@ -19,7 +21,8 @@ const char* FlushModeName(FlushMode mode)
 
 bool ParseFlushMode(const std::string& name, FlushMode& mode)
 {
-    for (FlushMode m : {FlushMode::Full, FlushMode::Code, FlushMode::Data, FlushMode::None})
+    for (FlushMode m : {FlushMode::Full, FlushMode::FullLegacy, FlushMode::FullRo, FlushMode::Code, FlushMode::Data,
+                        FlushMode::None})
     {
         if (name == FlushModeName(m))
         {
@@ -73,7 +76,7 @@ std::vector<AlgorithmDesc> LoadAlgorithms(const std::filesystem::path& shaderDir
             if (algorithms.empty())
                 fail("'flush' before any 'algorithm'");
             if (tokens.size() != 2 || !ParseFlushMode(tokens[1], algorithms.back().flush))
-                fail("expected: flush <full|code|data|none>");
+                fail("expected: flush <full|full_legacy|full_ro|code|data|none>");
             if (algorithms.back().flushGiven)
                 fail("duplicate 'flush' for algorithm '" + algorithms.back().name + "'");
             algorithms.back().flushGiven = true;

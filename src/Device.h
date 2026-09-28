@@ -21,6 +21,7 @@ struct GpuInfo
     // D3D12_FEATURE_DATA_D3D12_OPTIONS1 (0 if wave ops are not supported).
     uint32_t waveLaneCountMin = 0;
     uint32_t waveLaneCountMax = 0;
+    bool uma = false;            // D3D12_FEATURE_DATA_ARCHITECTURE::UMA (integrated GPU / WARP: memory shared with the CPU)
 };
 
 // Enables the D3D12 debug layer, optionally with GPU-based validation (must be called before any

@@ -69,9 +69,17 @@ std::string FormatResults(const RunInfo& info)
     out += Format("Shader dir:   %s\n", info.shaderDir.c_str());
     out += Format("Iterations:   %u measured + %u warmup per GPU x workload x algorithm, %u sorts per iteration\n",
                   info.iterations, info.warmup, kSortsPerIteration);
-    out += Format("Cache flush:  %llu MB read+write compute pass before every timed sort (flush mode '%s' for\n"
-                  "              algorithms without their own; full = code + data cold, code = only code cold,\n"
-                  "              data = only data cold (untimed warm-up run first), none = no flush)\n",
+    out += Format("Cache flush:  %llu MB read+write compute pass before every timed sort, then a DRAIN (pass5): a\n"
+                  "              one-group dispatch on a private 4 KB buffer + UAV barrier right before the start\n"
+                  "              timestamp, so the tail of the flush (barrier wait / cache maintenance a driver defers\n"
+                  "              to the next dispatch) is no longer inside the timed window.\n"
+                  "              NOTE: results before pass5 were measured WITHOUT the drain and are not directly\n"
+                  "              comparable (flush mode full_legacy reproduces the old 'full'; on the RX 7900 XTX it\n"
+                  "              added ~13 us to most iterations, on the RTX 5080 ~0.25 us).\n"
+                  "Flush mode:   '%s' for algorithms without their own. full = code + data cold (flush, drain);\n"
+                  "              full_legacy = pre-pass5 full (no drain); full_ro = read-only flush, no drain\n"
+                  "              (diagnostic); code = only code cold (flush before the upload, drain); data = only\n"
+                  "              data cold (untimed warm-up run of the same dispatches, drain); none = no flush (drain)\n",
                   static_cast<unsigned long long>(GpuBenchmark::kFlushBytes >> 20), FlushModeName(info.defaultFlush));
     out += "Timing:       GPU timestamps around the sort ExecuteIndirect dispatches only, per iteration (all 20 sorts)\n";
     out += "GPUs:\n";
@@ -84,11 +92,20 @@ std::string FormatResults(const RunInfo& info)
                       static_cast<unsigned long long>(gpu.dedicatedVideoMemory >> 20));
         out += Format("      wave lanes %u-%u, shaders compiled with WAVE_SIZE=%u%s\n", gpu.waveLaneCountMin,
                       gpu.waveLaneCountMax, gpu.waveSize, gpu.waveSizeAttribute ? " + [WaveSize]" : "");
+        if (gpu.estimatedSeconds > 0)
+            out += Format("      run-time estimate: %.2f ms per iteration (%s) -> ~%.0f s for this GPU, actual %.1f s\n",
+                          gpu.secondsPerIterationEstimate * 1000.0,
+                          gpu.calibrated ? "calibrated up front" : "rough guess, the calibration failed",
+                          gpu.estimatedSeconds, gpu.wallSeconds);
         for (const auto& line : gpu.waveProbe)
             out += Format("      %s\n", line.c_str());
     }
     for (const auto& s : info.skippedAdapters)
         out += Format("  skipped: %s\n", s.c_str());
+    if (info.estimatedSeconds > 0)
+        out += Format("Run-time estimate: ~%.0f s up front (per GPU: %u calibration iterations of the upload + flush +\n"
+                      "              drain + readback work without a sort, times the iterations of the run)\n",
+                      info.estimatedSeconds, info.calibrationIterations);
     out += Format("Total benchmark time: %.1f s (after confirmation)\n\n", info.totalSeconds);
 
     out += FormatSizeDistribution(info.workloadIds, info.iterations);
@@ -106,7 +123,7 @@ std::string FormatResults(const RunInfo& info)
             std::string sizes;
             for (size_t b : a.dxilBytes)
                 sizes += Format("%s%zu", sizes.empty() ? "" : " + ", b);
-            out += Format("  %-*s  %-4s  %s\n", static_cast<int>(w), a.name.c_str(), FlushModeName(a.flush),
+            out += Format("  %-*s  %-11s  %s\n", static_cast<int>(w), a.name.c_str(), FlushModeName(a.flush),
                           sizes.c_str());
         }
         out += "\n";

@@ -262,7 +262,13 @@ To re-run this snapshot: `GpuSort.exe --shaders _test/pass2`. (After the run, on
 
 The shader files of this snapshot were patched in pass4 (`common.hlsli`, `wave_scan.hlsli`,
 `radix_sort.hlsli`, `bitonic_reg.hlsli`): on an AMD RX 7900 XTX at `--wave-size 64` the radix sort
-returned wrong results, most likely because per-lane-index `WaveReadLaneAt` does not cross the two
-32-lane halves of a wave64 there. Waves wider than 32 lanes now use wave intrinsics for the scans
-and 32-lane virtual waves for bitonic. For WAVE_SIZE <= 32 the compiled code is bit-identical, so
-the results above are unaffected. Details: _test/pass4/notes.md.
+returned wrong results. Waves wider than 32 lanes now use wave intrinsics for the scans and 32-lane
+virtual waves for bitonic. For WAVE_SIZE <= 32 the compiled code is bit-identical, so the results
+above are unaffected. Details: _test/pass4/notes.md.
+
+**Correction (pass5):** pass4 named "per-lane-index `WaveReadLaneAt` does not cross the two 32-lane
+halves of a wave64" as the likely cause. That is refuted: the wave probe shows cross-half reads
+working on that GPU at wave64, and that model cannot leave output[0] unwritten as reported. The
+most likely cause is a driver miscompile of this snapshot's shuffle scans at wave64 (not confirmed);
+see _test/pass5/notes.md, "Wave64 root cause". The fix itself is confirmed on hardware: 0 failures
+at wave64 on the 7900 XTX and a Ryzen iGPU (_test/external/notes.md).

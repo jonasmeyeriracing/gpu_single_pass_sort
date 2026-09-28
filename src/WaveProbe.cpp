@@ -23,6 +23,13 @@ enum ProbeWord : uint32_t
     kWordActiveSum, // WaveActiveSum(1)
     kWordCountBits, // WaveActiveCountBits(true)
     kWordBallot,    // countbits of WaveActiveBallot(true)
+    // pass5: replicas of the pass2 radix's shuffle scans (the wave64 failure of package 3409bf6, see
+    // _test/pass5/notes.md). Lane = SV_GroupIndex & (WAVE_SIZE - 1) and the loop bound WAVE_SIZE are
+    // the compile-time define, as in the sort; checked only where the observed lane count equals it.
+    kWordShflScan8,      // 8 interleaved WaveInclusiveSumShfl chains, all lanes active (pass2 step 2)
+    kWordTableScan,      // wave 0: groupshared load under 'if (lane < 16)', then the shuffle scan and
+                         // WaveReadLaneAt(inclusive, WAVE_SIZE - 1) (pass2 step 4; divergent only at W >= 32)
+    kWordTableScanSelect, // the same with a branch-free load (control for kWordTableScan)
     kProbeWords
 };
 
@@ -43,10 +50,64 @@ RWStructuredBuffer<uint> gOut : register(u0);
 #define PROBE_WAVE_SIZE_ATTR
 #endif
 
+// The pass2 (git dd0de70) wave_scan.hlsli WaveInclusiveSumShfl, verbatim.
+uint ScanShfl(uint x, uint lane)
+{
+    [unroll]
+    for (uint d = 1; d < WAVE_SIZE; d <<= 1)
+    {
+        const uint t = WaveReadLaneAt(x, (lane - d) & (WAVE_SIZE - 1u));
+        if (lane >= d)
+            x += t;
+    }
+    return x;
+}
+
+// Test value of scan chain j for thread gi (0..3, not uniform; the CPU recomputes it).
+uint ProbeX(uint gi, uint j)
+{
+    return ((gi * 0x9E3779B1u + j * 0x7F4A7C15u) >> 28) & 3u;
+}
+
+groupshared uint gsProbe[16];
+
 [numthreads(GROUP_SIZE, 1, 1)]
 PROBE_WAVE_SIZE_ATTR
 void main(uint gi : SV_GroupIndex)
 {
+    // pass2 shuffle-scan replicas (kWordShflScan8 / kWordTableScan / kWordTableScanSelect).
+    const uint sLane = gi & (WAVE_SIZE - 1u); // as in the sort: from SV_GroupIndex and the define
+    const uint sWave = gi / WAVE_SIZE;
+    uint scan8 = 0;
+    {
+        uint inc[8];
+        [unroll]
+        for (uint j = 0; j < 8; ++j)
+            inc[j] = ScanShfl(ProbeX(gi, j), sLane);
+        [unroll]
+        for (uint k = 0; k < 8; ++k)
+            scan8 += inc[k] << (3u * k);
+    }
+    for (uint i = gi; i < 16u; i += GROUP_SIZE)
+        gsProbe[i] = i * 7u + 1u;
+    GroupMemoryBarrierWithGroupSync();
+    uint tableScan = 0xFFFFFFFFu;
+    uint tableScanSelect = 0xFFFFFFFFu;
+    if (sWave == 0) // wave-uniform (group-uniform per wave)
+    {
+        uint sum = 0;
+        if (sLane < 16u)
+            sum += gsProbe[sLane];
+        const uint inclusive = ScanShfl(sum, sLane);
+        const uint total = WaveReadLaneAt(inclusive, WAVE_SIZE - 1u);
+        tableScan = (inclusive - sum) | (total << 16);
+
+        const uint sumSel = sLane < 16u ? gsProbe[sLane & 15u] : 0u;
+        const uint inclusiveSel = ScanShfl(sumSel, sLane);
+        const uint totalSel = WaveReadLaneAt(inclusiveSel, WAVE_SIZE - 1u);
+        tableScanSelect = (inclusiveSel - sumSel) | (totalSel << 16);
+    }
+
     const uint count = WaveGetLaneCount();
     const uint lane = WaveGetLaneIndex();
     uint xor32 = 0xFFFFFFFFu;
@@ -56,7 +117,7 @@ void main(uint gi : SV_GroupIndex)
     const uint plus16 = WaveReadLaneAt(gi, (lane + 16u) % count);
     const uint last = WaveReadLaneAt(gi, count - 1u);
     const uint4 ballot = WaveActiveBallot(true);
-    const uint o = gBase + gi * 12u;
+    const uint o = gBase + gi * 15u;
     gOut[o + 0] = count;
     gOut[o + 1] = lane;
     gOut[o + 2] = gi;
@@ -69,9 +130,18 @@ void main(uint gi : SV_GroupIndex)
     gOut[o + 9] = WaveActiveSum(1u);
     gOut[o + 10] = WaveActiveCountBits(true);
     gOut[o + 11] = countbits(ballot.x) + countbits(ballot.y) + countbits(ballot.z) + countbits(ballot.w);
+    gOut[o + 12] = scan8;
+    gOut[o + 13] = tableScan;
+    gOut[o + 14] = tableScanSelect;
 }
 )";
-static_assert(kProbeWords == 12, "kWaveProbeSource writes 12 words per thread");
+static_assert(kProbeWords == 15, "kWaveProbeSource writes 15 words per thread");
+
+// CPU reference of the shader's ProbeX.
+uint32_t ProbeX(uint32_t gi, uint32_t j)
+{
+    return ((gi * 0x9E3779B1u + j * 0x7F4A7C15u) >> 28) & 3u;
+}
 
 enum Test
 {
@@ -86,11 +156,15 @@ enum Test
     kTestSum,
     kTestCountBits,
     kTestBallot,
+    kTestShflScan8,
+    kTestTableScan,
+    kTestTableScanSelect,
     kTestCount
 };
 const char* const kTestNames[kTestCount] = {"all threads wrote", "lane mapping", "waves",        "readlane^32",
                                             "readlane^1",        "readlane+16",  "readlane(last)", "prefixsum",
-                                            "activesum",         "countbits",    "ballot"};
+                                            "activesum",         "countbits",    "ballot",         "shflscan x8",
+                                            "shflscan after if", "shflscan after select"};
 
 struct TestResult
 {
@@ -117,8 +191,9 @@ void Check(TestResult& t, bool ok, const std::string& detail)
         t.first = detail;
 }
 
-// Checks the output of one probe dispatch (groupSize threads x kProbeWords words).
-void Analyze(const std::vector<uint32_t>& words, uint32_t groupSize, VariantResult& r)
+// Checks the output of one probe dispatch (groupSize threads x kProbeWords words). defineWaveSize: the
+// variant's -D WAVE_SIZE (the shuffle-scan replicas use it).
+void Analyze(const std::vector<uint32_t>& words, uint32_t groupSize, uint32_t defineWaveSize, VariantResult& r)
 {
     auto w = [&](uint32_t t, uint32_t k) { return words[size_t(t) * kProbeWords + k]; };
     std::vector<bool> written(groupSize);
@@ -221,6 +296,40 @@ void Analyze(const std::vector<uint32_t>& words, uint32_t groupSize, VariantResu
             value(kTestSum, kWordActiveSum, active);
             value(kTestCountBits, kWordCountBits, active);
             value(kTestBallot, kWordBallot, active);
+
+            // Shuffle-scan replicas: only where the wave really has WAVE_SIZE (the define) lanes and the
+            // whole wave is active (a full wave, as in the sort).
+            if (count != defineWaveSize || active != count || !mapOk)
+                continue;
+            const uint32_t W = defineWaveSize;
+            uint32_t scan8 = 0;
+            for (uint32_t j = 0; j < 8; ++j)
+            {
+                uint32_t inc = 0;
+                for (uint32_t i = t - lane; i <= t; ++i)
+                    inc += ProbeX(i, j);
+                scan8 += inc << (3u * j);
+            }
+            auto hex = [&](Test test, uint32_t word, uint32_t expected) {
+                Check(r.tests[test], w(t, word) == expected,
+                      Format("%s: got 0x%08X, expected 0x%08X", where.c_str(), w(t, word), expected));
+            };
+            hex(kTestShflScan8, kWordShflScan8, scan8);
+            uint32_t table = 0xFFFFFFFFu;
+            if (t < W)
+            {
+                uint32_t pre = 0, total = 0;
+                for (uint32_t l = 0; l < W; ++l)
+                {
+                    const uint32_t v = l < 16 ? l * 7u + 1u : 0u;
+                    if (l < t)
+                        pre += v;
+                    total += v;
+                }
+                table = pre | (total << 16);
+            }
+            hex(kTestTableScan, kWordTableScan, table);
+            hex(kTestTableScanSelect, kWordTableScanSelect, table);
         }
     }
 }
@@ -275,7 +384,7 @@ void AddVariants(ShaderCompiler& compiler, WaveProbeSet& set, uint32_t defineWav
             throw std::runtime_error(Format("wave probe shader failed to compile (group size %u%s):\n%s", gs,
                                             attributeSize ? Format(", [WaveSize(%u)]", attributeSize).c_str() : "",
                                             log.c_str()));
-        set.variants.push_back({attributeSize, gs, blob});
+        set.variants.push_back({attributeSize, defineWaveSize, gs, blob});
     }
 }
 
@@ -423,7 +532,7 @@ WaveProbeReport RunWaveProbe(GpuBenchmark& bench, const WaveProbeSet& set)
             continue;
         }
         r.groupSizes.push_back(v.groupSize);
-        Analyze(outputs[i].words, v.groupSize, r);
+        Analyze(outputs[i].words, v.groupSize, v.defineWaveSize, r);
     }
 
     WaveProbeReport report;

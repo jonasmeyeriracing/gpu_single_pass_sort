@@ -1,0 +1,151 @@
+# pass4 diagnostic set (hardware smoke run: --smoke --dred --iterations 48). To run it, copy this
+# file over algorithms.txt in a scratch copy of the shader directory. Format: see algorithms.txt.
+
+# --- references (pass2 shaders; unchanged for WAVE_SIZE <= 32) ---
+algorithm s1_rank512_bitreg4096_radix
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 LARGE_RADIX=1
+
+algorithm s1_rank512_bitreg2048_radix
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+
+# --- one path for every size (per-size curves) ---
+algorithm s1_radix
+dispatch single_pass.hlsl main 1024 RANK_MAX=0 LARGE_RADIX=1
+
+algorithm s4_radix2
+dispatch single_pass4.hlsl main 1024 RANK_MAX=0 BITREG_MAX=0 LARGE_RADIX=2
+
+algorithm s4_radix3
+dispatch single_pass4.hlsl main 1024 RANK_MAX=0 BITREG_MAX=0 LARGE_RADIX=3
+
+algorithm s4_radix3_sw
+dispatch single_pass4.hlsl main 1024 RANK_MAX=0 BITREG_MAX=0 LARGE_RADIX=3 RS3_PERWAVE_MAX=0
+
+algorithm s4_radix3_rolled
+dispatch single_pass4.hlsl main 1024 RANK_MAX=0 BITREG_MAX=0 LARGE_RADIX=3 RS3_ROLLED=1
+
+algorithm s4_bitE8
+dispatch single_pass4.hlsl main 1024 RANK_MAX=0 BITREG_MAX=0 LARGE_RADIX=0
+
+# --- 4 tiers: rank <= 512, bitonic E8 <= 2048, radix_sort2 <= X, pass2 radix above ---
+algorithm s4_4tier_3072
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 MID_RADIX=2 MID_RADIX_MAX=3072 LARGE_RADIX=1
+
+algorithm s4_4tier_4096
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 MID_RADIX=2 MID_RADIX_MAX=4096 LARGE_RADIX=1
+
+algorithm s4_4tier_5120
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 MID_RADIX=2 MID_RADIX_MAX=5120 LARGE_RADIX=1
+
+# --- 3 tiers with radix_sort3 (per-wave table scan up to RS3_PERWAVE_MAX) ---
+algorithm s4_3tier_rx3
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3
+
+algorithm s4_3tier_rx3_p3072
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3 RS3_PERWAVE_MAX=3072
+
+algorithm s4_3tier_rx3_p5120
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3 RS3_PERWAVE_MAX=5120
+
+algorithm s4_3tier_rx3r
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3 RS3_ROLLED=1
+
+# --- flush modes (code cold / data cold); the default is 'full' (both cold) ---
+algorithm s1_rank512_bitreg2048_radix@data
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush data
+
+algorithm s1_rank512_bitreg2048_radix@code
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush code
+
+algorithm s1_rank512_bitreg2048_radix@none
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush none
+
+algorithm s4_3tier_rx3@data
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3
+flush data
+
+algorithm s4_3tier_rx3@code
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3
+flush code
+
+algorithm s4_3tier_rx3r@data
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3 RS3_ROLLED=1
+flush data
+
+algorithm s4_radix2@data
+dispatch single_pass4.hlsl main 1024 RANK_MAX=0 BITREG_MAX=0 LARGE_RADIX=2
+flush data
+
+algorithm s4_radix2@none
+dispatch single_pass4.hlsl main 1024 RANK_MAX=0 BITREG_MAX=0 LARGE_RADIX=2
+flush none
+
+algorithm s4_radix3@data
+dispatch single_pass4.hlsl main 1024 RANK_MAX=0 BITREG_MAX=0 LARGE_RADIX=3
+flush data
+
+algorithm s4_radix3_rolled@data
+dispatch single_pass4.hlsl main 1024 RANK_MAX=0 BITREG_MAX=0 LARGE_RADIX=3 RS3_ROLLED=1
+flush data
+
+algorithm s4_bitE8@data
+dispatch single_pass4.hlsl main 1024 RANK_MAX=0 BITREG_MAX=0 LARGE_RADIX=0
+flush data
+
+# --- code-size microbenchmarks (prelude before s4_3tier_rx3; compare with it, see ubench.hlsli) ---
+algorithm ub_code_loop512
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3 UB_OP=12 UB_REPS=512
+
+algorithm ub_code_unroll512
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3 UB_OP=11 UB_REPS=512
+
+algorithm ub_code_loop2048
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3 UB_OP=12 UB_REPS=2048
+
+algorithm ub_code_unroll2048
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3 UB_OP=11 UB_REPS=2048
+
+algorithm ub_code_loop512@data
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3 UB_OP=12 UB_REPS=512
+flush data
+
+algorithm ub_code_unroll512@data
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3 UB_OP=11 UB_REPS=512
+flush data
+
+algorithm ub_code_loop2048@data
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3 UB_OP=12 UB_REPS=2048
+flush data
+
+algorithm ub_code_unroll2048@data
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3 UB_OP=11 UB_REPS=2048
+flush data
+
+# --- wave64 code paths on this hardware (SHUFFLE_SPAN_TEST: shuffles limited to half a wave, wave
+#     intrinsic scans, 16-bit lane prefix fields; see common.hlsli) ---
+algorithm v64_s1_rank512_bitreg2048_radix
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1 SHUFFLE_SPAN_TEST=1 RS_PREFIX8=0
+
+algorithm v64_s1_radix
+dispatch single_pass.hlsl main 1024 RANK_MAX=0 LARGE_RADIX=1 SHUFFLE_SPAN_TEST=1 RS_PREFIX8=0
+
+algorithm v64_s1_bitreg
+dispatch single_pass.hlsl main 1024 RANK_MAX=0 SHUFFLE_SPAN_TEST=1
+
+algorithm v64_s3_bitE4_rx2
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 MID_E=4 MID_MAX=4096 RADIX=2 RS2_MIN_KPT=8 SHUFFLE_SPAN_TEST=1 RS2_PREFIX8=0
+
+algorithm v64_s3_rank512_bitreg2048_radix2s
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 RADIX=2 RS2_MIN_KPT=8 RS2_SKIP=1 SHUFFLE_SPAN_TEST=1 RS2_PREFIX8=0
+
+algorithm v64_s4_4tier_4096
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 MID_RADIX=2 MID_RADIX_MAX=4096 LARGE_RADIX=1 SHUFFLE_SPAN_TEST=1 RS_PREFIX8=0 RS2_PREFIX8=0
+
+algorithm v64_s4_radix3
+dispatch single_pass4.hlsl main 1024 RANK_MAX=0 BITREG_MAX=0 LARGE_RADIX=3 SHUFFLE_SPAN_TEST=1 RS2_PREFIX8=0
+
+algorithm v64_s4_radix3_sw
+dispatch single_pass4.hlsl main 1024 RANK_MAX=0 BITREG_MAX=0 LARGE_RADIX=3 RS3_PERWAVE_MAX=0 SHUFFLE_SPAN_TEST=1 RS2_PREFIX8=0

@@ -139,7 +139,8 @@ bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
                 return false;
             if (!ParseFlushMode(WideToUtf8(value), o.flushMode))
             {
-                error = "invalid value for --flush-mode (full, code, data or none): " + WideToUtf8(value);
+                error = "invalid value for --flush-mode (full, full_legacy, full_ro, code, data or none): " +
+                        WideToUtf8(value);
                 return false;
             }
         }
@@ -172,12 +173,16 @@ void PrintUsage()
         "                       WaveLaneCountMin..Max does not contain N are skipped. Default: WAVE_SIZE =\n"
         "                       WaveLaneCountMin, plus [WaveSize] only if the device reports a range (Min != Max)\n"
         "  --flush-mode <m>     What happens between the data upload and the timed sort, for algorithms\n"
-        "                       without a 'flush' line in algorithms.txt (default full):\n"
-        "                         full: upload, 256 MB cache flush: shader code and data cold\n"
-        "                         code: flush, then upload: code cold, input data warm in L2\n"
+        "                       without a 'flush' line in algorithms.txt (default full). Every mode except\n"
+        "                       full_legacy / full_ro ends with a drain (one-group dispatch + UAV barrier)\n"
+        "                       right before the start timestamp, so no flush tail is timed:\n"
+        "                         full: upload, 256 MB cache flush, drain: shader code and data cold\n"
+        "                         full_legacy: full without the drain (the 'full' of pass0-pass4)\n"
+        "                         full_ro: upload, 256 MB read-only flush, no drain (diagnostic)\n"
+        "                         code: flush, then upload, drain: code cold, input data warm in L2\n"
         "                         data: upload, flush, untimed run of the same sort on a private copy of\n"
-        "                               the data: code warm, data cold\n"
-        "                         none: no flush: code and data warm\n"
+        "                               the data, drain: code warm, data cold\n"
+        "                         none: upload, drain (no flush): code and data warm\n"
         "  --warp               Run only on the WARP software adapter (no prompt, no window)\n"
         "  --no-prompt          Skip the confirmation message box\n"
         "  --debug              Enable the D3D12 debug layer\n"

@@ -1,0 +1,17 @@
+GpuSort portable run on STIMULATOR, started 28/09/2026 17.15.11,42
+Mode: latest
+Qualifying GPUs: 2 (details in adapters.txt)
+Plan: 8 GPU runs
+  shader set current: C:\Users\jonas\Desktop\GpuSort-portable-5e087c3\GpuSort-portable-5e087c3\shaders
+  shader set pass3: C:\Users\jonas\Desktop\GpuSort-portable-5e087c3\GpuSort-portable-5e087c3\_test\pass3
+  wave configurations: default and --wave-size 64
+  skipped as identical to shaders\: pass4
+[1/8: smoke current default wave size] exit code 0 (ok) -> smoke_current.txt / smoke_current.log
+[2/8: smoke current wave64] exit code 0 (ok) -> smoke_current_wave64.txt / smoke_current_wave64.log
+[3/8: smoke pass3 default wave size] exit code 0 (ok) -> smoke_pass3.txt / smoke_pass3.log
+[4/8: smoke pass3 wave64] exit code 0 (ok) -> smoke_pass3_wave64.txt / smoke_pass3_wave64.log
+[5/8: full current default wave size] exit code 0 (ok) -> current.txt / current.log
+[6/8: full current wave64] exit code 0 (ok) -> current_wave64.txt / current_wave64.log
+[7/8: full pass3 default wave size] exit code 0 (ok) -> pass3.txt / pass3.log
+[8/8: full pass3 wave64] exit code 0 (ok) -> pass3_wave64.txt / pass3_wave64.log
+Finished 28/09/2026 18.42.34,89, overall exit code 0

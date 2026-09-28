@@ -4,6 +4,8 @@ RTX 5080 only (driver 32.0.16.1714). This pass has two new findings:
 
 1. The shaders were **wrong on AMD at wave64**. That is fixed here, for all shader sets
    (see "Wave64 correctness bug"). The fix is confirmed by emulation, but not yet on AMD hardware.
+   *(pass5: the fix is confirmed on hardware, 0 failures at wave64 on the 7900 XTX and a Ryzen iGPU;
+   the root cause given below is refuted, see the correction in that section.)*
 2. **Cold shader code**, not cold data, dominates the fixed cost of the large shaders. Code size
    and layout are now the main optimisation target (see conclusions 1-3).
 
@@ -95,24 +97,37 @@ barrier-separated phases; counts 1..8192 including every tier and aliasing bound
 1. **The shader logic is correct at wave64.** With HLSL semantics (`WaveReadLaneAt` reads any lane
    of the wave), the pass2 radix, radix_sort2, radix_sort3 and the register bitonic (E = 8, 4, 1)
    sort correctly for W = 4, 8, 16, 32, 64 and 128.
-2. **A pessimistic hardware model reproduces the report.** In this model, in a wave wider than
+2. **A pessimistic hardware model** *(pass5: refuted, see the correction below)*. In this model, in a wave wider than
    32 lanes a `WaveReadLaneAt` only reads inside the reading lane's own 32-lane half (source =
    own half + (index & 31)). RDNA's `ds_bpermute_b32` behaves this way in wave64 mode (to my
    knowledge; compilers have to emulate a full-wave permute there). Under this model, with the old
    code:
    - pass2 radix: wrong at every size. The lane-63 wave totals miss the lower half, so digit bases
      and scatter positions are wrong. Output slots stay unwritten, which matches the poison at
-     index 0.
+     index 0. *(pass5: wrong. Under this model the totals are only under-counted; for a count-4 sort
+     every digit base stays 0 and output[0] is written, with stale data, not left as poison.)*
    - radix_sort2: wrong at every size (two keys are scattered to the same slot).
    - Register bitonic E8: **correct at 40 elements, wrong at 300, 1000, 4000 and 8192**. Up to 64
      elements all real elements sit in lanes 0..7, and the lane-bit-5 exchange only ever meets
      padding. This matches `s1_bitreg` passing mostly_empty at wave64. Every bitonic and radix
      configuration would have failed on the later workloads.
-3. **Likely root cause:** a `WaveReadLaneAt` whose source lane differs per lane does not read across
+3. **Likely root cause** *(pass5: refuted)*: a `WaveReadLaneAt` whose source lane differs per lane does not read across
    the two 32-lane halves of a wave64 with this driver. The shaders relied on HLSL semantics that
    this driver does not seem to provide at wave64. **Not confirmed on hardware** (there is no
    wave64 device here). The shaders had never run at wave64 before: NVIDIA is always 32 lanes,
    WARP 4.
+
+**Correction (pass5).** The explanation in points 2-3 is wrong. The wave probe (package 095c4a9)
+ran on the 7900 XTX and the Ryzen iGPU with [WaveSize(64)]: 64 lanes, and `WaveReadLaneAt(x,
+lane ^ 32)` and `(lane + 16) % 64` read across the halves correctly. The model also cannot produce
+the symptom (see the note on point 2). What the pass2 code does differently at wave64, from its
+DXIL: the shuffle indices are masked (`& 63`, never out of range); 416 `WaveReadLaneAt` (272 at
+wave32); and one piece of control flow that exists only at wave64: the table scan's groupshared load
+under `if (lane < 16)` (16 waves) right before a shuffle scan and `WaveReadLaneAt(inclusive, 63)`.
+The most likely cause is a driver miscompile of the pass2 shuffle scans at wave64 (inactive lanes
+after that divergent load, or the lowering of the interleaved shuffle chains). That is not
+confirmed; pass5 added probe tests that tell the two apart. Details: _test/pass5/notes.md, "Wave64
+root cause". The fix below stays valid: it removes every per-lane-index shuffle scan at wave64.
 
 **Fix.** `common.hlsli` defines a **shuffle span**, `SHUFFLE_SPAN_BITS` = min(WAVE_BITS, 5). A
 `WaveReadLaneAt` with a per-lane source index only ever reads within the reading lane's aligned
@@ -159,12 +174,14 @@ group of `SHUFFLE_SPAN` lanes. For wider waves:
     run correctly on real hardware and on WARP at other widths.
   - Nothing changes for W ≤ 32.
 - *Assumed:*
-  - The root cause is the one above.
+  - The root cause is the one above. *(pass5: refuted, see the correction above.)*
   - At wave64 the 7900 XTX executes `WavePrefixSum`, `WaveActiveSum`, `WaveActiveBitOr` and a
     `WaveReadLaneAt` *within* a 32-lane half correctly.
   - The emulation does not model memory ordering or other compiler bugs.
 - **A wave64 run on the 7900 XTX is needed to confirm the fix.** The new package runs it by default:
-  `run_all.bat` adds `--wave-size 64` for GPUs with a 32-64 lane range.
+  `run_all.bat` adds `--wave-size 64` for GPUs with a 32-64 lane range. *(pass5: done: smoke +
+  1000-iteration runs of the pass4 and pass3 sets at wave64 on the 7900 XTX and the Ryzen iGPU, 0
+  failures; _test/external/notes.md.)*
 
 ## Safety runs
 
@@ -305,7 +322,10 @@ not code *volume* alone.
 
 ## Conclusions
 
-**1. Cold shader code, not cold data, is the big fixed cost of the large shaders.**
+**1. Cold shader code, not cold data, is the big fixed cost of the large shaders.** *(pass5: revised
+with the drained flush: for whole batches cold data costs more, 1.2-1.7 µs, than cold code,
+0.8-1.1 µs; cold code dominates at path switches, in the unrolled radix_sort3 and in the serial
+smoke, where ~1/3 of the s1_radix penalty was flush tail. See _test/pass5/notes.md.)*
 - *Data cold* (flush vs none, with the code warm), ref: 2.94 vs 1.82 µs at mostly_empty (smoke),
   and +0.5 to 1.0 µs at every size in the full run. That is about two dependent DRAM round trips:
   descriptor, then data.
@@ -440,6 +460,10 @@ sort shader is run once as a warm-up in the same command list): **`s4_4tier_4096
 
 - **Small sorts are about 2× faster than on the 5080** (rank floor 1.6 vs 3.6 µs). **Large
   sorts are 2× slower**: radix 33-38 µs vs 17-19 µs, and bitonic E8 at 8192 is about 65 µs vs 31.
+  *(pass5: wrong. That was the serial smoke: with a fence wait after every iteration the 7900 XTX
+  runs large sorts at half speed, most likely at lower clocks. In the batched full run of package
+  5e087c3 it is on par with the 5080: mostly_large @code 16.16 vs 16.70 µs. Its `full` numbers
+  there carry a ~13 µs flush-tail artifact; see _test/external/notes.md.)*
 - **Rank sort loses to bitonic at 129-512 on AMD** (mostly_medium: rank tiers 7.2-7.6 vs bitonic
   5.24). On the 5080 rank wins that range (5.7 vs 6.6). So an AMD configuration wants
   RANK_MAX ≈ 128 (mostly_small: rank 2.0 vs bitonic 4.2).

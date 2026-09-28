@@ -1,0 +1,16 @@
+GpuSort portable run on STIMULATOR, started 28/09/2026 21.31.54,97
+Mode: probe
+Qualifying GPUs: 2 (details in adapters.txt)
+Plan: 1 GPU run (GpuSort.exe --wave-probe: every GPU x wave configuration, no sorts)
+  GPU [0] wave lanes 32-64: without [WaveSize], [WaveSize(32)], [WaveSize(64)]
+  GPU [1] wave lanes 32-64: without [WaveSize], [WaveSize(32)], [WaveSize(64)]
+[1/1: wave probe] exit code 0 (ok, every wave configuration passed) -> wave_probe.txt / wave_probe.log
+Wave probe summary (one verdict per GPU x wave configuration, details in wave_probe.txt):
+  [0] AMD Radeon RX 7900 XTX, without [WaveSize]: OK, lanes 32 (driver's choice)
+  [0] AMD Radeon RX 7900 XTX, [WaveSize(32)]: OK, lanes 32
+  [0] AMD Radeon RX 7900 XTX, [WaveSize(64)]: OK, lanes 64
+  [1] AMD Radeon(TM) Graphics, without [WaveSize]: OK, lanes 32 (driver's choice)
+  [1] AMD Radeon(TM) Graphics, [WaveSize(32)]: OK, lanes 32
+  [1] AMD Radeon(TM) Graphics, [WaveSize(64)]: OK, lanes 64
+  Overall: OK (exit code 0)
+Finished 28/09/2026 21.31.58,75, overall exit code 0

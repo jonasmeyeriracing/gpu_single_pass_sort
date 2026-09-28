@@ -11,17 +11,25 @@ using ShaderDefines = std::vector<std::pair<std::string, std::string>>;
 // What the benchmark does between the upload of an iteration's data and the timed sort (see
 // GpuBenchmark::Record). The default (--flush-mode, else Full) is the measurement of record; the
 // others are diagnostics that separate the cost of cold shader code from the cost of cold data.
+//
+// pass5: every mode except FullLegacy and FullRo ends with a *drain* right before the start
+// timestamp: a one-group dispatch on a private 4 KB buffer, then a UAV barrier. It forces the
+// barriers recorded before it (the one after the 256 MB flush, the upload transitions) to be
+// executed, and whatever tail of the flush they wait for, before the timed window opens. Without it
+// the 7900 XTX timed ~13 us of flush tail in every 'full' iteration (see _test/pass5/notes.md).
 enum class FlushMode
 {
-    Full, // upload, then the 256 MB flush: shader code and data both cold (evicted from L2)
-    Code, // flush, then upload: code cold, input freshly written (warm in L2, like keys produced by
-          // a previous pass)
-    Data, // upload, flush, then an untimed run of the same dispatches on a private copy of the
-          // iteration: code warm, data cold
-    None, // no flush: code and data warm
+    Full,       // upload, 256 MB read+write flush, drain: shader code and data both cold (evicted from L2)
+    FullLegacy, // pre-pass5 'full': upload, flush, sort (no drain; the flush tail can land in the timed window)
+    FullRo,     // diagnostic: upload, 256 MB *read-only* flush (leaves no dirty lines), no drain
+    Code,       // flush, upload, drain: code cold, input freshly written (warm in L2, like keys produced
+                // by a previous pass)
+    Data,       // upload, flush, an untimed run of the same dispatches on a private copy of the
+                // iteration, drain: code warm, data cold
+    None,       // upload, drain (no flush): code and data warm
 };
 const char* FlushModeName(FlushMode mode);
-bool ParseFlushMode(const std::string& name, FlushMode& mode); // full / code / data / none
+bool ParseFlushMode(const std::string& name, FlushMode& mode); // full / full_legacy / full_ro / code / data / none
 
 // One ExecuteIndirect(DISPATCH {numSorts, 1, 1}) of one shader. Every group handles one sort
 // (SV_GroupID.x = sort index) and early-outs if that sort is not in its tier.
@@ -47,7 +55,7 @@ struct AlgorithmDesc
 //   # comment
 //   algorithm <name>
 //   dispatch <file.hlsl> <entryPoint> <groupSize> [NAME=VALUE ...]
-//   flush <full|code|data|none>     (optional: overrides --flush-mode for this algorithm)
+//   flush <full|full_legacy|full_ro|code|data|none>   (optional: overrides --flush-mode for this algorithm)
 //
 // so every _test/passN snapshot carries its own algorithm list. Throws on parse errors.
 std::vector<AlgorithmDesc> LoadAlgorithms(const std::filesystem::path& shaderDir);

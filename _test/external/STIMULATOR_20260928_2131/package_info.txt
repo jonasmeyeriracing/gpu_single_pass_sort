@@ -1,0 +1,10 @@
+GpuSort portable package GpuSort-portable-095c4a9
+Built:        2026-09-28 19:55:37 on JONAS-CPH
+Git commit:   095c4a9 (main) 2026-09-28 19:25:16 +0200 Wave probe survey: --wave-probe probes every wave configuration; run_all.bat probe
+Shader sets:
+    shaders\     (current)
+    _test\pass0
+    _test\pass1
+    _test\pass2
+    _test\pass3
+    _test\pass4   (identical to shaders\, skipped by run_all.bat)

@@ -375,6 +375,10 @@ static std::string TryCreate(IDXGIAdapter1* adapter, GpuInfo& info)
     }
     info.waveLaneCountMin = options1.WaveLaneCountMin;
     info.waveLaneCountMax = options1.WaveLaneCountMax;
+
+    D3D12_FEATURE_DATA_ARCHITECTURE arch{};
+    if (SUCCEEDED(info.device->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE, &arch, sizeof(arch))))
+        info.uma = arch.UMA != FALSE;
     return {};
 }
 

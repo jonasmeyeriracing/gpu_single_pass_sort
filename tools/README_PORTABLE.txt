@@ -57,8 +57,11 @@ What it runs (default, all, current)
 4. Full runs: 1000 iterations (+5 warmup) of every algorithm x workload for every shader set.
 If a GPU reports a range of wave sizes (AMD RDNA: WaveLaneCountMin 32, Max 64), steps 3 and 4 run
 twice per shader set: with the default (WAVE_SIZE = 32, forced with [WaveSize(32)]) and with
---wave-size 64 (only on the GPUs that support 64). Expect roughly 1-3 minutes per full run on a
-fast GPU, longer on an integrated GPU.
+--wave-size 64 (only on the GPUs that support 64). Expect roughly 2 minutes per full run on a
+fast discrete GPU and 20-25 minutes on an integrated GPU (measured: Ryzen 7000 iGPU 24 min, Intel
+UHD 770 19 min per full run; a machine with a discrete and an integrated GPU runs both in every
+run). Every GPU run prints a calibrated estimate of its run time right after the OK (console and
+progress window, refined while it runs; also in the header of the results .txt).
 Every GPU run (after its OK) first runs a wave probe: a tiny shader, compiled like the sort shaders
 of that run and also without [WaveSize], reports the wave lane count the driver really uses, checks
 lane = SV_GroupIndex % WAVE_SIZE and a few cross-lane operations (WaveReadLaneAt lane ^ 32, ...).

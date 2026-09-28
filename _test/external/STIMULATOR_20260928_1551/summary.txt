@@ -1,0 +1,11 @@
+GpuSort portable run on STIMULATOR, started 28/09/2026 15.51.26,67
+Mode: latest
+Qualifying GPUs: 2 (details in adapters.txt)
+Plan: 4 GPU runs
+  shader set current: C:\Users\jonas\Desktop\GpuSort-portable-3409bf6\GpuSort-portable-3409bf6\shaders
+  wave configurations: default and --wave-size 64
+  skipped as identical to shaders\: pass2
+[1/4: smoke current default wave size] exit code 0 (ok) -> smoke_current.txt / smoke_current.log
+[2/4: smoke current wave64] exit code 1 (verification failures or errors, see smoke_current_wave64.log) -> smoke_current_wave64.txt / smoke_current_wave64.log
+STOPPED: smoke test 2/4: smoke current wave64 failed with 1 (verification failures or errors, see smoke_current_wave64.log)
+Finished 28/09/2026 15.51.52,47, overall exit code 1

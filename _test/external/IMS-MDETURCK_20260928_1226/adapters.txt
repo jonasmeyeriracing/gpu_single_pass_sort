@@ -1,0 +1,18 @@
+[0] Intel(R) UHD Graphics 770  LUID 00000000:000549DB  vendor 8086 device 4680 subsys 7D251462 rev 12  flags 0x0  vram 128 MB  sysmem 0 MB  shared 16274 MB
+      desc3 flags 0x2C
+      KMT type 0x2323 (render 1 display 1 software 0 indirectDisplay 0)  PCI 0:2.0
+      D3D12 device LUID 00000000:000549DB  highest SM 0x66  nodes 1  wave ops 1 lanes 16-16
+[1] Microsoft Basic Render Driver  LUID 00000000:0005492C  vendor 1414 device 008C subsys 00000000 rev 0  flags 0x0  vram 0 MB  sysmem 0 MB  shared 16274 MB
+      desc3 flags 0x2C
+      KMT type 0x106 (render 0 display 1 software 1 indirectDisplay 0)  PCI 4294967295:65535.65535
+      D3D12 device LUID 00000000:0005492C  highest SM 0x66  nodes 1  wave ops 1 lanes 4-4
+[2] Microsoft Basic Render Driver  LUID 00000000:000549AC  vendor 1414 device 008C subsys 00000000 rev 0  flags 0x2  vram 0 MB  sysmem 0 MB  shared 16274 MB
+      desc3 flags 0x2E
+      KMT type 0x105 (render 1 display 0 software 1 indirectDisplay 0)  PCI 4294967295:65535.65535
+      D3D12 device LUID 00000000:000549AC  highest SM 0x66  nodes 1  wave ops 1 lanes 4-4
+
+Benchmark adapters (used by a hardware run):
+  [0] Intel(R) UHD Graphics 770  vendor 8086 device 4680  driver 31.0.101.3616  vram 128 MB
+      wave lane range: min 16 max 16
+  skipped: Microsoft Basic Render Driver (LUID 00000000:0005492C): indirect display / non-render adapter
+  skipped: Microsoft Basic Render Driver: software adapter

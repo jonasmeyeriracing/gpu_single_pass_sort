@@ -1,0 +1,24 @@
+[0] AMD Radeon RX 7900 XTX  LUID 00000000:0004CECE  vendor 1002 device 744C subsys 53041849 rev 200  flags 0x0  vram 24512 MB  sysmem 0 MB  shared 32335 MB
+      desc3 flags 0x2C
+      KMT type 0x230B (render 1 display 1 software 0 indirectDisplay 0)  PCI 3:0.0
+      D3D12 device LUID 00000000:0004CECE  highest SM 0x66  nodes 1  wave ops 1 lanes 32-64
+[1] AMD Radeon(TM) Graphics  LUID 00000000:0004F8AD  vendor 1002 device 164E subsys 88771043 rev 201  flags 0x0  vram 485 MB  sysmem 0 MB  shared 32335 MB
+      desc3 flags 0x2C
+      KMT type 0x2303 (render 1 display 1 software 0 indirectDisplay 0)  PCI 20:0.0
+      D3D12 device LUID 00000000:0004F8AD  highest SM 0x66  nodes 1  wave ops 1 lanes 32-64
+[2] Microsoft Basic Render Driver  LUID 00000000:0004F84D  vendor 1414 device 008C subsys 00000000 rev 0  flags 0x2  vram 0 MB  sysmem 0 MB  shared 32335 MB
+      desc3 flags 0x2E
+      KMT type 0x105 (render 1 display 0 software 1 indirectDisplay 0)  PCI 4294967295:65535.65535
+      D3D12 device LUID 00000000:0004F84D  highest SM 0x62  nodes 1  wave ops 1 lanes 4-4
+[3] AMD Radeon RX 7900 XTX  LUID 00000000:00059E9B  vendor 1002 device 744C subsys 53041849 rev 200  flags 0x0  vram 24512 MB  sysmem 0 MB  shared 32335 MB
+      desc3 flags 0x2C
+      KMT type 0x342 (render 0 display 1 software 0 indirectDisplay 1)  PCI 4294967295:65535.65535
+      D3D12 device LUID 00000000:00059E9B  highest SM 0x66  nodes 1  wave ops 1 lanes 32-64
+
+Benchmark adapters (used by a hardware run):
+  [0] AMD Radeon RX 7900 XTX  vendor 1002 device 744C  driver 32.0.11037.4004  vram 24512 MB
+      wave lane range: min 32 max 64
+  [1] AMD Radeon(TM) Graphics  vendor 1002 device 164E  driver 32.0.11037.4004  vram 485 MB
+      wave lane range: min 32 max 64
+  skipped: Microsoft Basic Render Driver: software adapter
+  skipped: AMD Radeon RX 7900 XTX (LUID 00000000:00059E9B): indirect display / non-render adapter

@@ -1,0 +1,285 @@
+GpuSort benchmark results
+=========================
+Date:         2026-09-28 22:09:33
+Computer:     JONAS-CPH
+Label:        pass5 full run (16 algorithms: drained full vs full_legacy / full_ro / data / code / none)
+Command line: D:\git\gpu_single_pass_sort\bin\Release\GpuSort.exe --label "pass5 full run (16 algorithms: drained full vs full_legacy / full_ro / data / code / none)" --out C:/Users/jonas/AppData/Local/Temp/claude/D--git-gpu-single-pass-sort/9ef8f4da-127d-4ed4-be4f-c649adbd94cf/scratchpad/hw_full5.txt --log C:/Users/jonas/AppData/Local/Temp/claude/D--git-gpu-single-pass-sort/9ef8f4da-127d-4ed4-be4f-c649adbd94cf/scratchpad/hw_full5.log
+Shader dir:   D:\git\gpu_single_pass_sort\shaders
+Iterations:   1000 measured + 5 warmup per GPU x workload x algorithm, 20 sorts per iteration
+Cache flush:  256 MB read+write compute pass before every timed sort, then a DRAIN (pass5): a
+              one-group dispatch on a private 4 KB buffer + UAV barrier right before the start
+              timestamp, so the tail of the flush (barrier wait / cache maintenance a driver defers
+              to the next dispatch) is no longer inside the timed window.
+              NOTE: results before pass5 were measured WITHOUT the drain and are not directly
+              comparable (flush mode full_legacy reproduces the old 'full'; on the RX 7900 XTX it
+              added ~13 us to every iteration, on the RTX 5080 ~0.6 us).
+Flush mode:   'full' for algorithms without their own. full = code + data cold (flush, drain);
+              full_legacy = pre-pass5 full (no drain); full_ro = read-only flush, no drain
+              (diagnostic); code = only code cold (flush before the upload, drain); data = only
+              data cold (untimed warm-up run of the same dispatches, drain); none = no flush (drain)
+Timing:       GPU timestamps around the sort ExecuteIndirect dispatches only, per iteration (all 20 sorts)
+GPUs:
+  [0] NVIDIA GeForce RTX 5080  (driver 32.0.16.1714, timestamp freq 1000000000 Hz, wall time 105.6 s)
+      vendor 10DE device 2C02, 15977 MB VRAM
+      wave lanes 32-32, shaders compiled with WAVE_SIZE=32
+      run-time estimate: 0.70 ms per iteration (calibrated up front) -> ~112 s for this GPU, actual 105.6 s
+      Wave probe: compiled without [WaveSize] (driver's choice), groups 64/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK, shflscan x8 OK, shflscan after if OK, shflscan after select OK
+      Wave probe verdict: OK, the sort shaders' configuration (WAVE_SIZE=32) runs with 32 lanes and lane = SV_GroupIndex % 32
+  skipped: Microsoft Basic Render Driver: software adapter
+  skipped: NVIDIA GeForce RTX 5080 (LUID 00000000:0005AC05): indirect display / non-render adapter
+Run-time estimate: ~112 s up front (per GPU: 32 calibration iterations of the upload + flush +
+              drain + readback work without a sort, times the iterations of the run)
+Total benchmark time: 105.7 s (after confirmation)
+
+Workload size distribution (1000 measured iterations x 20 sorts; counts are sorts per size tier)
+  workload         total elems elems/iter         0      1-64    65-128   129-512  513-2048 2049-8192    max  distribution
+  mostly_empty          193276      193.3     14054      5946         0         0         0         0     64  70% empty, rest 1-64
+  mostly_small         1275951     1276.0       156      9992      9852         0         0         0    128  uniform 0-128
+  realistic_mix        9400912     9400.9      2973      1469      1813     11156      1982       607   8186  15% empty, 72% 16-512, 10% 513-2048, 3% 2049-8192
+  mostly_large       102411996   102412.0         0         0         0         0         1     19999   8192  uniform 2048-8192
+  worst_case         163840000   163840.0         0         0         0         0         0     20000   8192  all 8192
+  edges               27222759    27222.8       667      5336      2001      4002      3998      3996   8192  tier boundaries 0-8192 (30 fixed sizes, cycled)
+  mostly_mid          25649194    25649.2         0         0         0         0     20000         0   2048  uniform 513-2048
+  mostly_medium        6400095     6400.1         0         0         0     20000         0         0    512  uniform 129-512
+  sweep               44624000    44624.0         0      2520      1260      3780      5000      7440   8192  all 20 sorts the same size, 16 sizes 32-8192 cycled per iteration
+  sparse_keys         81702117    81702.1         0       144       151       954      3785     14966   8191  uniform 1-8192; each 4-bit key digit is constant within a sort with p = 1/2
+
+Algorithms (flush mode; DXIL container bytes per dispatch, compiled for WAVE_SIZE=32)
+  s1_rank512_bitreg2048_radix         full         30268
+  s1_rank512_bitreg2048_radix@legacy  full_legacy  30268
+  s1_rank512_bitreg2048_radix@ro      full_ro      30268
+  s1_rank512_bitreg2048_radix@data    data         30268
+  s1_rank512_bitreg2048_radix@code    code         30268
+  s1_rank512_bitreg2048_radix@none    none         30268
+  s1_rank512_bitreg4096_radix         full         30268
+  s4_4tier_4096                       full         49972
+  s4_4tier_4096@legacy                full_legacy  49972
+  s4_4tier_4096@data                  data         49972
+  s4_3tier_rx3r                       full         19024
+  s4_3tier_rx3r@legacy                full_legacy  19024
+  s4_3tier_rx3r@data                  data         19024
+  s4_3tier_rx3r@code                  code         19024
+  s1_radix                            full         25204
+  s1_radix@legacy                     full_legacy  25204
+
+Sort timings in microseconds (per iteration = 20 sorts)
+
+[0] NVIDIA GeForce RTX 5080  (WAVE_SIZE 32)
+  workload       algorithm                                min    median      mean       p95       max  fails
+  mostly_empty   s1_rank512_bitreg2048_radix             2.37      3.65      3.65      4.45      5.09      0
+                 s1_rank512_bitreg2048_radix@legacy      2.40      3.90      5.02      4.99    502.53      0
+                 s1_rank512_bitreg2048_radix@ro          2.02      2.56      2.83      3.14    185.82      0
+                 s1_rank512_bitreg2048_radix@data        2.34      2.85      3.09      3.36    219.81      0
+                 s1_rank512_bitreg2048_radix@code        1.82      2.30      2.70      2.82    199.62      0
+                 s1_rank512_bitreg2048_radix@none        1.44      1.57      1.59      1.79      1.98      0
+                 s1_rank512_bitreg4096_radix             2.27      3.62      3.60      4.45      4.93      0
+                 s4_4tier_4096                           2.30      3.65      3.65      4.48      5.15      0
+                 s4_4tier_4096@legacy                    2.46      3.90      4.86      4.86    198.40      0
+                 s4_4tier_4096@data                      2.30      2.88      2.89      3.39      3.84      0
+                 s4_3tier_rx3r                           2.43      3.65      3.66      4.45      5.06      0
+                 s4_3tier_rx3r@legacy                    2.56      3.87      4.68      4.90    215.07      0
+                 s4_3tier_rx3r@data                      2.24      2.85      2.87      3.36      3.87      0
+                 s4_3tier_rx3r@code                      1.82      2.30      2.34      2.82      4.32      0
+                 s1_radix                                9.86     11.07     11.65     13.50     14.05      0
+                 s1_radix@legacy                         9.98     11.17     12.07     13.63    244.38      0
+  mostly_small   s1_rank512_bitreg2048_radix             2.53      3.84      3.79      4.54      5.22      0
+                 s1_rank512_bitreg2048_radix@legacy      2.75      4.03      4.44      4.99    197.02      0
+                 s1_rank512_bitreg2048_radix@ro          2.37      2.69      3.04      3.17    285.12      0
+                 s1_rank512_bitreg2048_radix@data        2.53      3.01      3.02      3.49      3.87      0
+                 s1_rank512_bitreg2048_radix@code        2.05      2.37      2.39      2.78      3.84      0
+                 s1_rank512_bitreg2048_radix@none        1.57      1.70      1.72      1.92      2.56      0
+                 s1_rank512_bitreg4096_radix             2.50      3.81      3.78      4.48      4.93      0
+                 s4_4tier_4096                           2.62      3.84      3.79      4.54      4.99      0
+                 s4_4tier_4096@legacy                    2.69      4.03      4.23      4.90    181.18      0
+                 s4_4tier_4096@data                      2.46      3.01      3.02      3.49      3.94      0
+                 s4_3tier_rx3r                           2.59      3.81      3.77      4.45      5.12      0
+                 s4_3tier_rx3r@legacy                    2.69      4.00      4.17      4.90    133.63      0
+                 s4_3tier_rx3r@data                      2.50      3.01      3.03      3.52      3.90      0
+                 s4_3tier_rx3r@code                      2.05      2.40      2.59      2.85    180.67      0
+                 s1_radix                                9.86     10.98     11.25     13.50     14.11      0
+                 s1_radix@legacy                        10.11     11.10     11.94     13.66    203.52      0
+  realistic_mix  s1_rank512_bitreg2048_radix             4.48     10.00     11.74     17.22     19.49      0
+                 s1_rank512_bitreg2048_radix@legacy      4.58     10.29     12.37     17.60    215.97      0
+                 s1_rank512_bitreg2048_radix@ro          4.06      8.90     12.11     16.35    329.28      0
+                 s1_rank512_bitreg2048_radix@data        4.32      8.90     10.28     15.39    195.74      0
+                 s1_rank512_bitreg2048_radix@code        3.52      8.64     10.51     15.74     18.30      0
+                 s1_rank512_bitreg2048_radix@none        3.26      8.03      9.35     14.59     16.16      0
+                 s1_rank512_bitreg4096_radix             4.61     10.02     11.71     17.02     19.55      0
+                 s4_4tier_4096                           4.96      9.95     12.25     19.94     21.63      0
+                 s4_4tier_4096@legacy                    4.80     10.14     12.75     20.64    192.93      0
+                 s4_4tier_4096@data                      4.29      8.70      9.76     15.01     19.14      0
+                 s4_3tier_rx3r                           4.64     10.21     12.30     19.33    286.18      0
+                 s4_3tier_rx3r@legacy                    4.96     10.53     12.86     19.36    466.98      0
+                 s4_3tier_rx3r@data                      4.16      9.18     11.12     18.30     19.81      0
+                 s4_3tier_rx3r@code                      3.52      8.93     10.80     17.95     19.68      0
+                 s1_radix                                9.92     12.16     12.59     16.38     18.05      0
+                 s1_radix@legacy                         9.92     12.16     12.98     16.77    201.98      0
+  mostly_large   s1_rank512_bitreg2048_radix            14.08     17.25     17.29     18.75     20.16      0
+                 s1_rank512_bitreg2048_radix@legacy     14.46     17.47     18.81     19.01    587.68      0
+                 s1_rank512_bitreg2048_radix@ro         13.06     16.22     16.51     17.82    189.95      0
+                 s1_rank512_bitreg2048_radix@data       13.41     16.29     16.35     17.73     18.53      0
+                 s1_rank512_bitreg2048_radix@code       12.74     15.78     15.86     17.28     18.66      0
+                 s1_rank512_bitreg2048_radix@none       12.61     15.39     15.45     16.74     20.19      0
+                 s1_rank512_bitreg4096_radix            14.21     16.64     16.90     18.24    217.44      0
+                 s4_4tier_4096                          13.95     17.15     17.79     21.73     22.75      0
+                 s4_4tier_4096@legacy                   14.50     17.38     18.50     22.72    181.12      0
+                 s4_4tier_4096@data                     13.44     15.97     16.01     17.25     19.78      0
+                 s4_3tier_rx3r                          17.60     20.03     20.29     21.47    239.23      0
+                 s4_3tier_rx3r@legacy                   17.63     20.19     20.87     21.73    252.35      0
+                 s4_3tier_rx3r@data                     16.93     19.20     19.28     20.51     21.47      0
+                 s4_3tier_rx3r@code                     16.38     18.69     19.02     20.13    229.09      0
+                 s1_radix                               14.40     17.38     17.52     18.94    147.07      0
+                 s1_radix@legacy                        14.72     17.57     19.31     19.17    907.55      0
+  worst_case     s1_rank512_bitreg2048_radix            17.98     19.20     19.46     21.60     22.37      0
+                 s1_rank512_bitreg2048_radix@legacy     18.05     19.39     20.08     21.95    214.24      0
+                 s1_rank512_bitreg2048_radix@ro         17.70     18.14     18.98     20.38    230.72      0
+                 s1_rank512_bitreg2048_radix@data       17.92     18.30     18.33     18.66     20.32      0
+                 s1_rank512_bitreg2048_radix@code       17.44     17.70     18.38     19.81    216.93      0
+                 s1_rank512_bitreg2048_radix@none       16.93     17.34     17.62     17.50    285.50      0
+                 s1_rank512_bitreg4096_radix            17.22     18.38     18.65     20.96     21.57      0
+                 s4_4tier_4096                          17.63     18.85     19.60     24.42     25.09      0
+                 s4_4tier_4096@legacy                   17.92     19.04     20.69     25.22    220.83      0
+                 s4_4tier_4096@data                     17.60     17.89     18.11     18.27    182.66      0
+                 s4_3tier_rx3r                          20.74     21.86     22.41     22.78    217.44      0
+                 s4_3tier_rx3r@legacy                   20.77     22.08     22.12     23.01     23.42      0
+                 s4_3tier_rx3r@data                     20.67     20.99     21.23     21.38    214.02      0
+                 s4_3tier_rx3r@code                     20.38     20.61     20.69     21.18     22.85      0
+                 s1_radix                               18.37     19.49     19.74     20.70    201.50      0
+                 s1_radix@legacy                        18.50     19.68     20.29     21.06    343.39      0
+  edges          s1_rank512_bitreg2048_radix             6.30     18.80     15.40     20.00    197.50      0
+                 s1_rank512_bitreg2048_radix@legacy      6.59     19.10     15.67     20.19    214.91      0
+                 s1_rank512_bitreg2048_radix@ro          6.11     17.92     14.73     18.62    282.18      0
+                 s1_rank512_bitreg2048_radix@data        6.30     17.92     14.23     18.40     18.88      0
+                 s1_rank512_bitreg2048_radix@code        6.05     17.50     13.93     18.11     22.14      0
+                 s1_rank512_bitreg2048_radix@none        5.54     15.65     12.85     17.34     18.24      0
+                 s1_rank512_bitreg4096_radix             6.40     17.95     14.68     19.26     19.78      0
+                 s4_4tier_4096                           6.34     18.58     16.08     22.24    219.52      0
+                 s4_4tier_4096@legacy                    6.40     18.82     16.55     23.10    201.31      0
+                 s4_4tier_4096@data                      6.27     17.60     13.99     17.95     18.69      0
+                 s4_3tier_rx3r                           6.53     21.57     17.06     22.62     23.36      0
+                 s4_3tier_rx3r@legacy                    6.59     21.86     17.84     22.85    198.50      0
+                 s4_3tier_rx3r@data                      6.30     20.93     16.22     21.31     21.86      0
+                 s4_3tier_rx3r@code                      6.14     20.32     15.86     21.02     22.30      0
+                 s1_radix                                9.98     18.99     16.90     19.84    178.50      0
+                 s1_radix@legacy                        10.21     19.33     17.60     20.16    215.01      0
+  mostly_mid     s1_rank512_bitreg2048_radix             8.48      9.66     10.02     10.34    216.99      0
+                 s1_rank512_bitreg2048_radix@legacy      8.67      9.89     10.23     10.62    204.22      0
+                 s1_rank512_bitreg2048_radix@ro          8.38      8.70      9.91      9.15    249.95      0
+                 s1_rank512_bitreg2048_radix@data        8.45      8.74      8.94      9.12    164.96      0
+                 s1_rank512_bitreg2048_radix@code        8.10      8.42      8.46      8.80     10.27      0
+                 s1_rank512_bitreg2048_radix@none        7.68      7.87      7.92      8.16      8.42      0
+                 s1_rank512_bitreg4096_radix             8.48      9.66      9.66     10.43     10.98      0
+                 s4_4tier_4096                           8.54      9.70      9.67     10.37     11.14      0
+                 s4_4tier_4096@legacy                    8.51      9.89     10.01     10.59    139.71      0
+                 s4_4tier_4096@data                      8.35      8.74      8.79      9.12      9.44      0
+                 s4_3tier_rx3r                           8.80     10.11     10.08     10.75     11.36      0
+                 s4_3tier_rx3r@legacy                    9.09     10.27     10.78     11.01    176.45      0
+                 s4_3tier_rx3r@data                      8.77      9.18      9.20      9.54     10.21      0
+                 s4_3tier_rx3r@code                      8.38      8.86      8.90      9.31     10.43      0
+                 s1_radix                               10.40     11.71     11.91     13.86     14.46      0
+                 s1_radix@legacy                        10.50     11.92     12.34     14.18    204.13      0
+  mostly_medium  s1_rank512_bitreg2048_radix             4.51      5.76      5.72      6.40      6.91      0
+                 s1_rank512_bitreg2048_radix@legacy      4.58      5.95      6.77      6.62    228.10      0
+                 s1_rank512_bitreg2048_radix@ro          4.00      4.61      5.11      4.99    337.02      0
+                 s1_rank512_bitreg2048_radix@data        4.29      4.74      4.75      5.09      5.63      0
+                 s1_rank512_bitreg2048_radix@code        3.58      4.10      4.58      4.54    435.23      0
+                 s1_rank512_bitreg2048_radix@none        3.23      3.62      3.62      3.81     16.13      0
+                 s1_rank512_bitreg4096_radix             4.48      5.73      5.70      6.37      6.98      0
+                 s4_4tier_4096                           4.42      5.73      5.70      6.34      6.88      0
+                 s4_4tier_4096@legacy                    4.61      5.95      6.36      6.56    218.30      0
+                 s4_4tier_4096@data                      4.26      4.74      4.75      5.06      5.34      0
+                 s4_3tier_rx3r                           4.45      5.76      5.91      6.34    211.68      0
+                 s4_3tier_rx3r@legacy                    4.19      5.95      6.52      6.62    240.67      0
+                 s4_3tier_rx3r@data                      4.13      4.74      4.75      5.09      5.70      0
+                 s4_3tier_rx3r@code                      3.52      4.13      4.34      4.58    181.76      0
+                 s1_radix                                9.82     10.94     11.24     13.47     14.11      0
+                 s1_radix@legacy                         9.76     11.07     11.40     13.66     14.08      0
+  sweep          s1_rank512_bitreg2048_radix             2.59      8.45      9.94     18.82    470.56      0
+                 s1_rank512_bitreg2048_radix@legacy      2.75      8.66     10.02     19.20    267.10      0
+                 s1_rank512_bitreg2048_radix@ro          2.40      8.26      9.68     18.02    565.44      0
+                 s1_rank512_bitreg2048_radix@data        2.37      7.15      8.50     18.18    162.14      0
+                 s1_rank512_bitreg2048_radix@code        1.98      6.77      8.17     17.60     22.30      0
+                 s1_rank512_bitreg2048_radix@none        1.47      6.08      7.41     17.28     17.50      0
+                 s1_rank512_bitreg4096_radix             2.66      8.45      9.71     18.11     21.50      0
+                 s4_4tier_4096                           2.56      8.50      9.48     19.58     25.06      0
+                 s4_4tier_4096@legacy                    2.75      8.77     10.13     20.19    197.50      0
+                 s4_4tier_4096@data                      2.37      7.12      8.32     17.82    205.98      0
+                 s4_3tier_rx3r                           2.66      8.42      9.76     21.60     22.88      0
+                 s4_3tier_rx3r@legacy                    2.62      8.77     10.56     21.95    216.35      0
+                 s4_3tier_rx3r@data                      2.40      7.22      8.88     20.93     21.60      0
+                 s4_3tier_rx3r@code                      1.98      6.83      8.42     20.54     21.31      0
+                 s1_radix                                9.89     11.54     12.66     19.14     21.18      0
+                 s1_radix@legacy                         9.86     11.86     13.30     19.42    238.56      0
+  sparse_keys    s1_rank512_bitreg2048_radix            13.38     17.41     17.46     19.39     20.86      0
+                 s1_rank512_bitreg2048_radix@legacy     14.08     17.66     18.36     19.55    521.54      0
+                 s1_rank512_bitreg2048_radix@ro         13.02     16.42     16.63     18.34    168.06      0
+                 s1_rank512_bitreg2048_radix@data       13.02     16.45     16.49     18.34     19.42      0
+                 s1_rank512_bitreg2048_radix@code       12.48     15.97     16.04     17.89     31.04      0
+                 s1_rank512_bitreg2048_radix@none       12.19     15.58     15.62     17.47     18.69      0
+                 s1_rank512_bitreg4096_radix            14.08     16.80     17.03     18.78    160.45      0
+                 s4_4tier_4096                          13.44     17.54     18.14     22.14     24.00      0
+                 s4_4tier_4096@legacy                   13.66     17.78     18.99     22.94    195.36      0
+                 s4_4tier_4096@data                     13.18     16.19     16.24     18.02     20.32      0
+                 s4_3tier_rx3r                          17.09     20.16     20.18     21.79     23.84      0
+                 s4_3tier_rx3r@legacy                   16.86     20.35     20.71     22.18    201.63      0
+                 s4_3tier_rx3r@data                     16.45     19.36     19.38     20.99     22.14      0
+                 s4_3tier_rx3r@code                     15.97     18.91     18.93     20.61     22.24      0
+                 s1_radix                               13.15     17.63     18.35     19.39    214.69      0
+                 s1_radix@legacy                        13.95     17.86     18.83     19.84    361.06      0
+
+  sweep: median us per iteration by sort size (all 20 sorts of an iteration have that size)
+  algorithm                               32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  s1_rank512_bitreg2048_radix           3.62    3.68    3.81    4.32    4.99    5.92    7.33    7.55    9.66    9.78   14.26   15.23   13.52   14.24   15.39   19.17
+  s1_rank512_bitreg2048_radix@legacy    3.87    3.94    4.00    4.51    5.15    6.11    7.65    7.74    9.82   10.13   14.77   15.42   13.76   14.46   15.50   19.36
+  s1_rank512_bitreg2048_radix@ro        2.53    2.56    2.69    3.17    3.81    4.74    6.50    6.56    8.64    8.90   13.18   14.21   12.42   13.17   14.18   18.11
+  s1_rank512_bitreg2048_radix@data      2.88    2.91    3.07    3.42    3.97    4.86    6.56    6.59    8.70    8.96   11.01   11.58   12.58   13.39   14.43   18.27
+  s1_rank512_bitreg2048_radix@code      2.27    2.27    2.37    2.82    3.36    4.32    6.40    6.34    8.38    8.61   13.15   14.37   12.10   12.74   13.63   17.66
+  s1_rank512_bitreg2048_radix@none      1.73    1.79    1.89    2.40    3.01    3.90    5.92    5.92    8.00    8.26   10.30   10.93   11.78   12.38   13.31   17.36
+  s1_rank512_bitreg4096_radix           3.71    3.74    3.78    4.35    5.02    5.95    7.52    7.55    9.63    9.92   14.46   15.04   15.87   16.10   14.78   18.42
+  s4_4tier_4096                         3.71    3.74    3.74    4.29    4.96    5.98    7.49    7.58    9.60    9.92   12.21   12.85   11.92   19.58   15.23   18.85
+  s4_4tier_4096@legacy                  3.87    3.94    4.13    4.51    5.22    6.11    7.65    7.74    9.86   10.10   12.43   13.30   12.11   20.16   15.46   19.17
+  s4_4tier_4096@data                    2.94    3.01    2.98    3.49    3.97    4.86    6.53    6.62    8.67    8.99    8.86    9.38   10.88   13.38   14.40   17.89
+  s4_3tier_rx3r                         3.71    3.78    3.87    4.32    5.12    5.98    7.49    7.68    9.97   10.53   11.65   12.29   13.74   16.54   18.40   21.86
+  s4_3tier_rx3r@legacy                  3.87    3.90    4.06    4.45    5.22    6.08    7.71    7.81   10.24   10.62   11.81   12.51   13.84   16.80   18.53   22.06
+  s4_3tier_rx3r@data                    2.94    3.04    3.01    3.46    4.10    4.86    6.62    6.69    9.07    9.60   10.43   11.20   12.77   15.78   17.47   21.01
+  s4_3tier_rx3r@code                    2.27    2.30    2.46    2.75    3.46    4.35    6.30    6.40    8.78    9.22   10.11   11.20   12.22   15.20   17.02   20.58
+  s1_radix                             10.88   10.88   10.91   10.88   10.91   10.94   11.07   11.20   11.26   12.06   12.29   13.81   13.78   14.43   15.49   19.42
+  s1_radix@legacy                      11.01   11.04   11.07   11.10   11.07   11.07   11.14   11.52   11.52   12.21   12.42   14.40   13.86   14.62   15.58   19.71
+
+  sweep: mean us per iteration by sort size (all 20 sorts of an iteration have that size)
+  algorithm                               32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  s1_rank512_bitreg2048_radix           3.62    3.69    3.77    4.31    4.94   13.22    7.33    7.48    9.64    9.90   13.89   14.27   14.06   14.43   15.58   19.41
+  s1_rank512_bitreg2048_radix@legacy    3.91    4.00    4.07    4.66    5.22    6.10    7.71    7.71    9.86   10.11   14.22   18.60   14.33   14.82   16.02   19.57
+  s1_rank512_bitreg2048_radix@ro        2.66    5.66    5.48    3.29    7.17    4.73    6.62    6.62    8.70   18.05   12.41   13.14   12.58   15.73   14.28   18.28
+  s1_rank512_bitreg2048_radix@data      5.39    2.97    3.10    3.48    4.02    4.90    6.63    6.69    8.73    9.02   11.08   11.62   12.63   13.45   14.49   18.34
+  s1_rank512_bitreg2048_radix@code      2.28    2.29    2.37    2.84    3.41    4.67    6.43    6.39    8.41    8.66   12.50   13.30   12.49   13.40   13.97   17.81
+  s1_rank512_bitreg2048_radix@none      1.69    1.77    1.87    2.36    2.99    3.87    5.93    5.89    7.96    8.23   10.30   11.44   11.78   12.35   13.33   17.33
+  s1_rank512_bitreg4096_radix           3.67    3.69    3.84    4.28    4.99    5.88    7.45    7.52    9.61    9.92   14.50   14.99   15.85   16.00   15.19   18.62
+  s4_4tier_4096                         3.59    3.67    3.80    4.23    4.96    5.92    7.46    7.57    9.63    9.92   12.07   11.98   12.27   19.53   15.74   19.84
+  s4_4tier_4096@legacy                  3.93    3.96    4.20    4.48    8.27    6.11    7.64   10.36    9.87   10.07   12.44   12.46   12.39   20.04   16.02   20.35
+  s4_4tier_4096@data                    2.92    3.00    3.07    3.48    4.03    4.91    6.58    6.68    8.71    9.03    8.92    9.46   10.91   16.50   17.50   17.92
+  s4_3tier_rx3r                         3.67    3.79    3.89    4.32    5.06    5.95    7.48    7.67    9.93   10.51   11.68   12.31   13.68   16.55   18.35   21.88
+  s4_3tier_rx3r@legacy                  3.88    3.98    6.96    7.80    5.22    6.09    7.80    7.79   10.27   10.64   11.87   12.52   13.90   16.89   18.61   25.30
+  s4_3tier_rx3r@data                    2.91    3.01    3.04    3.51    4.13    4.90    6.71    6.72    9.09    9.66   10.54   11.21   12.84   15.79   17.53   21.06
+  s4_3tier_rx3r@code                    2.30    2.31    2.46    2.81    3.49    4.38    6.40    6.47    8.81    9.25   10.17   11.18   12.28   15.24   17.07   20.66
+  s1_radix                             10.93   11.15   11.21   11.06   11.05   11.18   11.38   11.43   11.38   12.28   12.41   13.56   14.05   14.50   15.61   19.53
+  s1_radix@legacy                      11.33   11.40   11.29   11.44   11.39   11.36   14.36   11.72   11.69   12.52   12.58   13.88   14.11   14.88   15.78   23.35
+
+  sweep: p95 us per iteration by sort size (all 20 sorts of an iteration have that size)
+  algorithm                               32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  s1_rank512_bitreg2048_radix           4.45    4.45    4.26    4.96    5.50    6.53    7.87    8.10   10.24   10.78   15.17   16.45   16.86   17.02   18.37   21.60
+  s1_rank512_bitreg2048_radix@legacy    4.96    4.99    4.83    5.54    5.95    6.66    8.70    8.42   10.66   10.98   15.71   16.83   17.57   18.05   18.82   21.98
+  s1_rank512_bitreg2048_radix@ro        3.46    2.75    2.88    4.22    4.74    4.90    7.81    7.17    8.99   10.40   14.66   15.94   12.74   16.38   14.34   20.29
+  s1_rank512_bitreg2048_radix@data      3.39    3.39    3.62    3.90    4.38    5.18    7.10    7.14    9.06    9.44   11.46   12.00   12.86   13.82   14.85   18.72
+  s1_rank512_bitreg2048_radix@code      2.59    2.59    2.66    3.14    3.65    4.74    6.72    6.69    8.67    8.93   13.60   15.42   15.14   15.71   16.32   19.36
+  s1_rank512_bitreg2048_radix@none      1.76    1.86    1.95    2.46    3.10    4.00    6.08    5.98    8.13    8.42   10.40   13.98   11.90   12.48   13.57   17.44
+  s1_rank512_bitreg4096_radix           4.35    4.06    4.51    4.96    5.60    6.53    8.06    8.42   10.40   10.59   15.33   15.71   16.22   17.22   18.24   20.90
+  s4_4tier_4096                         4.38    4.26    4.51    4.83    5.50    6.46    8.42    8.38   10.59   10.62   13.31   13.98   15.04   21.25   21.38   24.35
+  s4_4tier_4096@legacy                  4.96    4.70    5.09    5.31    6.24    6.75    8.45    8.74   10.69   10.34   13.95   14.34   15.10   21.57   22.02   25.41
+  s4_4tier_4096@data                    3.39    3.42    3.58    3.87    4.42    5.18    6.91    7.10    9.06    9.41    9.34    9.79   11.30   13.70   14.82   18.21
+  s4_3tier_rx3r                         4.45    4.48    4.74    5.06    5.60    6.59    8.32    8.42   10.40   10.94   12.54   13.02   14.21   17.34   19.23   22.46
+  s4_3tier_rx3r@legacy                  4.77    4.99    5.15    5.47    5.63    6.69    8.58    8.61   11.14   11.46   12.99   13.25   14.78   17.82   19.46   23.17
+  s4_3tier_rx3r@data                    3.36    3.42    3.55    3.87    4.51    5.25    7.20    7.04    9.41   10.08   10.94   11.58   13.22   16.06   17.82   21.44
+  s4_3tier_rx3r@code                    2.59    2.72    2.85    3.10    3.71    4.70    6.72    6.78    9.12    9.50   10.53   11.87   12.70   15.78   17.57   21.06
+  s1_radix                             12.86   13.41   13.38   13.50   13.12   13.34   13.70   13.47   12.80   14.24   14.59   14.75   16.13   16.26   17.38   20.83
+  s1_radix@legacy                      13.70   13.66   13.70   13.76   13.70   13.76   13.76   14.11   14.08   14.75   14.56   15.33   16.10   17.15   17.47   21.06

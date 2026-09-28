@@ -1,0 +1,10 @@
+GpuSort portable package GpuSort-portable-b8d5c19
+Built:        2026-09-28 17:12:42 on JONAS-CPH
+Git commit:   b8d5c19 (main) 2026-09-28 17:12:33 +0200 Wave probe: check the lane count / lane mapping the driver really uses
+Shader sets:
+    shaders\     (current)
+    _test\pass0
+    _test\pass1
+    _test\pass2
+    _test\pass3
+    _test\pass4   (identical to shaders\, skipped by run_all.bat)

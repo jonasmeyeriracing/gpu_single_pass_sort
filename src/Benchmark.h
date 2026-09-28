@@ -53,12 +53,16 @@ struct BenchmarkOptions
 //
 // Per iteration, recorded into batched command lists (two batches in flight):
 //   1) copy the iteration's descriptors + elements from the upload heap, poison the whole output
-//   2) cache flush: a compute pass reading + writing a 256 MB buffer
-//   3) UAV barrier, timestamp, the algorithm's ExecuteIndirect dispatches, timestamp
-//   4) copy the whole output to a readback slot; the CPU verifies it after the batch completes
-// That is FlushMode::Full (the default). The algorithm's flush mode can change steps 1-2: Code does
-// the flush before the upload, Data adds an untimed run of the same dispatches on a private copy of
-// the iteration (warm buffers + descriptor table) after the flush, None skips the flush.
+//   2) cache flush: a compute pass reading + writing a 256 MB buffer, UAV barrier
+//   3) drain: a one-group dispatch on a private 4 KB buffer (own descriptor table), UAV barrier
+//   4) timestamp, the algorithm's ExecuteIndirect dispatches, timestamp
+//   5) copy the whole output to a readback slot; the CPU verifies it after the batch completes
+// That is FlushMode::Full (the default). The drain (pass5) makes the GPU execute the barriers before
+// it, and whatever tail of the flush they wait for, before the start timestamp: the timed window only
+// holds the sort. The algorithm's flush mode can change steps 1-3: Code does the flush before the
+// upload, Data adds an untimed run of the same dispatches on a private copy of the iteration (warm
+// buffers + descriptor table) after the flush, None skips the flush, FullLegacy (pre-pass5 'full')
+// skips the drain, FullRo uses a read-only flush and no drain.
 //
 // All buffers are bound through a descriptor table (structured buffer views with exact sizes), not
 // root descriptors, so an out-of-bounds shader access reads 0 / is dropped instead of page-faulting.
@@ -66,8 +70,9 @@ struct BenchmarkOptions
 class GpuBenchmark
 {
 public:
-    GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader, const std::vector<CompiledAlgorithm>& algorithms,
-                 const BenchmarkOptions& options);
+    // flushShader / flushReadOnlyShader: kFlushShaderSource entry points "main" / "main_ro".
+    GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader, IDxcBlob* flushReadOnlyShader,
+                 const std::vector<CompiledAlgorithm>& algorithms, const BenchmarkOptions& options);
     ~GpuBenchmark();
     GpuBenchmark(const GpuBenchmark&) = delete;
     GpuBenchmark& operator=(const GpuBenchmark&) = delete;
@@ -89,11 +94,19 @@ public:
     };
     std::vector<ProbeOutput> RunProbe(const std::vector<IDxcBlob*>& shaders, uint32_t wordsPerDispatch);
 
+    // Run-time estimate: runs 'iterations' iterations of the per-iteration work without a sort
+    // (upload, poison, 256 MB flush, drain, timestamps, readback; FlushMode::Full) with the data of
+    // 'workloadId', after a short untimed warm-up batch, and returns the wall seconds per iteration.
+    // That fixed cost dominates an iteration on every GPU measured so far (the sort adds 0.1-40 %).
+    // Nothing is verified. Must be called before (not during) Run. Throws DeviceLostError.
+    double Calibrate(uint32_t workloadId, uint32_t iterations);
+
     bool DeviceLost() const { return m_deviceLost; }
 
     uint64_t TimestampFrequency() const { return m_timestampFrequency; }
 
     static constexpr uint64_t kFlushBytes = 256ull << 20;
+    static constexpr uint64_t kDrainBytes = 4096;
 
 private:
     struct Frame
@@ -112,8 +125,11 @@ private:
         std::vector<IterationData> data;
     };
 
-    void Record(Frame& frame, size_t algorithmIndex, const std::string& label);
+    // psos: the sort dispatches (empty: no sort, for Calibrate).
+    void Record(Frame& frame, const std::vector<ComPtr<ID3D12PipelineState>>& psos, FlushMode flushMode,
+                const std::string& label);
     void Submit(Frame& frame);
+    void SubmitList(Frame& frame); // ExecuteCommandLists + Signal (no --test-device-removal hook)
     void WaitForFence(uint64_t value);
     void CheckDevice(const char* where);
     void Process(Frame& frame, uint32_t warmup, ComboResult& result);
@@ -130,12 +146,15 @@ private:
     uint64_t m_timestampFrequency = 0;
 
     ComPtr<ID3D12RootSignature> m_rootSignature;
-    ComPtr<ID3D12DescriptorHeap> m_descriptorHeap; // shader visible: [sort table][flush table][warm table]
+    ComPtr<ID3D12DescriptorHeap> m_descriptorHeap; // shader visible: [sort table][flush table][warm table] ...
+                                                   // [drain table] (the drain table 4 KB+ away from the others)
     D3D12_GPU_DESCRIPTOR_HANDLE m_sortTable{};     // t0 descs, t1 input, u0 output
     D3D12_GPU_DESCRIPTOR_HANDLE m_flushTable{};    // t0 descs, t1 input, u0 flush buffer
     D3D12_GPU_DESCRIPTOR_HANDLE m_warmTable{};     // FlushMode::Data: t0 warm descs, t1 warm input, u0 warm output
+    D3D12_GPU_DESCRIPTOR_HANDLE m_drainTable{};    // t0, t1 null SRVs, u0 the 4 KB drain buffer
     ComPtr<ID3D12CommandSignature> m_dispatchSignature;
-    ComPtr<ID3D12PipelineState> m_flushPso;
+    ComPtr<ID3D12PipelineState> m_flushPso;         // also runs the drain (one group, drain table)
+    ComPtr<ID3D12PipelineState> m_flushReadOnlyPso; // FlushMode::FullRo
     std::vector<std::vector<ComPtr<ID3D12PipelineState>>> m_algorithmPsos;
 
     ComPtr<ID3D12Resource> m_descBuffer;
@@ -143,6 +162,7 @@ private:
     ComPtr<ID3D12Resource> m_outputBuffer;
     ComPtr<ID3D12Resource> m_poisonBuffer;
     ComPtr<ID3D12Resource> m_flushBuffer;
+    ComPtr<ID3D12Resource> m_drainBuffer; // 4 KB, only touched by the drain dispatch
     ComPtr<ID3D12Resource> m_argsBuffer;
     ComPtr<ID3D12Resource> m_warmDescBuffer;   // FlushMode::Data: private copy of the iteration for the
     ComPtr<ID3D12Resource> m_warmInputBuffer;  // untimed code warm-up run
@@ -155,4 +175,5 @@ private:
 };
 
 // HLSL source of the cache flush shader (compiled at runtime together with the sort shaders).
+// Entry points: "main" (read + write every element; also the drain), "main_ro" (read only).
 extern const char* const kFlushShaderSource;

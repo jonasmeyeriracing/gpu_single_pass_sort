@@ -1,0 +1,8 @@
+GpuSort portable package GpuSort-portable-3409bf6
+Built:        2026-09-28 15:18:27 on JONAS-CPH
+Git commit:   3409bf6 (portable-runner) 2026-09-28 14:31:56 +0200 Portable runner: self-contained package + run_all.bat for other machines
+Shader sets:
+    shaders\     (current)
+    _test\pass0
+    _test\pass1
+    _test\pass2   (identical to shaders\, skipped by run_all.bat)

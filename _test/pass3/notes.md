@@ -365,10 +365,16 @@ To re-run: `GpuSort.exe --shaders _test/pass3` (8-algorithm full-run set). The d
 
 The shader files of this snapshot were patched in pass4 (`common.hlsli`, `wave_scan.hlsli`,
 `radix_sort.hlsli`, `radix_sort2.hlsli`, `bitonic_reg.hlsli`, `bitonic_reg_t.hlsli`): on an AMD
-RX 7900 XTX at `--wave-size 64` the pass2 radix sort returned wrong results, most likely because
-per-lane-index `WaveReadLaneAt` does not cross the two 32-lane halves of a wave64 there (radix_sort2
-and bitonic had the same exposure). Waves wider than 32 lanes now use wave intrinsics for the scans,
-32-lane virtual waves for bitonic and 32 task lanes for the radix_sort2 table scan. For
-WAVE_SIZE <= 32 the compiled code is bit-identical, so the results above are unaffected. Also: the
-"serial smoke bias" discussed above is mostly cold shader code (pass4 notes, conclusions 1-2).
-Details: _test/pass4/notes.md.
+RX 7900 XTX at `--wave-size 64` the pass2 radix sort returned wrong results. Waves wider than 32
+lanes now use wave intrinsics for the scans, 32-lane virtual waves for bitonic and 32 task lanes for
+the radix_sort2 table scan. For WAVE_SIZE <= 32 the compiled code is bit-identical, so the results
+above are unaffected. Also: the "serial smoke bias" discussed above is mostly cold shader code
+(pass4 notes, conclusions 1-2; revised in _test/pass5/notes.md). Details: _test/pass4/notes.md.
+
+**Correction (pass5):** pass4 named "per-lane-index `WaveReadLaneAt` does not cross the two 32-lane
+halves of a wave64" as the likely cause (and said radix_sort2 and bitonic had the same exposure).
+That is refuted: the wave probe shows cross-half reads working on that GPU at wave64, and that model
+cannot leave output[0] unwritten as reported. The most likely cause is a driver miscompile of the
+pass2 shuffle scans at wave64 (not confirmed); see _test/pass5/notes.md, "Wave64 root cause". The
+fix is confirmed on hardware: this snapshot passes smoke + full runs at wave64 on the 7900 XTX and a
+Ryzen iGPU (_test/external/notes.md).

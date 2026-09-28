@@ -1,0 +1,10 @@
+GpuSort portable package GpuSort-portable-5e087c3
+Built:        2026-09-28 16:55:32 on JONAS-CPH
+Git commit:   5e087c3 (main) 2026-09-28 16:55:21 +0200 pass4: wave64 fix, flush modes (cold code vs cold data), 4-tier shader, radix_sort3
+Shader sets:
+    shaders\     (current)
+    _test\pass0
+    _test\pass1
+    _test\pass2
+    _test\pass3
+    _test\pass4   (identical to shaders\, skipped by run_all.bat)

@@ -16,6 +16,14 @@
 // WavePrefixSum, WaveActiveSum, WaveActiveCountBits, WaveActiveBallot). The CPU groups the threads
 // into waves (by WaveReadLaneFirst) and checks every value.
 //
+// pass5: plus replicas of the pass2 radix sort's shuffle scans (WaveReadLaneAt(x, (lane - d) &
+// (WAVE_SIZE - 1)) with an 'if (lane >= d)' guard): 8 interleaved chains with every lane active
+// ("shflscan x8"), and wave 0's table scan after a groupshared load under 'if (lane < 16)'
+// ("shflscan after if", the only wave64-specific control flow of the pass2 radix) and after a
+// branch-free load ("shflscan after select"). A mismatch there is reported as a cross-lane note,
+// not as a failure of the configuration (the current shaders do not use these scans at wave64);
+// it tells which mechanism broke the pass2 radix at wave64 (see _test/pass5/notes.md).
+//
 // It is compiled like the sort shaders (-D WAVE_SIZE, [WaveSize(WAVE_SIZE)] when the configuration
 // uses the attribute) and also without [WaveSize] (the driver's own choice), for several group sizes.
 // The survey (--wave-probe without --wave-size) instead compiles it without [WaveSize] and with
@@ -23,7 +31,8 @@
 
 struct WaveProbeVariant
 {
-    uint32_t attributeSize = 0; // compiled with [WaveSize(attributeSize)]; 0 = without [WaveSize]
+    uint32_t attributeSize = 0;  // compiled with [WaveSize(attributeSize)]; 0 = without [WaveSize]
+    uint32_t defineWaveSize = 0; // compiled with -D WAVE_SIZE=defineWaveSize
     uint32_t groupSize = 0;
     ComPtr<IDxcBlob> shader;
 };

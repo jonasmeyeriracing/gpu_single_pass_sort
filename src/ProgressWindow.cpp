@@ -6,7 +6,7 @@ constexpr UINT WM_PROGRESS_UPDATE = WM_APP + 1;
 constexpr UINT WM_PROGRESS_CLOSE = WM_APP + 2;
 constexpr wchar_t kClassName[] = L"GpuSortProgressWindow";
 constexpr int kWidth = 480;
-constexpr int kHeight = 190;
+constexpr int kHeight = 215;
 } // namespace
 
 ProgressWindow::~ProgressWindow()
