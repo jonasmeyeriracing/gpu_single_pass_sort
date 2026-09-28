@@ -18,10 +18,12 @@
 //
 // It is compiled like the sort shaders (-D WAVE_SIZE, [WaveSize(WAVE_SIZE)] when the configuration
 // uses the attribute) and also without [WaveSize] (the driver's own choice), for several group sizes.
+// The survey (--wave-probe without --wave-size) instead compiles it without [WaveSize] and with
+// [WaveSize(N)] for every power of two N in the device's WaveLaneCountMin..Max, one verdict each.
 
 struct WaveProbeVariant
 {
-    bool attribute = false; // compiled with [WaveSize(WAVE_SIZE)]
+    uint32_t attributeSize = 0; // compiled with [WaveSize(attributeSize)]; 0 = without [WaveSize]
     uint32_t groupSize = 0;
     ComPtr<IDxcBlob> shader;
 };
@@ -30,6 +32,11 @@ struct WaveProbeSet
 {
     uint32_t waveSize = 0;  // WAVE_SIZE of the sort shaders of this configuration
     bool attribute = false; // the sort shaders carry [WaveSize(WAVE_SIZE)]
+    // Survey: one verdict per variant (without [WaveSize], every [WaveSize(N)]) instead of one for
+    // the sort shaders' configuration. laneMin / laneMax: the device's WaveLaneCountMin / Max.
+    bool survey = false;
+    uint32_t laneMin = 0;
+    uint32_t laneMax = 0;
     std::vector<WaveProbeVariant> variants;
 };
 
@@ -38,13 +45,27 @@ struct WaveProbeSet
 WaveProbeSet CompileWaveProbe(ShaderCompiler& compiler, uint32_t waveSize, bool attribute,
                               const std::vector<uint32_t>& groupSizes);
 
+// Compiles the survey for a device with wave lanes laneMin..laneMax: without [WaveSize] for every
+// group size, then [WaveSize(N)] for every power of two N (4..128) in laneMin..laneMax, for the
+// group sizes >= N. waveSize / attribute: the sort shaders' configuration on that device (only
+// marks the matching verdict). Throws on errors.
+WaveProbeSet CompileWaveProbeSurvey(ShaderCompiler& compiler, uint32_t laneMin, uint32_t laneMax, uint32_t waveSize,
+                                    bool attribute, const std::vector<uint32_t>& groupSizes);
+
+// What a set probes, e.g. "without [WaveSize], [WaveSize(32)], [WaveSize(64)]; groups 64/512/1024".
+std::string DescribeWaveProbe(const WaveProbeSet& set);
+
 struct WaveProbeReport
 {
-    // "Wave probe: ..." lines (one per variant, indented detail lines for mismatches) and a verdict
-    // line ("Wave probe verdict: OK ..." or "WAVE PROBE WARNING: ...").
+    // "Wave probe: ..." lines (one per variant, indented detail lines for mismatches) and verdict
+    // lines ("Wave probe verdict...: OK ..." or "WAVE PROBE WARNING...: ..."): one for the sort
+    // shaders' configuration, or in a survey one per variant.
     std::vector<std::string> lines;
+    // One short verdict per variant in a survey (per configuration otherwise), e.g.
+    // "[WaveSize(64)]: OK, 64 lanes".
+    std::vector<std::string> summary;
     // The variant that matches the sort shaders' configuration ran with WAVE_SIZE lanes and
-    // lane = SV_GroupIndex % WAVE_SIZE for every group size.
+    // lane = SV_GroupIndex % WAVE_SIZE for every group size (survey: every variant is OK).
     bool configOk = true;
     std::string problem; // short reason if !configOk
 };

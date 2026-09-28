@@ -6,6 +6,10 @@ rem   run_all.bat            current shaders\ + the latest _test\passN snapshot 
 rem                          shaders\ (the packager marks identical ones with SAME_AS_SHADERS.txt)
 rem   run_all.bat all        current shaders\ + every _test\passN snapshot (identical ones skipped)
 rem   run_all.bat current    current shaders\ only
+rem   run_all.bat probe      only the wave probe: --list-adapters, then ONE GpuSort.exe --wave-probe
+rem                          run (one prompt, a few seconds, no sorts) that probes every GPU without
+rem                          [WaveSize] and with [WaveSize(N)] for every N in its wave lane range;
+rem                          report in wave_probe.txt (+ wave_probe.log). No dxdiag, smoke or full runs.
 rem   extra argument nopause: do not wait for a key at the end
 rem
 rem Order: adapter list, then a --smoke --dred safety run of every shader set x wave configuration,
@@ -40,8 +44,9 @@ set "NOPAUSE="
 if defined DRYRUN set "NOPAUSE=1"
 :parse_args
 if "%~1"=="" goto :args_done
-if /i "%~1"=="all" (set "MODE=all") else if /i "%~1"=="latest" (set "MODE=latest") else if /i "%~1"=="current" (set "MODE=current") else if /i "%~1"=="nopause" (set "NOPAUSE=1") else (
-    echo Unknown argument "%~1". Usage: run_all.bat [latest^|all^|current] [nopause]
+if /i "%~1"=="all" (set "MODE=all") else if /i "%~1"=="latest" (set "MODE=latest") else if /i "%~1"=="current" (set "MODE=current") else if /i "%~1"=="probe" (set "MODE=probe") else if /i "%~1"=="nopause" (set "NOPAUSE=1") else (
+    echo Unknown argument "%~1".
+    call :usage
     set "NOPAUSE="
     set "FINAL_RC=1"
     goto :end
@@ -49,6 +54,8 @@ if /i "%~1"=="all" (set "MODE=all") else if /i "%~1"=="latest" (set "MODE=latest
 shift
 goto :parse_args
 :args_done
+echo Modes: run_all.bat [latest^|all^|current^|probe] [nopause]   ^(default latest; probe = wave probe only, seconds^)
+echo Running mode: %MODE%
 
 if not exist "%EXE%" (
     echo ERROR: GpuSort.exe was not found next to run_all.bat.
@@ -116,6 +123,7 @@ if "%NGPUS%"=="0" (
     goto :finish
 )
 >> "%SUMMARY%" echo Qualifying GPUs: %NGPUS% (details in adapters.txt)
+if /i "%MODE%"=="probe" goto :probe_mode
 
 if not defined DRYRUN (
     echo.
@@ -207,6 +215,59 @@ for /l %%s in (1,1,%SET_COUNT%) do for /l %%w in (1,1,%WAVE_COUNT%) do (
 )
 goto :finish
 
+rem --- probe mode: one GpuSort.exe --wave-probe run -------------------------------------------------
+rem It probes every qualifying GPU without [WaveSize] and with [WaveSize(N)] for every power of two N
+rem in the GPU's wave lane range (GpuSort.exe --wave-probe without --wave-size), in one process, so
+rem there is one prompt. The report goes to wave_probe.txt; its Summary section is copied to summary.txt.
+:probe_mode
+set "NRUNS=1"
+set "RUNNO=1"
+echo.
+echo ==== Plan: 1 GPU run (wave probe only, no sorts), it asks for confirmation first ====
+>> "%SUMMARY%" echo Plan: 1 GPU run (GpuSort.exe --wave-probe: every GPU x wave configuration, no sorts)
+set "GPUNO=0"
+for /f "usebackq tokens=5,7" %%a in (`findstr /c:"wave lane range:" "%OUT%\adapters.txt"`) do (
+    set "CFGS=without [WaveSize]"
+    for %%n in (4 8 16 32 64 128) do if %%n GEQ %%a if %%n LEQ %%b set "CFGS=!CFGS!, [WaveSize(%%n)]"
+    echo   GPU [!GPUNO!] wave lanes %%a-%%b: !CFGS!
+    >> "%SUMMARY%" echo   GPU [!GPUNO!] wave lanes %%a-%%b: !CFGS!
+    set /a GPUNO+=1
+)
+set "LAST_LABEL=1/1: wave probe"
+set "FILE=wave_probe"
+set CMD="%EXE%" --wave-probe --label "!LAST_LABEL!" --out "%OUT%\!FILE!.txt" --log "%OUT%\!FILE!.log"
+echo.
+echo ==== Run !LAST_LABEL! ====
+if defined DRYRUN goto :probe_dry
+!CMD!
+set "RC=!ERRORLEVEL!"
+goto :probe_done
+:probe_dry
+echo [DRYRUN] !CMD!
+set "RC=0"
+if "!DRYRUN_FAIL!"=="1" (
+    if defined DRYRUN_FAIL_RC (set "RC=!DRYRUN_FAIL_RC!") else (set "RC=1")
+)
+:probe_done
+set "RC_TEXT=unexpected exit code"
+if "!RC!"=="0" set "RC_TEXT=ok, every wave configuration passed"
+if "!RC!"=="1" set "RC_TEXT=WAVE PROBE WARNING or error, see !FILE!.txt"
+if "!RC!"=="2" set "RC_TEXT=cancelled at the prompt"
+if "!RC!"=="3" set "RC_TEXT=DEVICE LOST - GPU fault or hang, see !FILE!.log"
+if not "!RC!"=="0" set "FINAL_RC=1"
+echo Run !LAST_LABEL! finished: exit code !RC! ^(!RC_TEXT!^)
+>> "%SUMMARY%" echo [!LAST_LABEL!] exit code !RC! (!RC_TEXT!) -^> !FILE!.txt / !FILE!.log
+if exist "%OUT%\!FILE!.txt" (
+    >> "%SUMMARY%" echo Wave probe summary ^(one verdict per GPU x wave configuration, details in !FILE!.txt^):
+    set "INSUM="
+    for /f "usebackq delims=" %%l in ("%OUT%\!FILE!.txt") do (
+        set "LINE=%%l"
+        if defined INSUM >> "%SUMMARY%" echo   !LINE!
+        if "!LINE!"=="-------" set "INSUM=1"
+    )
+)
+goto :finish
+
 :smoke_failed
 set "FINAL_RC=1"
 echo.
@@ -254,6 +315,15 @@ type "%SUMMARY%"
 goto :end
 
 rem --- subroutines -------------------------------------------------------------------------------
+
+:usage
+echo Usage: run_all.bat [latest^|all^|current^|probe] [nopause]
+echo   ^(none^) or latest  current shaders\ + the latest _test\passN snapshot that differs from shaders\
+echo   all               current shaders\ + every _test\passN snapshot
+echo   current           current shaders\ only
+echo   probe             only the wave probe: one GpuSort.exe --wave-probe run ^(one prompt, seconds^)
+echo   nopause           do not wait for a key at the end
+exit /b 0
 
 rem :add_set <passN>: adds _test\<passN> unless the packager marked it identical to shaders\.
 :add_set

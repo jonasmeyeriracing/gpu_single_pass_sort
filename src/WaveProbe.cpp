@@ -1,6 +1,7 @@
 #include "WaveProbe.h"
 
 #include "Verify.h"
+#include "Workloads.h"
 
 #include <algorithm>
 #include <map>
@@ -100,7 +101,7 @@ struct TestResult
 
 struct VariantResult
 {
-    bool attribute = false;
+    uint32_t attributeSize = 0; // [WaveSize(attributeSize)]; 0 = without [WaveSize]
     std::vector<uint32_t> groupSizes;                // that ran
     std::map<uint32_t, std::vector<uint32_t>> lanes; // observed lane count -> group sizes
     TestResult tests[kTestCount];
@@ -245,10 +246,94 @@ std::string LanesText(const VariantResult& r)
     return s;
 }
 
-std::string VariantName(const WaveProbeSet& set, bool attribute)
+std::string VariantName(uint32_t attributeSize)
 {
-    return attribute ? Format("compiled WAVE_SIZE=%u [WaveSize(%u)]", set.waveSize, set.waveSize)
-                     : std::string("compiled without [WaveSize] (driver's choice)");
+    return attributeSize ? Format("compiled WAVE_SIZE=%u [WaveSize(%u)]", attributeSize, attributeSize)
+                         : std::string("compiled without [WaveSize] (driver's choice)");
+}
+
+std::string ShortName(uint32_t attributeSize)
+{
+    return attributeSize ? Format("[WaveSize(%u)]", attributeSize) : std::string("without [WaveSize]");
+}
+
+// Adds the variants for one attribute size (0 = without [WaveSize]) and every group size (with the
+// attribute: only group sizes >= attributeSize). defineWaveSize: -D WAVE_SIZE.
+void AddVariants(ShaderCompiler& compiler, WaveProbeSet& set, uint32_t defineWaveSize, uint32_t attributeSize,
+                 const std::vector<uint32_t>& groupSizes)
+{
+    for (uint32_t gs : groupSizes)
+    {
+        if (attributeSize && gs < attributeSize)
+            continue;
+        ShaderDefines defines = {{"GROUP_SIZE", std::to_string(gs)}, {"WAVE_SIZE", std::to_string(defineWaveSize)}};
+        if (attributeSize)
+            defines.emplace_back("WAVE_SIZE_REQUIRED", "1");
+        std::string log;
+        ComPtr<IDxcBlob> blob = compiler.CompileSource(kWaveProbeSource, L"wave_probe.hlsl", "main", defines, log);
+        if (!blob)
+            throw std::runtime_error(Format("wave probe shader failed to compile (group size %u%s):\n%s", gs,
+                                            attributeSize ? Format(", [WaveSize(%u)]", attributeSize).c_str() : "",
+                                            log.c_str()));
+        set.variants.push_back({attributeSize, gs, blob});
+    }
+}
+
+// Problems of one variant's results. expectedLanes != 0: every group must run with exactly that
+// many lanes; 0: any lane count in laneMin..laneMax (several are allowed, e.g. per group size).
+std::vector<std::string> Problems(const VariantResult* r, uint32_t expectedLanes, uint32_t laneMin, uint32_t laneMax)
+{
+    std::vector<std::string> problems;
+    if (!r || r->groupSizes.empty())
+    {
+        problems.push_back("the probe could not run in this configuration");
+        return problems;
+    }
+    if (!r->errors.empty())
+        problems.push_back("the probe failed for some group sizes");
+    if (expectedLanes)
+    {
+        if (r->lanes.size() != 1 || r->lanes.begin()->first != expectedLanes)
+            problems.push_back(Format("observed lanes %s, not %u", LanesText(*r).c_str(), expectedLanes));
+    }
+    else
+    {
+        for (const auto& [count, groups] : r->lanes)
+        {
+            (void)groups;
+            if (count < laneMin || count > laneMax)
+            {
+                problems.push_back(Format("observed lanes %s, outside the device's wave lane range %u-%u",
+                                          LanesText(*r).c_str(), laneMin, laneMax));
+                break;
+            }
+        }
+    }
+    if (r->tests[kTestWritten].wrong)
+        problems.push_back("some threads wrote no output");
+    if (r->tests[kTestMapping].wrong || r->tests[kTestWaves].wrong)
+        problems.push_back(expectedLanes ? Format("lane mapping broken (lane != SV_GroupIndex %% %u)", expectedLanes)
+                                         : std::string("lane mapping broken (lane != SV_GroupIndex % lane count)"));
+    return problems;
+}
+
+std::string CrossLaneMismatches(const VariantResult& r)
+{
+    std::string crossLane;
+    for (int t = kTestXor32; t < kTestCount; ++t)
+    {
+        if (r.tests[t].wrong)
+            crossLane += Format("%s%s", crossLane.empty() ? "" : ", ", kTestNames[t]);
+    }
+    return crossLane;
+}
+
+std::string Join(const std::vector<std::string>& v)
+{
+    std::string s;
+    for (const auto& x : v)
+        s += (s.empty() ? "" : "; ") + x;
+    return s;
 }
 } // namespace
 
@@ -258,73 +343,97 @@ WaveProbeSet CompileWaveProbe(ShaderCompiler& compiler, uint32_t waveSize, bool 
     WaveProbeSet set;
     set.waveSize = waveSize;
     set.attribute = attribute;
-    for (int pass = 0; pass < 2; ++pass)
+    if (attribute)
+        AddVariants(compiler, set, waveSize, waveSize, groupSizes);
+    AddVariants(compiler, set, waveSize, 0, groupSizes);
+    return set;
+}
+
+WaveProbeSet CompileWaveProbeSurvey(ShaderCompiler& compiler, uint32_t laneMin, uint32_t laneMax, uint32_t waveSize,
+                                    bool attribute, const std::vector<uint32_t>& groupSizes)
+{
+    WaveProbeSet set;
+    set.waveSize = waveSize;
+    set.attribute = attribute;
+    set.survey = true;
+    set.laneMin = laneMin;
+    set.laneMax = laneMax;
+    AddVariants(compiler, set, waveSize, 0, groupSizes);
+    for (uint32_t n = 4; n <= 128; n *= 2) // [WaveSize] accepts powers of two 4..128
     {
-        const bool withAttr = pass == 0;
-        if (withAttr && !attribute)
-            continue;
-        for (uint32_t gs : groupSizes)
-        {
-            if (withAttr && gs < waveSize)
-                continue;
-            ShaderDefines defines = {{"GROUP_SIZE", std::to_string(gs)}, {"WAVE_SIZE", std::to_string(waveSize)}};
-            if (withAttr)
-                defines.emplace_back("WAVE_SIZE_REQUIRED", "1");
-            std::string log;
-            ComPtr<IDxcBlob> blob = compiler.CompileSource(kWaveProbeSource, L"wave_probe.hlsl", "main", defines, log);
-            if (!blob)
-                throw std::runtime_error(Format("wave probe shader failed to compile (group size %u%s):\n%s", gs,
-                                                withAttr ? ", [WaveSize]" : "", log.c_str()));
-            set.variants.push_back({withAttr, gs, blob});
-        }
+        if (n >= laneMin && n <= laneMax)
+            AddVariants(compiler, set, n, n, groupSizes);
     }
     return set;
+}
+
+std::string DescribeWaveProbe(const WaveProbeSet& set)
+{
+    std::vector<uint32_t> sizes; // attribute sizes in variant order
+    std::vector<uint32_t> groups;
+    for (const auto& v : set.variants)
+    {
+        if (std::find(sizes.begin(), sizes.end(), v.attributeSize) == sizes.end())
+            sizes.push_back(v.attributeSize);
+        if (std::find(groups.begin(), groups.end(), v.groupSize) == groups.end())
+            groups.push_back(v.groupSize);
+    }
+    std::sort(groups.begin(), groups.end());
+    std::string s;
+    for (uint32_t n : sizes)
+        s += (s.empty() ? "" : ", ") + ShortName(n);
+    return s + "; groups " + JoinSizes(groups);
 }
 
 WaveProbeReport RunWaveProbe(GpuBenchmark& bench, const WaveProbeSet& set)
 {
     uint32_t maxGroup = 0;
-    std::vector<IDxcBlob*> shaders;
     for (const auto& v : set.variants)
-    {
         maxGroup = std::max(maxGroup, v.groupSize);
-        shaders.push_back(v.shader.Get());
-    }
     const uint32_t wordsPerDispatch = maxGroup * kProbeWords;
-    const std::vector<GpuBenchmark::ProbeOutput> outputs = bench.RunProbe(shaders, wordsPerDispatch);
-
-    std::vector<VariantResult> results;
-    for (int pass = 0; pass < 2; ++pass)
+    // As many dispatches per submission as the output buffer holds.
+    const size_t perBatch = std::max<size_t>(1, kMaxElementsPerIteration / std::max(wordsPerDispatch, 1u));
+    std::vector<GpuBenchmark::ProbeOutput> outputs;
+    for (size_t first = 0; first < set.variants.size(); first += perBatch)
     {
-        const bool withAttr = pass == 0;
-        VariantResult r;
-        r.attribute = withAttr;
-        bool any = false;
-        for (size_t i = 0; i < set.variants.size(); ++i)
+        std::vector<IDxcBlob*> shaders;
+        for (size_t i = first; i < std::min(set.variants.size(), first + perBatch); ++i)
+            shaders.push_back(set.variants[i].shader.Get());
+        for (auto& o : bench.RunProbe(shaders, wordsPerDispatch))
+            outputs.push_back(std::move(o));
+    }
+
+    // One result per attribute size, in variant order.
+    std::vector<VariantResult> results;
+    for (size_t i = 0; i < set.variants.size(); ++i)
+    {
+        const WaveProbeVariant& v = set.variants[i];
+        auto it = std::find_if(results.begin(), results.end(),
+                               [&](const VariantResult& r) { return r.attributeSize == v.attributeSize; });
+        if (it == results.end())
         {
-            const WaveProbeVariant& v = set.variants[i];
-            if (v.attribute != withAttr)
-                continue;
-            any = true;
-            if (!outputs[i].error.empty())
-            {
-                r.errors.push_back(Format("group %u: %s", v.groupSize, outputs[i].error.c_str()));
-                continue;
-            }
-            r.groupSizes.push_back(v.groupSize);
-            Analyze(outputs[i].words, v.groupSize, r);
+            results.emplace_back();
+            results.back().attributeSize = v.attributeSize;
+            it = results.end() - 1;
         }
-        if (any)
-            results.push_back(std::move(r));
+        VariantResult& r = *it;
+        if (!outputs[i].error.empty())
+        {
+            r.errors.push_back(Format("group %u: %s", v.groupSize, outputs[i].error.c_str()));
+            continue;
+        }
+        r.groupSizes.push_back(v.groupSize);
+        Analyze(outputs[i].words, v.groupSize, r);
     }
 
     WaveProbeReport report;
+    const uint32_t configSize = set.attribute ? set.waveSize : 0;
     const VariantResult* config = nullptr;
     for (const auto& r : results)
     {
-        if (r.attribute == set.attribute)
+        if (r.attributeSize == configSize)
             config = &r;
-        std::string line = Format("Wave probe: %s, groups %s: ", VariantName(set, r.attribute).c_str(),
+        std::string line = Format("Wave probe: %s, groups %s: ", VariantName(r.attributeSize).c_str(),
                                   JoinSizes(r.groupSizes).c_str());
         if (r.groupSizes.empty())
             line += "did not run";
@@ -356,45 +465,73 @@ WaveProbeReport RunWaveProbe(GpuBenchmark& bench, const WaveProbeSet& set)
         }
     }
 
+    if (set.survey)
+    {
+        // One verdict per variant.
+        for (const auto& r : results)
+        {
+            const std::string name = ShortName(r.attributeSize);
+            const std::vector<std::string> problems = Problems(&r, r.attributeSize, set.laneMin, set.laneMax);
+            const std::string configNote =
+                r.attributeSize == configSize
+                    ? Format(" (the sort shaders' configuration: WAVE_SIZE=%u%s)", set.waveSize,
+                             set.attribute ? Format(" + [WaveSize(%u)]", set.waveSize).c_str() : "")
+                    : std::string();
+            if (problems.empty())
+            {
+                const std::string lanes = LanesText(r);
+                if (r.attributeSize)
+                    report.lines.push_back(Format("Wave probe verdict, %s: OK, runs with %u lanes and lane = "
+                                                  "SV_GroupIndex %% %u%s",
+                                                  name.c_str(), r.attributeSize, r.attributeSize, configNote.c_str()));
+                else
+                    report.lines.push_back(Format("Wave probe verdict, %s: OK, the driver chose lanes %s and lane = "
+                                                  "SV_GroupIndex %% lane count%s",
+                                                  name.c_str(), lanes.c_str(), configNote.c_str()));
+                const std::string crossLane = CrossLaneMismatches(r);
+                if (!crossLane.empty())
+                    report.lines.push_back(
+                        Format("Wave probe note, %s: cross-lane mismatches: %s", name.c_str(), crossLane.c_str()));
+                report.summary.push_back(Format("%s: OK, lanes %s%s%s", name.c_str(), lanes.c_str(),
+                                                r.attributeSize ? "" : " (driver's choice)",
+                                                crossLane.empty() ? "" : ", cross-lane mismatches"));
+            }
+            else
+            {
+                const std::string problem = Join(problems);
+                report.configOk = false;
+                report.problem += (report.problem.empty() ? "" : "; ") + name + ": " + problem;
+                report.lines.push_back(
+                    Format("WAVE PROBE WARNING, %s: %s%s", name.c_str(), problem.c_str(), configNote.c_str()));
+                report.summary.push_back(Format("%s: WARNING, %s", name.c_str(), problem.c_str()));
+            }
+        }
+        return report;
+    }
+
     // Verdict for the configuration the sort shaders use.
     const std::string configName =
         Format("WAVE_SIZE=%u%s", set.waveSize, set.attribute ? Format(" + [WaveSize(%u)]", set.waveSize).c_str() : "");
-    std::vector<std::string> problems;
-    if (!config || config->groupSizes.empty())
-        problems.push_back("the probe could not run in this configuration");
-    else
-    {
-        if (!config->errors.empty())
-            problems.push_back("the probe failed for some group sizes");
-        if (config->lanes.size() != 1 || config->lanes.begin()->first != set.waveSize)
-            problems.push_back(Format("observed lanes %s, not %u", LanesText(*config).c_str(), set.waveSize));
-        if (config->tests[kTestWritten].wrong)
-            problems.push_back("some threads wrote no output");
-        if (config->tests[kTestMapping].wrong || config->tests[kTestWaves].wrong)
-            problems.push_back(Format("lane mapping broken (lane != SV_GroupIndex %% %u)", set.waveSize));
-    }
+    const std::vector<std::string> problems = Problems(config, set.waveSize, set.laneMin, set.laneMax);
     if (problems.empty())
     {
         report.lines.push_back(Format("Wave probe verdict: OK, the sort shaders' configuration (%s) runs with %u "
                                       "lanes and lane = SV_GroupIndex %% %u",
                                       configName.c_str(), set.waveSize, set.waveSize));
-        std::string crossLane;
-        for (int t = kTestXor32; t < kTestCount; ++t)
-        {
-            if (config->tests[t].wrong)
-                crossLane += Format("%s%s", crossLane.empty() ? "" : ", ", kTestNames[t]);
-        }
+        const std::string crossLane = CrossLaneMismatches(*config);
         if (!crossLane.empty())
             report.lines.push_back(Format("Wave probe note: cross-lane mismatches in this configuration: %s",
                                           crossLane.c_str()));
+        report.summary.push_back(Format("%s: OK, lanes %u%s", configName.c_str(), set.waveSize,
+                                        crossLane.empty() ? "" : ", cross-lane mismatches"));
     }
     else
     {
         report.configOk = false;
-        for (const auto& p : problems)
-            report.problem += (report.problem.empty() ? "" : "; ") + p;
+        report.problem = Join(problems);
         report.lines.push_back(Format("WAVE PROBE WARNING: the sort shaders are compiled for %s, but %s",
                                       configName.c_str(), report.problem.c_str()));
+        report.summary.push_back(Format("%s: WARNING, %s", configName.c_str(), report.problem.c_str()));
     }
     return report;
 }

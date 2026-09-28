@@ -10,7 +10,8 @@ How to run
 1. Unzip the whole package into a folder (for example the Desktop). Do not run it from inside the
    zip view in Explorer.
 2. Close games and other GPU-heavy programs.
-3. Double-click run_all.bat.
+3. Double-click run_all.bat. (Only the wave probe, a few seconds: open a command prompt in this
+   folder and run "run_all.bat probe", see "Modes" below.)
 4. Every GPU run first shows an OK/Cancel box titled "... Run k/N: <kind> <shader set> <wave>".
    Press OK to start that run. Cancel stops the script (the results so far are kept).
    While a run is active a small "GpuSort benchmark running" window shows its progress. Please
@@ -18,17 +19,33 @@ How to run
 5. At the end the script prints the results folder, results\<COMPUTERNAME>_<yyyymmdd_hhmm>\,
    and zips it to results\<COMPUTERNAME>_<yyyymmdd_hhmm>.zip. Bring back the zip (or the folder).
 
-Options (from a command prompt in this folder):
+Modes (from a command prompt in this folder; run_all.bat prints them when it starts):
     run_all.bat            current shaders\ + the latest _test\passN snapshot that differs from
-                           shaders\ (default)
+                           shaders\ (default; same as "run_all.bat latest")
     run_all.bat all        current shaders\ + every _test\passN snapshot
     run_all.bat current    current shaders\ only
+    run_all.bat probe      only the wave probe: a few seconds, ONE OK/Cancel box, no sorts
+                           (see "Wave probe only" below)
+    add "nopause" to any mode to skip the "press any key" at the end.
 A snapshot whose shaders are identical to shaders\ is skipped (package_info.txt says which).
 Typically the newest snapshot is the current pass itself, so the default compares the current
 shaders with the previous pass.
 
-What it runs
-------------
+Wave probe only (run_all.bat probe)
+-----------------------------------
+Runs GpuSort.exe --list-adapters, then a single GpuSort.exe --wave-probe run (one OK/Cancel box
+for all GPUs). For every qualifying GPU it runs a tiny diagnostic shader (a few one-group
+dispatches, no sorts) compiled without [WaveSize] (the driver's choice) and with [WaveSize(N)] for
+every power of two N in the GPU's wave lane range (AMD RDNA 32-64: 32 and 64; Intel 16-32: 16 and
+32; NVIDIA 32-32: 32), each for group sizes 64 / 512 / 1024. It checks the lane count the driver
+really uses, lane = SV_GroupIndex % lane count and a few cross-lane operations, and prints one
+verdict per GPU x wave configuration ("OK" or "WAVE PROBE WARNING"). No dxdiag, smoke or full runs.
+The results folder then has adapters.txt, wave_probe.txt (the report, with a Summary section at the
+end), wave_probe.log (console output) and summary.txt (plan, exit code, the probe's Summary), and
+is zipped as usual. Exit code 0 = every configuration OK, 1 = a warning or error, 3 = device lost.
+
+What it runs (default, all, current)
+------------------------------------
 1. GpuSort.exe --list-adapters: every adapter, and which ones a benchmark run uses.
 2. dxdiag /t: driver details (dxdiag.txt).
 3. Smoke tests: GpuSort.exe --smoke --dred --iterations 16 for every shader set: 16 iterations
@@ -48,7 +65,8 @@ lane = SV_GroupIndex % WAVE_SIZE and a few cross-lane operations (WaveReadLaneAt
 The report is in the header of every results .txt ("Wave probe: ..."). If the lane count or the
 lane mapping is not what the shaders were compiled for, it prints "WAVE PROBE WARNING", and a smoke
 test marks the algorithms that use wave ops as "SMOKE FAILED ... (not run: wave probe: ...)"
-instead of running them. No extra prompt: there is no separate probe step.
+instead of running them. No extra prompt: there is no separate probe step in these modes (for the
+probe of every wave configuration on its own, use "run_all.bat probe").
 
 Results folder contents
 -----------------------
@@ -56,7 +74,8 @@ Results folder contents
     package_info.txt            which build / git commit this package is
     adapters.txt                --list-adapters output (vendor/device ids, driver, wave lane ranges)
     dxdiag.txt                  dxdiag report
-    wave_probe.txt              the wave probe lines of every run (see "What it runs")
+    wave_probe.txt              the wave probe lines of every run (see "What it runs"); in probe
+                                mode the --wave-probe report (+ wave_probe.log)
     smoke_<set>[_waveNN].txt    smoke test results; .log = full console output
     <set>[_waveNN].txt          benchmark results (timings per GPU x workload x algorithm);
                                 .log = full console output
@@ -89,5 +108,7 @@ Running GpuSort.exe directly
 ----------------------------
     GpuSort.exe --help
     GpuSort.exe --shaders _test\pass2 --wave-size 64 --out my_results.txt
-    GpuSort.exe --wave-probe --wave-size 64      (only the wave probe; still asks first)
+    GpuSort.exe --wave-probe                     (only the wave probe, every wave configuration of
+                                                  every GPU; one prompt; what "run_all.bat probe" runs)
+    GpuSort.exe --wave-probe --wave-size 64      (only the wave probe of that configuration; still asks)
 The exe finds shaders\ next to itself; --shaders selects a snapshot.

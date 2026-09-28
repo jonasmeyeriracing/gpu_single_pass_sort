@@ -322,18 +322,25 @@ int RunMain(int argc, wchar_t** argv)
     }
     std::sort(probeGroupSizes.begin(), probeGroupSizes.end());
     probeGroupSizes.erase(std::unique(probeGroupSizes.begin(), probeGroupSizes.end()), probeGroupSizes.end());
+    // --wave-probe without --wave-size: the survey (without [WaveSize] and every [WaveSize(N)] in the
+    // device's lane range) instead of the sort shaders' configuration.
+    const bool probeSurvey = opt.waveProbe && !opt.waveSize;
     std::deque<WaveProbeSet> probeSets; // stable references
-    auto probeFor = [&](const WaveConfig& wc) -> const WaveProbeSet& {
+    auto probeFor = [&](const WaveConfig& wc, const GpuInfo& g) -> const WaveProbeSet& {
         for (const auto& s : probeSets)
         {
-            if (s.waveSize == wc.size && s.attribute == wc.attribute)
+            if (s.waveSize == wc.size && s.attribute == wc.attribute &&
+                (!probeSurvey || (s.laneMin == g.waveLaneCountMin && s.laneMax == g.waveLaneCountMax)))
                 return s;
         }
-        probeSets.push_back(CompileWaveProbe(compiler, wc.size, wc.attribute, probeGroupSizes));
+        probeSets.push_back(probeSurvey ? CompileWaveProbeSurvey(compiler, g.waveLaneCountMin, g.waveLaneCountMax,
+                                                                 wc.size, wc.attribute, probeGroupSizes)
+                                        : CompileWaveProbe(compiler, wc.size, wc.attribute, probeGroupSizes));
         return probeSets.back();
     };
-    for (const auto& wc : gpuWave)
-        probeFor(wc);
+    std::vector<const WaveProbeSet*> gpuProbe(gpus.size());
+    for (size_t gi = 0; gi < gpus.size(); ++gi)
+        gpuProbe[gi] = &probeFor(gpuWave[gi], gpus[gi]);
 
     if (!opt.waveProbe)
         Log("\n%s\n", FormatSizeDistribution(workloadIds, opt.iterations).c_str());
@@ -351,8 +358,9 @@ int RunMain(int argc, wchar_t** argv)
         {
             text += L"WAVE PROBE: GpuSort is about to run only its wave probe (a few one-group dispatches of\n"
                     L"a tiny diagnostic shader, well under a second, no sorts) on:\n\n";
-            for (const auto& g : gpus)
-                text += L"    " + Utf8ToWide(g.name) + L"\n";
+            for (size_t gi = 0; gi < gpus.size(); ++gi)
+                text += L"    " + Utf8ToWide(gpus[gi].name) + L"\n        " +
+                        Utf8ToWide(DescribeWaveProbe(*gpuProbe[gi])) + L"\n";
             text += L"\n";
         }
         else
@@ -429,14 +437,22 @@ int RunMain(int argc, wchar_t** argv)
                 Log("    %s\n", m.c_str());
 
             // Wave probe: what wave does the driver really run (before any sort).
-            const WaveProbeReport probe = RunWaveProbe(bench, probeFor(gpuWave[gi]));
+            const WaveProbeReport probe = RunWaveProbe(bench, *gpuProbe[gi]);
             record.waveProbe = probe.lines;
+            record.waveProbeSummary = probe.summary;
             record.waveProbeWarning = !probe.configOk;
             for (const auto& line : probe.lines)
                 Log("  %s\n", line.c_str());
             for (const auto& m : DrainDebugMessages(gpu.device.Get()))
                 Log("    %s\n", m.c_str());
-            if (!probe.configOk)
+            if (!probe.configOk && probeSurvey)
+            {
+                Log("\n  ********************************************************************************\n"
+                    "  WARNING: WAVE PROBE on %s: %s.\n"
+                    "  ********************************************************************************\n\n",
+                    gpu.name.c_str(), probe.problem.c_str());
+            }
+            else if (!probe.configOk)
             {
                 Log("\n  ********************************************************************************\n"
                     "  WARNING: WAVE PROBE on %s: the shaders are compiled for WAVE_SIZE=%u%s, but\n"
@@ -589,6 +605,7 @@ int RunMain(int argc, wchar_t** argv)
             text += Format("      wave lanes %u-%u, sort shaders would be compiled with WAVE_SIZE=%u%s\n",
                            gpu.waveLaneCountMin, gpu.waveLaneCountMax, gpu.waveSize,
                            gpu.waveSizeAttribute ? " + [WaveSize]" : "");
+            text += Format("      probed: %s\n", DescribeWaveProbe(*gpuProbe[g]).c_str());
             for (const auto& line : gpu.waveProbe)
                 text += Format("      %s\n", line.c_str());
             if (!gpu.error.empty())
@@ -596,6 +613,30 @@ int RunMain(int argc, wchar_t** argv)
         }
         for (const auto& s : info.skippedAdapters)
             text += Format("  skipped: %s\n", s.c_str());
+
+        // One verdict line per GPU x wave configuration.
+        text += "\nSummary\n-------\n";
+        for (size_t g = 0; g < gpus.size(); ++g)
+        {
+            if (g >= info.gpus.size())
+            {
+                text += Format("[%zu] %s: not run (stopped after a device loss)\n", g, gpus[g].name.c_str());
+                continue;
+            }
+            const GpuRecord& gpu = info.gpus[g];
+            for (const auto& line : gpu.waveProbeSummary)
+                text += Format("[%zu] %s, %s\n", g, gpu.name.c_str(), line.c_str());
+            if (!gpu.error.empty())
+                text += Format("[%zu] %s: ERROR: %s\n", g, gpu.name.c_str(), gpu.error.c_str());
+        }
+        if (deviceLost)
+            text += "Overall: DEVICE LOST (exit code 3)\n";
+        else if (anyError)
+            text += "Overall: ERROR (exit code 1)\n";
+        else if (anyProbeWarning)
+            text += "Overall: WAVE PROBE WARNING (exit code 1)\n";
+        else
+            text += "Overall: OK (exit code 0)\n";
         Log("\n%s", text.c_str());
         if (!opt.outPath.empty())
         {

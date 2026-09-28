@@ -40,6 +40,7 @@ struct GpuRecord
     uint32_t waveSize = 0;          // WAVE_SIZE the shaders were compiled with
     bool waveSizeAttribute = false; // compiled with [WaveSize(WAVE_SIZE)]
     std::vector<std::string> waveProbe; // wave probe report lines (WaveProbeReport::lines)
+    std::vector<std::string> waveProbeSummary; // one verdict per wave configuration (WaveProbeReport::summary)
     bool waveProbeWarning = false;      // the probe found the wrong lane count / a broken lane mapping
     double wallSeconds = 0;
     std::vector<ComboRecord> combos;

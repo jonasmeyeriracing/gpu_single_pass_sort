@@ -200,6 +200,10 @@ void PrintUsage()
         "                       lane ^ 1, +16, last lane), WavePrefixSum, WaveActiveSum / CountBits /\n"
         "                       Ballot. --out <file> also writes the report there. If the lane count\n"
         "                       or mapping is wrong, a run prints a WARNING; --smoke then marks the\n"
-        "                       algorithms that use wave ops as failed without running them\n"
+        "                       algorithms that use wave ops as failed without running them.\n"
+        "                       --wave-probe alone probes every wave configuration in one run (one\n"
+        "                       prompt): without [WaveSize] and [WaveSize(N)] for every power of two N\n"
+        "                       in each GPU's WaveLaneCountMin..Max, one verdict each; with --wave-size N\n"
+        "                       only that configuration. Exit code 0 all OK, 1 any warning, 3 device lost\n"
         "  --help               Show this help\n");
 }
