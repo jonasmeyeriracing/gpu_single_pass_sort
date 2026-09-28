@@ -62,6 +62,9 @@ std::string FormatResults(const RunInfo& info)
     out += "GpuSort benchmark results\n";
     out += "=========================\n";
     out += Format("Date:         %s\n", info.date.c_str());
+    out += Format("Computer:     %s\n", info.computerName.c_str());
+    if (!info.label.empty())
+        out += Format("Label:        %s\n", info.label.c_str());
     out += Format("Command line: %s\n", info.commandLine.c_str());
     out += Format("Shader dir:   %s\n", info.shaderDir.c_str());
     out += Format("Iterations:   %u measured + %u warmup per GPU x workload x algorithm, %u sorts per iteration\n",
@@ -75,6 +78,8 @@ std::string FormatResults(const RunInfo& info)
         const GpuRecord& gpu = info.gpus[g];
         out += Format("  [%zu] %s  (driver %s, timestamp freq %llu Hz, wall time %.1f s)\n", g, gpu.name.c_str(),
                       gpu.driver.c_str(), static_cast<unsigned long long>(gpu.timestampFrequency), gpu.wallSeconds);
+        out += Format("      vendor %04X device %04X, %llu MB VRAM\n", gpu.vendorId, gpu.deviceId,
+                      static_cast<unsigned long long>(gpu.dedicatedVideoMemory >> 20));
         out += Format("      wave lanes %u-%u, shaders compiled with WAVE_SIZE=%u%s\n", gpu.waveLaneCountMin,
                       gpu.waveLaneCountMax, gpu.waveSize, gpu.waveSizeAttribute ? " + [WaveSize]" : "");
     }

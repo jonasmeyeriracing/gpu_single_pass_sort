@@ -51,12 +51,44 @@ std::string Format(const char* fmt, ...)
     return r;
 }
 
+static FILE* g_logFile = nullptr;
+
+bool OpenLogFile(const std::wstring& path)
+{
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, path.c_str(), L"wb") != 0 || !f)
+        return false;
+    if (g_logFile)
+        fclose(g_logFile);
+    g_logFile = f;
+    return true;
+}
+
+static void WriteLog(FILE* console, const std::string& s)
+{
+    fputs(s.c_str(), console);
+    fflush(console);
+    if (g_logFile)
+    {
+        fputs(s.c_str(), g_logFile);
+        fflush(g_logFile);
+    }
+}
+
 void Log(const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
     const std::string s = FormatV(fmt, args);
     va_end(args);
-    fputs(s.c_str(), stdout);
-    fflush(stdout);
+    WriteLog(stdout, s);
+}
+
+void LogError(const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    const std::string s = FormatV(fmt, args);
+    va_end(args);
+    WriteLog(stderr, s);
 }

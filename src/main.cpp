@@ -72,16 +72,30 @@ std::string CommandLineUtf8()
     return WideToUtf8(GetCommandLineW());
 }
 
+std::string ComputerName()
+{
+    wchar_t buf[MAX_COMPUTERNAME_LENGTH + 1] = {};
+    DWORD n = MAX_COMPUTERNAME_LENGTH + 1;
+    return GetComputerNameW(buf, &n) ? WideToUtf8(buf) : "unknown";
+}
+
 int RunMain(int argc, wchar_t** argv)
 {
     Options opt;
     std::string error;
     if (!ParseOptions(argc, argv, opt, error))
     {
-        fprintf(stderr, "error: %s\n\n", error.c_str());
+        LogError("error: %s\n\n", error.c_str());
         PrintUsage();
         return 1;
     }
+    if (!opt.logPath.empty() && !OpenLogFile(opt.logPath))
+    {
+        LogError("error: cannot open log file %s\n", WideToUtf8(opt.logPath).c_str());
+        return 1;
+    }
+    if (!opt.label.empty())
+        Log("Run: %s\n", opt.label.c_str());
     if (opt.help)
     {
         PrintUsage();
@@ -169,6 +183,8 @@ int RunMain(int argc, wchar_t** argv)
 
     RunInfo info;
     info.date = Now();
+    info.computerName = ComputerName();
+    info.label = opt.label;
     info.shaderDir = shaderDir.string();
     info.commandLine = CommandLineUtf8();
     info.iterations = opt.iterations;
@@ -178,14 +194,34 @@ int RunMain(int argc, wchar_t** argv)
         info.algorithms.push_back(a.name);
 
     std::vector<GpuInfo> gpus = EnumerateGpus(opt.warp, opt.gpuFilter, info.skippedAdapters);
+    if (opt.waveSize)
+    {
+        // --wave-size N only runs on the GPUs that support it (e.g. wave64 on AMD next to an NVIDIA GPU).
+        const size_t qualifying = gpus.size();
+        std::erase_if(gpus, [&](const GpuInfo& g) {
+            if (opt.waveSize >= g.waveLaneCountMin && opt.waveSize <= g.waveLaneCountMax)
+                return false;
+            info.skippedAdapters.push_back(Format("%s: --wave-size %u is outside its wave lane range %u-%u",
+                                                  g.name.c_str(), opt.waveSize, g.waveLaneCountMin,
+                                                  g.waveLaneCountMax));
+            return true;
+        });
+        if (gpus.empty() && qualifying > 0)
+        {
+            for (const auto& s : info.skippedAdapters)
+                Log("Skipping adapter %s\n", s.c_str());
+            throw std::runtime_error(Format("no GPU supports --wave-size %u", opt.waveSize));
+        }
+    }
     for (const auto& s : info.skippedAdapters)
         Log("Skipping adapter %s\n", s.c_str());
     if (gpus.empty())
         throw std::runtime_error(opt.warp ? "WARP adapter does not qualify (needs SM 6.6)"
                                           : "no qualifying hardware GPU found (needs D3D12 + SM 6.6)");
     for (const auto& g : gpus)
-        Log("Using adapter: %s (driver %s, %llu MB, wave lanes %u-%u)\n", g.name.c_str(), g.driver.c_str(),
-            static_cast<unsigned long long>(g.dedicatedVideoMemory >> 20), g.waveLaneCountMin, g.waveLaneCountMax);
+        Log("Using adapter: %s (vendor %04X device %04X, driver %s, %llu MB, wave lanes %u-%u)\n", g.name.c_str(),
+            g.vendorId, g.deviceId, g.driver.c_str(), static_cast<unsigned long long>(g.dedicatedVideoMemory >> 20),
+            g.waveLaneCountMin, g.waveLaneCountMax);
 
     // --- shader compilation, per wave-size configuration ----------------------------------
     // Every shader gets -D WAVE_SIZE=<n> (the device's WaveLaneCountMin, or --wave-size). If the
@@ -256,11 +292,13 @@ int RunMain(int argc, wchar_t** argv)
     if (!opt.warp && !opt.noPrompt)
     {
         std::wstring text;
+        if (!opt.label.empty())
+            text = L"Run " + Utf8ToWide(opt.label) + L"\n\n";
         if (opt.smoke)
-            text = L"SMOKE TEST: a short safety check after the previous crash (GPU fault, TDR and a\n"
-                   L"VIDEO_SCHEDULER_INTERNAL_ERROR bugcheck during the last full run).\n\n"
-                   L"Every algorithm x workload runs a few iterations, one at a time with a fence wait\n"
-                   L"after each, and stops at the first GPU fault or hang.\n\n";
+            text += L"SMOKE TEST: a short safety check before any full benchmark run (a GPU fault, TDR or\n"
+                    L"bugcheck in new shader code is much cheaper to hit here).\n\n"
+                    L"Every algorithm x workload runs a few iterations, one at a time with a fence wait\n"
+                    L"after each, and stops at the first GPU fault or hang.\n\n";
         text += L"GpuSort is about to run a GPU benchmark on:\n\n";
         for (const auto& g : gpus)
             text += L"    " + Utf8ToWide(g.name) + L"\n";
@@ -270,7 +308,10 @@ int RunMain(int argc, wchar_t** argv)
                                   estimatedSeconds < 1.0 ? 1.0 : estimatedSeconds));
         text += L"Please pause other GPU work now, then press OK to start.\nCancel exits without running.";
         Log("Waiting for confirmation (message box)...\n");
-        const int answer = MessageBoxW(nullptr, text.c_str(), opt.smoke ? L"GpuSort smoke test" : L"GpuSort benchmark",
+        std::wstring caption = opt.smoke ? L"GpuSort smoke test" : L"GpuSort benchmark";
+        if (!opt.label.empty())
+            caption += L" - " + Utf8ToWide(opt.label);
+        const int answer = MessageBoxW(nullptr, text.c_str(), caption.c_str(),
                                        MB_OKCANCEL | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND);
         if (answer != IDOK)
         {
@@ -283,7 +324,8 @@ int RunMain(int argc, wchar_t** argv)
     const auto runStart = std::chrono::steady_clock::now(); // after the prompt: excludes user wait time
     ProgressWindow window;
     if (!opt.warp)
-        window.Start(L"GpuSort benchmark running - please keep the GPUs idle");
+        window.Start(L"GpuSort benchmark running - please keep the GPUs idle" +
+                     (opt.label.empty() ? std::wstring() : L" - " + Utf8ToWide(opt.label)));
 
     BenchmarkOptions benchOptions;
     benchOptions.fenceTimeoutMs = opt.warp ? kFenceTimeoutMsWarp : kFenceTimeoutMsHardware;
@@ -301,6 +343,9 @@ int RunMain(int argc, wchar_t** argv)
         GpuRecord record;
         record.name = gpu.name;
         record.driver = gpu.driver;
+        record.vendorId = gpu.vendorId;
+        record.deviceId = gpu.deviceId;
+        record.dedicatedVideoMemory = gpu.dedicatedVideoMemory;
         record.waveLaneCountMin = gpu.waveLaneCountMin;
         record.waveLaneCountMax = gpu.waveLaneCountMax;
         record.waveSize = gpuWave[gi].size;
@@ -444,7 +489,7 @@ int wmain(int argc, wchar_t** argv)
     }
     catch (const std::exception& e)
     {
-        fprintf(stderr, "error: %s\n", e.what());
+        LogError("error: %s\n", e.what());
         return 1;
     }
 }

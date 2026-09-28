@@ -312,15 +312,34 @@ void PrintAdapterList()
             const LUID luid = device->GetAdapterLuid();
             D3D12_FEATURE_DATA_SHADER_MODEL sm{D3D_SHADER_MODEL_6_6};
             device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof(sm));
-            Log("      D3D12 device LUID %08X:%08X  highest SM 0x%X  nodes %u\n", static_cast<unsigned>(luid.HighPart),
-                static_cast<unsigned>(luid.LowPart), static_cast<unsigned>(sm.HighestShaderModel),
-                device->GetNodeCount());
+            D3D12_FEATURE_DATA_D3D12_OPTIONS1 options1{};
+            device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &options1, sizeof(options1));
+            Log("      D3D12 device LUID %08X:%08X  highest SM 0x%X  nodes %u  wave ops %u lanes %u-%u\n",
+                static_cast<unsigned>(luid.HighPart), static_cast<unsigned>(luid.LowPart),
+                static_cast<unsigned>(sm.HighestShaderModel), device->GetNodeCount(),
+                static_cast<unsigned>(options1.WaveOps), options1.WaveLaneCountMin, options1.WaveLaneCountMax);
         }
         else
         {
             Log("      D3D12CreateDevice failed\n");
         }
     }
+
+    // What a hardware run (no --gpu filter) would use. run_all.bat parses the "wave lane range:" lines.
+    std::vector<std::string> skipped;
+    const std::vector<GpuInfo> gpus = EnumerateGpus(false, {}, skipped);
+    Log("\nBenchmark adapters (used by a hardware run):\n");
+    if (gpus.empty())
+        Log("  (none)\n");
+    for (size_t i = 0; i < gpus.size(); ++i)
+    {
+        const GpuInfo& g = gpus[i];
+        Log("  [%zu] %s  vendor %04X device %04X  driver %s  vram %llu MB\n", i, g.name.c_str(), g.vendorId,
+            g.deviceId, g.driver.c_str(), static_cast<unsigned long long>(g.dedicatedVideoMemory >> 20));
+        Log("      wave lane range: min %u max %u\n", g.waveLaneCountMin, g.waveLaneCountMax);
+    }
+    for (const auto& s : skipped)
+        Log("  skipped: %s\n", s.c_str());
 }
 
 // Returns an empty string if the adapter qualifies, else the reason it was skipped.
@@ -332,6 +351,8 @@ static std::string TryCreate(IDXGIAdapter1* adapter, GpuInfo& info)
     info.name = WideToUtf8(desc.Description);
     info.driver = DriverVersion(adapter);
     info.dedicatedVideoMemory = desc.DedicatedVideoMemory;
+    info.vendorId = desc.VendorId;
+    info.deviceId = desc.DeviceId;
     info.isWarp = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
 
     if (FAILED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&info.device))))

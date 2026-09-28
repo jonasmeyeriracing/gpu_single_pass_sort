@@ -76,6 +76,17 @@ bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
             if (!next(o.outPath))
                 return false;
         }
+        else if (arg == L"--log")
+        {
+            if (!next(o.logPath))
+                return false;
+        }
+        else if (arg == L"--label")
+        {
+            if (!next(value))
+                return false;
+            o.label = WideToUtf8(value);
+        }
         else if (arg == L"--iterations" || arg == L"--warmup")
         {
             if (!next(value))
@@ -138,14 +149,16 @@ void PrintUsage()
         "  --shaders <dir>      Shader directory containing algorithms.txt (default: shaders/ found\n"
         "                       next to or above the exe, then ./shaders)\n"
         "  --out <file>         Results file (default: results.txt next to the exe)\n"
+        "  --log <file>         Also write all console output to <file>\n"
+        "  --label <text>       Run label, shown in the prompt / progress window and in the results header\n"
         "  --iterations <N>     Measured iterations per GPU x workload x algorithm (default 1000)\n"
         "  --warmup <N>         Warmup iterations excluded from stats (default 5)\n"
         "  --algo <a[,b]>       Algorithms to run (default: all in algorithms.txt); repeatable\n"
         "  --workload <w[,x]>   Workloads to run (default: all); repeatable\n"
         "  --gpu <substring>    Only run on GPUs whose name contains <substring> (case-insensitive)\n"
-        "  --wave-size <N>      Compile the shaders for wave size N with [WaveSize(N)] (N must be within\n"
-        "                       the device's WaveLaneCountMin..Max). Default: WAVE_SIZE = WaveLaneCountMin,\n"
-        "                       plus [WaveSize] only if the device reports a range (Min != Max)\n"
+        "  --wave-size <N>      Compile the shaders for wave size N with [WaveSize(N)]; GPUs whose\n"
+        "                       WaveLaneCountMin..Max does not contain N are skipped. Default: WAVE_SIZE =\n"
+        "                       WaveLaneCountMin, plus [WaveSize] only if the device reports a range (Min != Max)\n"
         "  --warp               Run only on the WARP software adapter (no prompt, no window)\n"
         "  --no-prompt          Skip the confirmation message box\n"
         "  --debug              Enable the D3D12 debug layer\n"
@@ -158,6 +171,7 @@ void PrintUsage()
         "  --test-device-removal\n"
         "                       Debug aid: call ID3D12Device5::RemoveDevice after the first batch to\n"
         "                       exercise the device-lost path (use with --warp)\n"
-        "  --list-adapters     Print all DXGI adapters (LUID, ids, flags) and exit\n"
+        "  --list-adapters      Print all DXGI adapters (LUID, ids, flags), then the adapters a benchmark\n"
+        "                       run would use (with wave lane ranges) and the skipped ones, and exit\n"
         "  --help               Show this help\n");
 }
