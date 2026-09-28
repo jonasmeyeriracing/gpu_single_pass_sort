@@ -41,9 +41,14 @@
 #include "wave_scan.hlsli"
 
 // RS_WAVE_INTRINSICS = 1: scans with WavePrefixSum / WaveActiveSum (slow on NVIDIA, see
-// wave_scan.hlsli); 0 (default): WaveReadLaneAt shuffle scans.
+// wave_scan.hlsli); 0: WaveReadLaneAt shuffle scans. Default: 0, except for waves wider than the
+// shuffle span (common.hlsli: wave64), where the shuffle scans returned wrong results on AMD (pass4).
 #ifndef RS_WAVE_INTRINSICS
+#if SHUFFLE_SPAN < WAVE_SIZE
+#define RS_WAVE_INTRINSICS 1
+#else
 #define RS_WAVE_INTRINSICS 0
+#endif
 #endif
 
 #define RS_KPT_MAX ((MAX_SORT_SIZE + GROUP_SIZE - 1) / GROUP_SIZE)

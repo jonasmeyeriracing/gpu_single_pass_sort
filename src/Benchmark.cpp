@@ -59,7 +59,7 @@ enum RootParam : UINT
     kRootParamCount
 };
 
-// Descriptor heap layout: two 3-descriptor tables {t0, t1, u0}.
+// Descriptor heap layout: three 3-descriptor tables {t0, t1, u0}.
 enum DescriptorSlot : UINT
 {
     kSlotSortDescs = 0,
@@ -68,6 +68,9 @@ enum DescriptorSlot : UINT
     kSlotFlushDescs = 3,
     kSlotFlushInput = 4,
     kSlotFlushBuffer = 5,
+    kSlotWarmDescs = 6,
+    kSlotWarmInput = 7,
+    kSlotWarmOutput = 8,
     kDescriptorCount
 };
 
@@ -239,6 +242,7 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader,
             SetName(psos.back().Get(), Format("PSO %s dispatch %zu", algorithm.name.c_str(), psos.size() - 1));
         }
         m_algorithmPsos.push_back(std::move(psos));
+        m_algorithmFlush.push_back(algorithm.flush);
     }
 
     m_descBuffer = CreateBuffer(m_device.Get(), kDescRegionBytes, D3D12_HEAP_TYPE_DEFAULT);
@@ -249,12 +253,19 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader,
     m_flushBuffer = CreateBuffer(m_device.Get(), kFlushBytes, D3D12_HEAP_TYPE_DEFAULT,
                                  D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     m_argsBuffer = CreateBuffer(m_device.Get(), sizeof(D3D12_DISPATCH_ARGUMENTS), D3D12_HEAP_TYPE_DEFAULT);
+    m_warmDescBuffer = CreateBuffer(m_device.Get(), kDescRegionBytes, D3D12_HEAP_TYPE_DEFAULT);
+    m_warmInputBuffer = CreateBuffer(m_device.Get(), kElementBytes, D3D12_HEAP_TYPE_DEFAULT);
+    m_warmOutputBuffer = CreateBuffer(m_device.Get(), kElementBytes, D3D12_HEAP_TYPE_DEFAULT,
+                                      D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     SetName(m_descBuffer.Get(), "buffer sortDescs (t0)");
     SetName(m_inputBuffer.Get(), "buffer sortInput (t1)");
     SetName(m_outputBuffer.Get(), "buffer sortOutput (u0)");
     SetName(m_poisonBuffer.Get(), "buffer poison");
     SetName(m_flushBuffer.Get(), "buffer flush256MB (flush u0)");
     SetName(m_argsBuffer.Get(), "buffer indirectArgs");
+    SetName(m_warmDescBuffer.Get(), "buffer warmSortDescs (flush mode data, t0)");
+    SetName(m_warmInputBuffer.Get(), "buffer warmSortInput (flush mode data, t1)");
+    SetName(m_warmOutputBuffer.Get(), "buffer warmSortOutput (flush mode data, u0)");
 
     // Structured buffer views with exact sizes: 20 sort descriptors, the full element buffers and
     // the full flush buffer. Accesses past NumElements read 0 / are dropped.
@@ -278,8 +289,12 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader,
         CreateStructuredSrv(d, m_descBuffer.Get(), kSortsPerIteration, kDescStride, cpu(kSlotFlushDescs));
         CreateStructuredSrv(d, m_inputBuffer.Get(), kMaxElementsPerIteration, 4, cpu(kSlotFlushInput));
         CreateStructuredUav(d, m_flushBuffer.Get(), kFlushElements, 16, cpu(kSlotFlushBuffer));
+        CreateStructuredSrv(d, m_warmDescBuffer.Get(), kSortsPerIteration, kDescStride, cpu(kSlotWarmDescs));
+        CreateStructuredSrv(d, m_warmInputBuffer.Get(), kMaxElementsPerIteration, 4, cpu(kSlotWarmInput));
+        CreateStructuredUav(d, m_warmOutputBuffer.Get(), kMaxElementsPerIteration, 4, cpu(kSlotWarmOutput));
         m_sortTable = {gpu0.ptr + UINT64(kSlotSortDescs) * inc};
         m_flushTable = {gpu0.ptr + UINT64(kSlotFlushDescs) * inc};
+        m_warmTable = {gpu0.ptr + UINT64(kSlotWarmDescs) * inc};
     }
 
     for (uint32_t fi = 0; fi < kFrames; ++fi)
@@ -340,6 +355,9 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader,
             {"poison", m_poisonBuffer.Get()},
             {"flush256MB", m_flushBuffer.Get()},
             {"indirectArgs", m_argsBuffer.Get()},
+            {"warmSortDescs", m_warmDescBuffer.Get()},
+            {"warmSortInput", m_warmInputBuffer.Get()},
+            {"warmSortOutput", m_warmOutputBuffer.Get()},
             {"frame0 upload", m_frames[0].upload.Get()},
             {"frame0 readback", m_frames[0].readback.Get()},
             {"frame1 upload", m_frames[1].upload.Get()},
@@ -441,10 +459,15 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& la
     ID3D12Resource* desc = m_descBuffer.Get();
     ID3D12Resource* input = m_inputBuffer.Get();
     ID3D12Resource* output = m_outputBuffer.Get();
+    ID3D12Resource* warmDesc = m_warmDescBuffer.Get();
+    ID3D12Resource* warmInput = m_warmInputBuffer.Get();
+    ID3D12Resource* warmOutput = m_warmOutputBuffer.Get();
+    const FlushMode flushMode = m_algorithmFlush[algorithmIndex];
+    const bool warmRun = flushMode == FlushMode::Data; // the warm buffers are only touched in this mode
 
     // Buffers decay to COMMON after every ExecuteCommandLists; start each list from there.
     {
-        const D3D12_RESOURCE_BARRIER b[] = {
+        std::vector<D3D12_RESOURCE_BARRIER> b = {
             Transition(desc, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST),
             Transition(input, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST),
             Transition(output, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST),
@@ -452,10 +475,27 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& la
             Transition(m_flushBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
             Transition(m_argsBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT),
         };
-        cl->ResourceBarrier(_countof(b), b);
+        if (warmRun)
+        {
+            b.push_back(Transition(warmDesc, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST));
+            b.push_back(Transition(warmInput, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST));
+            b.push_back(Transition(warmOutput, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+        }
+        cl->ResourceBarrier(static_cast<UINT>(b.size()), b.data());
     }
 
     const auto& psos = m_algorithmPsos[algorithmIndex];
+    const uint32_t sortConstants[4] = {kSortsPerIteration, 0, 0, 0};
+    auto flush = [&](uint32_t s) {
+        const uint32_t flushConstants[4] = {kFlushElements, kFlushThreads, 0, 0};
+        marker("flush", s);
+        cl->SetPipelineState(m_flushPso.Get());
+        cl->SetComputeRoot32BitConstants(kRootConstants, 4, flushConstants, 0);
+        cl->SetComputeRootDescriptorTable(kRootTable, m_flushTable);
+        cl->Dispatch(kFlushGroups, 1, 1);
+        const D3D12_RESOURCE_BARRIER b = UavBarrier(nullptr);
+        cl->ResourceBarrier(1, &b);
+    };
     for (uint32_t s = 0; s < f.count; ++s)
     {
         const IterationData& d = f.data[s];
@@ -465,35 +505,57 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& la
         if (bytes)
             memcpy(f.uploadPtr + uploadOffset + kDescRegionBytes, d.elements.data(), bytes);
 
+        // FlushMode::Code: flush first, so the uploaded data is the most recent write (warm in L2).
+        if (flushMode == FlushMode::Code)
+            flush(s);
+
         // 1) upload + poison the whole output (stray writes anywhere in it are detected)
         marker("upload", s);
         cl->CopyBufferRegion(desc, 0, f.upload.Get(), uploadOffset, kDescBytes);
         if (bytes)
             cl->CopyBufferRegion(input, 0, f.upload.Get(), uploadOffset + kDescRegionBytes, bytes);
         cl->CopyBufferRegion(output, 0, m_poisonBuffer.Get(), 0, kElementBytes);
+        if (warmRun)
         {
-            const D3D12_RESOURCE_BARRIER b[] = {
+            cl->CopyBufferRegion(warmDesc, 0, f.upload.Get(), uploadOffset, kDescBytes);
+            if (bytes)
+                cl->CopyBufferRegion(warmInput, 0, f.upload.Get(), uploadOffset + kDescRegionBytes, bytes);
+        }
+        {
+            std::vector<D3D12_RESOURCE_BARRIER> b = {
                 Transition(desc, D3D12_RESOURCE_STATE_COPY_DEST, kSrvState),
                 Transition(input, D3D12_RESOURCE_STATE_COPY_DEST, kSrvState),
                 Transition(output, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
             };
-            cl->ResourceBarrier(_countof(b), b);
+            if (warmRun)
+            {
+                b.push_back(Transition(warmDesc, D3D12_RESOURCE_STATE_COPY_DEST, kSrvState));
+                b.push_back(Transition(warmInput, D3D12_RESOURCE_STATE_COPY_DEST, kSrvState));
+            }
+            cl->ResourceBarrier(static_cast<UINT>(b.size()), b.data());
         }
 
-        // 2) cache flush
-        const uint32_t flushConstants[4] = {kFlushElements, kFlushThreads, 0, 0};
-        marker("flush", s);
-        cl->SetPipelineState(m_flushPso.Get());
-        cl->SetComputeRoot32BitConstants(kRootConstants, 4, flushConstants, 0);
-        cl->SetComputeRootDescriptorTable(kRootTable, m_flushTable);
-        cl->Dispatch(kFlushGroups, 1, 1);
+        // 2) cache flush (FlushMode::Full and Data)
+        if (flushMode == FlushMode::Full || flushMode == FlushMode::Data)
+            flush(s);
+
+        // FlushMode::Data: untimed run of the same dispatches on the private copy, so the shader code
+        // (and everything else except the sort's own buffers) is warm for the timed run.
+        if (warmRun)
         {
+            cl->SetComputeRoot32BitConstants(kRootConstants, 4, sortConstants, 0);
+            cl->SetComputeRootDescriptorTable(kRootTable, m_warmTable);
+            for (size_t p = 0; p < psos.size(); ++p)
+            {
+                marker(Format("warm-up dispatch %zu", p).c_str(), s);
+                cl->SetPipelineState(psos[p].Get());
+                cl->ExecuteIndirect(m_dispatchSignature.Get(), 1, m_argsBuffer.Get(), 0, nullptr, 0);
+            }
             const D3D12_RESOURCE_BARRIER b = UavBarrier(nullptr);
             cl->ResourceBarrier(1, &b);
         }
 
         // 3) timed sort
-        const uint32_t sortConstants[4] = {kSortsPerIteration, 0, 0, 0};
         cl->EndQuery(f.queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * s);
         cl->SetComputeRoot32BitConstants(kRootConstants, 4, sortConstants, 0);
         cl->SetComputeRootDescriptorTable(kRootTable, m_sortTable);
@@ -507,12 +569,17 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& la
 
         // 4) readback
         {
-            const D3D12_RESOURCE_BARRIER b[] = {
+            std::vector<D3D12_RESOURCE_BARRIER> b = {
                 Transition(output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE),
                 Transition(desc, kSrvState, D3D12_RESOURCE_STATE_COPY_DEST),
                 Transition(input, kSrvState, D3D12_RESOURCE_STATE_COPY_DEST),
             };
-            cl->ResourceBarrier(_countof(b), b);
+            if (warmRun)
+            {
+                b.push_back(Transition(warmDesc, kSrvState, D3D12_RESOURCE_STATE_COPY_DEST));
+                b.push_back(Transition(warmInput, kSrvState, D3D12_RESOURCE_STATE_COPY_DEST));
+            }
+            cl->ResourceBarrier(static_cast<UINT>(b.size()), b.data());
         }
         marker("readback", s);
         cl->CopyBufferRegion(f.readback.Get(), s * kElementBytes, output, 0, kElementBytes);
@@ -526,7 +593,7 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& la
     cl->ResolveQueryData(f.queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 2 * f.count, f.timestampReadback.Get(),
                          0);
     {
-        const D3D12_RESOURCE_BARRIER b[] = {
+        std::vector<D3D12_RESOURCE_BARRIER> b = {
             Transition(desc, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON),
             Transition(input, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON),
             Transition(output, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON),
@@ -534,7 +601,13 @@ void GpuBenchmark::Record(Frame& f, size_t algorithmIndex, const std::string& la
             Transition(m_flushBuffer.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
             Transition(m_argsBuffer.Get(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT, D3D12_RESOURCE_STATE_COMMON),
         };
-        cl->ResourceBarrier(_countof(b), b);
+        if (warmRun)
+        {
+            b.push_back(Transition(warmDesc, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON));
+            b.push_back(Transition(warmInput, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON));
+            b.push_back(Transition(warmOutput, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON));
+        }
+        cl->ResourceBarrier(static_cast<UINT>(b.size()), b.data());
     }
     CHECK_HR(cl->Close());
 }

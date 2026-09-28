@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Algorithms.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -18,6 +20,7 @@ struct Options
     std::string gpuFilter;               // --gpu <substring>; empty = all qualifying GPUs
     uint32_t waveSize = 0;               // --wave-size N: compile with WAVE_SIZE=N + [WaveSize(N)]; 0 = device min
                                          // (GPUs whose lane range does not contain N are skipped)
+    FlushMode flushMode = FlushMode::Full; // --flush-mode: default for algorithms without a 'flush' line
     bool warp = false;                   // --warp: run only on WARP (no prompt, no window)
     bool noPrompt = false;               // --no-prompt
     bool debugLayer = false;             // --debug: enable the D3D12 debug layer

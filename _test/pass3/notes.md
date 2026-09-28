@@ -360,3 +360,15 @@ is exactly the bitonic/radix crossover from this pass's sweep. Optionally, radix
 To re-run: `GpuSort.exe --shaders _test/pass3` (8-algorithm full-run set). The diagnostic set is
 `algorithms_diag.txt`; copy it over algorithms.txt in a scratch copy of the directory and run
 `--smoke --iterations 48`.
+
+## pass4 addendum: wave64 fix
+
+The shader files of this snapshot were patched in pass4 (`common.hlsli`, `wave_scan.hlsli`,
+`radix_sort.hlsli`, `radix_sort2.hlsli`, `bitonic_reg.hlsli`, `bitonic_reg_t.hlsli`): on an AMD
+RX 7900 XTX at `--wave-size 64` the pass2 radix sort returned wrong results, most likely because
+per-lane-index `WaveReadLaneAt` does not cross the two 32-lane halves of a wave64 there (radix_sort2
+and bitonic had the same exposure). Waves wider than 32 lanes now use wave intrinsics for the scans,
+32-lane virtual waves for bitonic and 32 task lanes for the radix_sort2 table scan. For
+WAVE_SIZE <= 32 the compiled code is bit-identical, so the results above are unaffected. Also: the
+"serial smoke bias" discussed above is mostly cold shader code (pass4 notes, conclusions 1-2).
+Details: _test/pass4/notes.md.

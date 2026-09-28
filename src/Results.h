@@ -19,6 +19,13 @@ struct ComboRecord
     ComboResult result;
 };
 
+// --smoke: an algorithm that failed verification (its remaining workloads were skipped).
+struct SmokeFailure
+{
+    std::string algorithm;
+    std::string workload; // the first failing workload
+};
+
 struct GpuRecord
 {
     std::string name;
@@ -33,7 +40,15 @@ struct GpuRecord
     bool waveSizeAttribute = false; // compiled with [WaveSize(WAVE_SIZE)]
     double wallSeconds = 0;
     std::vector<ComboRecord> combos;
+    std::vector<SmokeFailure> smokeFailed; // --smoke only
     std::string error; // non-empty if the GPU run aborted
+};
+
+struct AlgorithmInfo
+{
+    std::string name;
+    FlushMode flush = FlushMode::Full;
+    std::vector<size_t> dxilBytes; // per dispatch (DXIL container size, for the first wave configuration)
 };
 
 struct RunInfo
@@ -47,6 +62,9 @@ struct RunInfo
     uint32_t warmup = 0;
     std::vector<uint32_t> workloadIds;
     std::vector<std::string> algorithms;
+    std::vector<AlgorithmInfo> algorithmInfos;
+    FlushMode defaultFlush = FlushMode::Full; // --flush-mode
+    uint32_t dxilWaveSize = 0;                // WAVE_SIZE of the algorithmInfos DXIL sizes
     std::vector<std::string> skippedAdapters;
     std::vector<GpuRecord> gpus;
     double totalSeconds = 0;

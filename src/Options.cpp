@@ -131,6 +131,16 @@ bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
                 return false;
             o.gpuFilter = WideToUtf8(value);
         }
+        else if (arg == L"--flush-mode")
+        {
+            if (!next(value))
+                return false;
+            if (!ParseFlushMode(WideToUtf8(value), o.flushMode))
+            {
+                error = "invalid value for --flush-mode (full, code, data or none): " + WideToUtf8(value);
+                return false;
+            }
+        }
         else
         {
             error = "unknown argument: " + WideToUtf8(arg);
@@ -159,6 +169,13 @@ void PrintUsage()
         "  --wave-size <N>      Compile the shaders for wave size N with [WaveSize(N)]; GPUs whose\n"
         "                       WaveLaneCountMin..Max does not contain N are skipped. Default: WAVE_SIZE =\n"
         "                       WaveLaneCountMin, plus [WaveSize] only if the device reports a range (Min != Max)\n"
+        "  --flush-mode <m>     What happens between the data upload and the timed sort, for algorithms\n"
+        "                       without a 'flush' line in algorithms.txt (default full):\n"
+        "                         full: upload, 256 MB cache flush: shader code and data cold\n"
+        "                         code: flush, then upload: code cold, input data warm in L2\n"
+        "                         data: upload, flush, untimed run of the same sort on a private copy of\n"
+        "                               the data: code warm, data cold\n"
+        "                         none: no flush: code and data warm\n"
         "  --warp               Run only on the WARP software adapter (no prompt, no window)\n"
         "  --no-prompt          Skip the confirmation message box\n"
         "  --debug              Enable the D3D12 debug layer\n"

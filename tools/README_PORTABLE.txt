@@ -33,8 +33,10 @@ What it runs
 2. dxdiag /t: driver details (dxdiag.txt).
 3. Smoke tests: GpuSort.exe --smoke --dred --iterations 16 for every shader set: 16 iterations
    (enough for the sweep workload to reach each of its 16 sort sizes once) of every algorithm x
-   workload, one at a time, with DRED fault reporting. If any smoke test fails, the script stops
-   before the long runs.
+   workload, one at a time, with DRED fault reporting. An algorithm that fails verification
+   skips its remaining workloads, the other algorithms and the remaining smoke tests still run,
+   and summary.txt lists the failed algorithms ("SMOKE FAILED: ..."); the script then stops before
+   the long runs. A device loss (GPU fault or hang) stops the script at once.
 4. Full runs: 1000 iterations (+5 warmup) of every algorithm x workload for every shader set.
 If a GPU reports a range of wave sizes (AMD RDNA: WaveLaneCountMin 32, Max 64), steps 3 and 4 run
 twice per shader set: with the default (WAVE_SIZE = 32, forced with [WaveSize(32)]) and with
@@ -72,7 +74,8 @@ GpuSort exit codes (in summary.txt)
     1  verification failures or errors (details in the run's .log)
     2  cancelled at the prompt
     3  device lost (GPU fault or hang; the .log has a DRED report)
-A device loss or Cancel stops the script. After a device loss a reboot is a good idea.
+A device loss or Cancel stops the script. After a device loss a reboot is a good idea. Exit code 1
+from a smoke test lets the other smoke tests run, but no full run is started.
 
 Running GpuSort.exe directly
 ----------------------------

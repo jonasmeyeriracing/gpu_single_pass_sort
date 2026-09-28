@@ -6,7 +6,8 @@
 //
 // Layouts. Every element has a logical index i (n bits). A layout with window base B puts the
 // L = BR_ELEM_BITS + BR_LANE_BITS index bits [B, B + L) "local" to a wave (BR_LANE_BITS defaults to
-// WAVE_BITS; 0 gives an LDS-only variant without wave intrinsics):
+// WAVE_BITS, at most SHUFFLE_SPAN_BITS = 5 (pass4: a wave64 is split into two 32-lane "virtual
+// waves", see common.hlsli); 0 gives an LDS-only variant without wave intrinsics):
 //   bits [B, B + BR_ELEM_BITS)         = register index r (0..BR_ELEMS-1)
 //   bits [B + BR_ELEM_BITS, B + L)     = lane index
 //   the other n - L bits (below B, and from B + L up) = wave index (low bits of the wave index
@@ -70,10 +71,12 @@
 #error "BR_ELEMS must be 8, 16 or 32"
 #endif
 
-// Number of lane bits in a layout (default: the whole wave). BR_LANE_BITS = 0 gives an LDS-only
-// variant without any wave intrinsics: every non-register stage bit goes through a transpose.
+// Number of lane bits in a layout (default: the whole wave, at most SHUFFLE_SPAN_BITS). BR_LANE_BITS
+// = 0 gives an LDS-only variant without any wave intrinsics: every non-register stage bit goes
+// through a transpose. With BR_LANE_BITS < WAVE_BITS a hardware wave holds several "virtual waves"
+// of 2^BR_LANE_BITS lanes, and lane stages never read outside the thread's own virtual wave.
 #ifndef BR_LANE_BITS
-#define BR_LANE_BITS WAVE_BITS
+#define BR_LANE_BITS SHUFFLE_SPAN_BITS
 #endif
 #if BR_LANE_BITS > WAVE_BITS
 #error "bitonic_reg: BR_LANE_BITS must be <= WAVE_BITS"
@@ -161,9 +164,10 @@ void BrLaneStage(inout uint v[BR_ELEMS], uint q, uint hwLane)
 void BitonicRegSort(uint tid, uint offset, uint count)
 {
     uint n = (count <= 1) ? 0 : firstbithigh(count - 1) + 1; // ceil(log2(count))
-    n = clamp(n, (uint)BR_LOCAL_BITS, (uint)BR_MAX_BITS);
-    const uint numThreads = 1u << (n - BR_ELEM_BITS); // multiple of 2^BR_LANE_BITS, <= GROUP_SIZE
-    const bool active = tid < numThreads;             // wave-uniform if BR_LANE_BITS == WAVE_BITS
+    // At least BR_LOCAL_BITS, and at least one whole hardware wave (so 'active' is wave-uniform).
+    n = clamp(n, (uint)max(BR_LOCAL_BITS, BR_ELEM_BITS + WAVE_BITS), (uint)BR_MAX_BITS);
+    const uint numThreads = 1u << (n - BR_ELEM_BITS); // multiple of WAVE_SIZE, <= GROUP_SIZE
+    const bool active = tid < numThreads;             // wave-uniform
     const uint lane = tid & ((1u << BR_LANE_BITS) - 1u);
     const uint wave = tid >> BR_LANE_BITS;
     const uint hwLane = tid & (WAVE_SIZE - 1u);

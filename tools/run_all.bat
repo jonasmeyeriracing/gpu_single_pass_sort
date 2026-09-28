@@ -10,8 +10,11 @@ rem   extra argument nopause: do not wait for a key at the end
 rem
 rem Order: adapter list, then a --smoke --dred safety run of every shader set x wave configuration,
 rem then the full runs. The smoke runs use --iterations 16 (SMOKE_ITERS) so the sweep workload (which
-rem cycles through 16 sort sizes, one per iteration) reaches every size once. Any smoke failure
-rem stops the script before the first full run. Every GPU run
+rem cycles through 16 sort sizes, one per iteration) reaches every size once. A verification failure
+rem in a smoke run only takes that algorithm out of the rest of that run (GpuSort keeps testing the
+rem other algorithms), and the remaining smoke runs still run; the failed algorithms are listed in
+rem summary.txt ("SMOKE FAILED: ..."), and the script then stops before the first full run. A device
+rem loss (GPU fault / hang, exit code 3) stops the script at once. Every GPU run
 rem shows GpuSort's OK/Cancel prompt ("Run k/N ..."); Cancel stops the script.
 rem If a GPU reports a wave size range (e.g. AMD RDNA: 32-64), every shader set also runs with
 rem --wave-size <max> (e.g. wave64), on the GPUs that support it.
@@ -170,16 +173,28 @@ if defined SKIPPED_SETS (
 
 rem --- phase 1: smoke tests ----------------------------------------------------------------------
 set "FINAL_RC=0"
+set "SMOKE_FAILS=0"
+set "SMOKE_FAILED_RUNS="
 for /l %%s in (1,1,%SET_COUNT%) do for /l %%w in (1,1,%WAVE_COUNT%) do (
     call :run smoke %%s %%w
     if "!RC!"=="2" (
         set "FINAL_RC=1"
         goto :stopped
     )
-    if not "!RC!"=="0" goto :smoke_failed
+    if "!RC!"=="3" (
+        set "FINAL_RC=1"
+        goto :smoke_lost
+    )
+    if not "!RC!"=="0" (
+        set /a SMOKE_FAILS+=1
+        set "SMOKE_FAILED_RUNS=!SMOKE_FAILED_RUNS! [!LAST_LABEL!]"
+        if exist "%OUT%\!FILE!.txt" findstr /c:"SMOKE FAILED:" "%OUT%\!FILE!.txt" >> "%SUMMARY%"
+    )
 )
+if not "!SMOKE_FAILS!"=="0" goto :smoke_failed
 
 rem --- phase 2: full runs ------------------------------------------------------------------------
+rem (only reached if every smoke run passed)
 for /l %%s in (1,1,%SET_COUNT%) do for /l %%w in (1,1,%WAVE_COUNT%) do (
     call :run full %%s %%w
     if not "!RC!"=="0" set "FINAL_RC=1"
@@ -192,11 +207,21 @@ goto :finish
 set "FINAL_RC=1"
 echo.
 echo ************************************************************************************
-echo  SMOKE TEST FAILED: run !LAST_LABEL! returned !RC! ^(!RC_TEXT!^).
-echo  No full benchmark run was started. The smoke logs in the results folder show
-echo  what happened ^(verification failures, DRED report on a GPU fault^).
+echo  SMOKE TEST FAILED in !SMOKE_FAILS! smoke run^(s^):!SMOKE_FAILED_RUNS!
+echo  All smoke runs were completed; the algorithms that failed are listed in summary.txt
+echo  ^("SMOKE FAILED:" lines^). No full benchmark run was started. The smoke logs in the
+echo  results folder show the details.
 echo ************************************************************************************
->> "%SUMMARY%" echo STOPPED: smoke test !LAST_LABEL! failed with !RC! (!RC_TEXT!)
+>> "%SUMMARY%" echo STOPPED before the full runs: !SMOKE_FAILS! smoke run(s) failed:!SMOKE_FAILED_RUNS!
+goto :finish
+
+:smoke_lost
+echo.
+echo ************************************************************************************
+echo  DEVICE LOST in smoke run !LAST_LABEL! ^(!RC_TEXT!^).
+echo  Nothing more was started. The smoke log has the DRED report.
+echo ************************************************************************************
+>> "%SUMMARY%" echo STOPPED: smoke test !LAST_LABEL! lost the device (!RC_TEXT!)
 goto :finish
 
 :stopped

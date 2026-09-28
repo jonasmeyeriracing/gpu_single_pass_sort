@@ -44,6 +44,30 @@
 #define WAVE_SIZE_ATTR
 #endif
 
+// Shuffle span (pass4): a WaveReadLaneAt whose source lane differs per lane only ever reads a lane
+// in the same aligned group of SHUFFLE_SPAN = 2^SHUFFLE_SPAN_BITS lanes, at most 32. On the AMD RX
+// 7900 XTX (driver 32.0.11037.4004) with [WaveSize(64)], the pass2 radix sort, whose shuffle scans
+// read across the two 32-lane halves of a wave64, returned wrong results, while every wave32 run
+// passed, and a CPU emulation shows the shader logic is correct for wave64. The likely cause (not
+// confirmed) is that such shuffles only work inside each 32-lane half there (RDNA's ds_bpermute
+// permutes within 32 lanes in wave64 mode). So wider waves use wave intrinsics (scans) or narrower
+// "virtual waves" (bitonic, radix table scan) instead; see _test/pass4/notes.md. For
+// WAVE_SIZE <= 32 the default changes nothing. SHUFFLE_SPAN_TEST = 1 sets the span to half the wave
+// (as for wave64), to run those code paths on 32-lane hardware or WARP.
+#ifndef SHUFFLE_SPAN_BITS
+#if defined(SHUFFLE_SPAN_TEST) && SHUFFLE_SPAN_TEST
+#define SHUFFLE_SPAN_BITS (WAVE_BITS - 1)
+#elif WAVE_BITS < 5
+#define SHUFFLE_SPAN_BITS WAVE_BITS
+#else
+#define SHUFFLE_SPAN_BITS 5
+#endif
+#endif
+#if SHUFFLE_SPAN_BITS < 0 || SHUFFLE_SPAN_BITS > WAVE_BITS
+#error "SHUFFLE_SPAN_BITS must be 0..WAVE_BITS"
+#endif
+#define SHUFFLE_SPAN (1u << SHUFFLE_SPAN_BITS)
+
 cbuffer SortConstants : register(b0)
 {
     uint gNumSorts;

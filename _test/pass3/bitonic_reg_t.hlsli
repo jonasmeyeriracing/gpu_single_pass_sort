@@ -6,8 +6,10 @@
 //   BitonicRegSortT<E, EB>(tid, offset, count), E = 1 << EB elements per thread (EB = 0..4),
 //   count <= E * GROUP_SIZE.
 //
-// L = EB + WAVE_BITS index bits are local to a wave (EB register bits + the lane bits). The sort is
-// padded to N = 2^n, n = clamp(ceil(log2(count)), L, 13), and runs on N / E threads. Barriers (32
+// L = EB + BRT_LANE_BITS index bits are local to a wave (EB register bits + the lane bits;
+// BRT_LANE_BITS = WAVE_BITS, at most SHUFFLE_SPAN_BITS = 5: pass4 splits a wave64 into two 32-lane
+// "virtual waves", see common.hlsli). The sort is padded to N = 2^n, n = clamp(ceil(log2(count)),
+// max(L, EB + WAVE_BITS), 13), and runs on N / E threads (whole hardware waves). Barriers (32
 // lanes): 2 * (n - L) for n > L: E = 1: 10 at N = 1024; E = 2: 10 at 2048, 8 at 1024; E = 4: 10 at
 // 4096, 8 at 2048, 6 at 1024; E = 8: as bitonic_reg.hlsli (10 at 8192, 6 at 2048).
 // With E = 1 there are no register stages (every stage is a lane stage or goes through LDS).
@@ -31,6 +33,15 @@
 #error "bitonic_reg_t: GROUP_SIZE must be 256, 512 or 1024"
 #endif
 
+// Lane bits of a layout (see above). Smaller values (down to 0 = LDS only) test the virtual-wave
+// path on narrower hardware.
+#ifndef BRT_LANE_BITS
+#define BRT_LANE_BITS SHUFFLE_SPAN_BITS
+#endif
+#if BRT_LANE_BITS > WAVE_BITS
+#error "bitonic_reg_t: BRT_LANE_BITS must be <= WAVE_BITS"
+#endif
+
 // Swizzled groupshared address of logical index i (same as BrLdsAddr); always < MAX_SORT_SIZE.
 uint BrtLdsAddr(uint i)
 {
@@ -43,7 +54,7 @@ template <uint EB>
 uint BrtBaseIndex(uint lane, uint wave, uint B)
 {
     const uint lowMask = (1u << B) - 1u;
-    return (wave & lowMask) | (lane << (B + EB)) | ((wave >> B) << (B + EB + WAVE_BITS));
+    return (wave & lowMask) | (lane << (B + EB)) | ((wave >> B) << (B + EB + BRT_LANE_BITS));
 }
 
 // Start of level s: XOR every element with (bit s-1 ^ bit s) of its index (bit 0 counts as 0 for
@@ -79,7 +90,8 @@ void BrtRegStage(inout uint v[E], uint P)
     }
 }
 
-// Lane stage on lane bit q: exchange with lane ^ (1 << q); the lane with bit q clear keeps the min.
+// Lane stage on lane bit q (< BRT_LANE_BITS): exchange with hardware lane ^ (1 << q), which is in
+// the same virtual wave; the lane with bit q clear keeps the min.
 template <uint E>
 void BrtLaneStage(inout uint v[E], uint q, uint hwLane)
 {
@@ -99,14 +111,15 @@ void BrtLaneStage(inout uint v[E], uint q, uint hwLane)
 template <uint E, uint EB>
 void BitonicRegSortT(uint tid, uint offset, uint count)
 {
-    const uint L = EB + WAVE_BITS; // local bits
+    const uint L = EB + BRT_LANE_BITS; // local bits
     const uint maxBits = min((uint)BRT_MAX_BITS, EB + BRT_GROUP_BITS);
     uint n = (count <= 1) ? 0 : firstbithigh(count - 1) + 1; // ceil(log2(count))
-    n = clamp(n, L, maxBits);
+    n = clamp(n, max(L, EB + WAVE_BITS), maxBits);
     const uint numThreads = 1u << (n - EB); // multiple of WAVE_SIZE, <= GROUP_SIZE
     const bool active = tid < numThreads;   // wave-uniform
-    const uint lane = tid & (WAVE_SIZE - 1u);
-    const uint wave = tid >> WAVE_BITS;
+    const uint lane = tid & ((1u << BRT_LANE_BITS) - 1u); // lane in the virtual wave
+    const uint wave = tid >> BRT_LANE_BITS;                // virtual wave
+    const uint hwLane = tid & (WAVE_SIZE - 1u);
 
     uint B = 0;
     uint base = BrtBaseIndex<EB>(lane, wave, 0);
@@ -155,7 +168,7 @@ void BitonicRegSortT(uint tid, uint offset, uint count)
             {
                 // lane stages p = pTop .. EB (at most WAVE_BITS of them)
                 for (uint p = pTop; p >= EB && p < L; --p)
-                    BrtLaneStage<E>(v, p - EB, lane);
+                    BrtLaneStage<E>(v, p - EB, hwLane);
                 // register stages P = min(pTop, EB - 1) .. 0
                 [unroll]
                 for (uint k = 0; k < EB; ++k)

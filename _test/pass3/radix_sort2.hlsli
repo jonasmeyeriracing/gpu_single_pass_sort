@@ -75,10 +75,27 @@
 #error "radix_sort2: GROUP_SIZE must be a multiple of WAVE_SIZE"
 #endif
 
-// Table scan tasks: 8 words x RS2_GROUPS wave groups, RS2_R tasks per lane.
-#if WAVE_SIZE >= 8
+// Table scan tasks: 8 words x RS2_GROUPS wave groups, RS2_R tasks per lane, on the first
+// RS2_TASK_LANES lanes; the other lanes repeat the tasks of lane & (RS2_TASK_LANES - 1), so the
+// task shuffles (lane ^ 8, lane ^ 16, ...) stay inside the shuffle span (pass4, common.hlsli: a
+// wave64 runs the table scan in both 32-lane halves). Default: the shuffle span (min(WAVE_SIZE, 32);
+// with fewer than 8 lanes per wave the tasks use uniform-index reads instead, RS2_R > 1). Must be
+// WAVE_SIZE or 8..WAVE_SIZE (smaller values test the repeated-task path on 32-lane hardware).
+#ifndef RS2_TASK_LANES
+#if SHUFFLE_SPAN >= 8
+#define RS2_TASK_LANES SHUFFLE_SPAN
+#elif WAVE_SIZE >= 8
+#define RS2_TASK_LANES 8 // only with SHUFFLE_SPAN_TEST on 8-lane waves
+#else
+#define RS2_TASK_LANES WAVE_SIZE
+#endif
+#endif
+#if RS2_TASK_LANES > WAVE_SIZE || (RS2_TASK_LANES < 8 && RS2_TASK_LANES != WAVE_SIZE)
+#error "radix_sort2: RS2_TASK_LANES must be WAVE_SIZE or 8..WAVE_SIZE"
+#endif
+#if RS2_TASK_LANES >= 8
 #define RS2_R 1
-#define RS2_GROUPS (WAVE_SIZE / 8)
+#define RS2_GROUPS (RS2_TASK_LANES / 8)
 #else
 #define RS2_R (8 / WAVE_SIZE)
 #define RS2_GROUPS 1
@@ -104,11 +121,22 @@
 #define RS2_OR_LOOP [loop]
 #endif
 
+// Lane prefix fields: 8-bit (4 words) if they cannot overflow ((WAVE_SIZE - 1) * 8 <= 255, i.e.
+// up to 32 lanes), else 16-bit (8 words). RS2_PREFIX8 = 0 forces the 16-bit path (pass4: to run the
+// wave64 path on 32-lane hardware).
+#ifndef RS2_PREFIX8
 #if (WAVE_SIZE - 1) * RS2_KPT_MAX <= 255
 #define RS2_PREFIX8 1
-#define RS2_PRE_WORDS 4
 #else
 #define RS2_PREFIX8 0
+#endif
+#endif
+#if RS2_PREFIX8 && (WAVE_SIZE - 1) * RS2_KPT_MAX > 255
+#error "radix_sort2: 8-bit lane prefix fields would overflow for this wave size"
+#endif
+#if RS2_PREFIX8
+#define RS2_PRE_WORDS 4
+#else
 #define RS2_PRE_WORDS 8
 #endif
 
@@ -345,12 +373,13 @@ void RadixSort2(uint tid, uint offset, uint count)
             off[r] = 0;
         if (waveActive)
         {
+            const uint taskLane = lane & (RS2_TASK_LANES - 1u);
             uint tot[RS2_R]; // both digits' totals over all waves (16-bit fields)
             uint exc[RS2_R]; // both digits' counts in the waves below this one
             [unroll]
             for (uint r = 0; r < RS2_R; ++r)
             {
-                const uint t = lane + r * WAVE_SIZE;
+                const uint t = taskLane + r * RS2_TASK_LANES;
                 const uint j = t & 7u;
                 const uint g = t >> 3;
                 uint a = 0;
@@ -371,7 +400,7 @@ void RadixSort2(uint tid, uint offset, uint count)
             }
 #if RS2_R == 1
             [unroll]
-            for (uint m = 8; m < WAVE_SIZE; m <<= 1)
+            for (uint m = 8; m < RS2_TASK_LANES; m <<= 1)
             {
                 tot[0] += WaveReadLaneAt(tot[0], lane ^ m);
                 exc[0] += WaveReadLaneAt(exc[0], lane ^ m);

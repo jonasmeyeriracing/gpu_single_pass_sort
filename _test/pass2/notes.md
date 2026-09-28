@@ -257,3 +257,12 @@ handles all sizes in one dispatch. `d_rx*` here is the radix sort *with* `WavePr
 
 To re-run this snapshot: `GpuSort.exe --shaders _test/pass2`. (After the run, only comments in
 `bitonic_reg.hlsli` changed; the code is identical.)
+
+## pass4 addendum: wave64 fix
+
+The shader files of this snapshot were patched in pass4 (`common.hlsli`, `wave_scan.hlsli`,
+`radix_sort.hlsli`, `bitonic_reg.hlsli`): on an AMD RX 7900 XTX at `--wave-size 64` the radix sort
+returned wrong results, most likely because per-lane-index `WaveReadLaneAt` does not cross the two
+32-lane halves of a wave64 there. Waves wider than 32 lanes now use wave intrinsics for the scans
+and 32-lane virtual waves for bitonic. For WAVE_SIZE <= 32 the compiled code is bit-identical, so
+the results above are unaffected. Details: _test/pass4/notes.md.

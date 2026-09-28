@@ -137,6 +137,11 @@ int RunMain(int argc, wchar_t** argv)
             algorithms.push_back(*it);
         }
     }
+    for (auto& a : algorithms)
+    {
+        if (!a.flushGiven)
+            a.flush = opt.flushMode;
+    }
 
     std::vector<uint32_t> workloadIds;
     if (opt.workloads.empty())
@@ -190,6 +195,7 @@ int RunMain(int argc, wchar_t** argv)
     info.iterations = opt.iterations;
     info.warmup = opt.warmup;
     info.workloadIds = workloadIds;
+    info.defaultFlush = opt.flushMode;
     for (const auto& a : algorithms)
         info.algorithms.push_back(a.name);
 
@@ -257,6 +263,7 @@ int RunMain(int argc, wchar_t** argv)
         {
             CompiledAlgorithm ca;
             ca.name = algorithm.name;
+            ca.flush = algorithm.flush;
             for (const auto& d : algorithm.dispatches)
             {
                 ShaderDefines defines = d.defines;
@@ -272,8 +279,11 @@ int RunMain(int argc, wchar_t** argv)
                     throw std::runtime_error("failed to compile " + d.file + " for algorithm " + algorithm.name);
                 ca.shaders.push_back(blob);
             }
-            Log("Compiled algorithm %s (%zu dispatch%s)\n", ca.name.c_str(), ca.shaders.size(),
-                ca.shaders.size() == 1 ? "" : "es");
+            std::string sizes;
+            for (const auto& s : ca.shaders)
+                sizes += Format("%s%zu", sizes.empty() ? "" : " + ", static_cast<size_t>(s->GetBufferSize()));
+            Log("Compiled algorithm %s (%zu dispatch%s, DXIL %s bytes, flush mode %s)\n", ca.name.c_str(),
+                ca.shaders.size(), ca.shaders.size() == 1 ? "" : "es", sizes.c_str(), FlushModeName(ca.flush));
             compiled.push_back(std::move(ca));
         }
         compiledByWave.push_back({{wc.size, wc.attribute}, std::move(compiled)});
@@ -282,6 +292,19 @@ int RunMain(int argc, wchar_t** argv)
     // Compile everything up front, so shader errors show up before the prompt.
     for (const auto& wc : gpuWave)
         compileFor(wc);
+    if (!compiledByWave.empty())
+    {
+        for (const auto& ca : compiledByWave.front().second)
+        {
+            AlgorithmInfo ai;
+            ai.name = ca.name;
+            ai.flush = ca.flush;
+            for (const auto& s : ca.shaders)
+                ai.dxilBytes.push_back(static_cast<size_t>(s->GetBufferSize()));
+            info.algorithmInfos.push_back(std::move(ai));
+        }
+        info.dxilWaveSize = compiledByWave.front().first.first;
+    }
 
     Log("\n%s\n", FormatSizeDistribution(workloadIds, opt.iterations).c_str());
 
@@ -336,8 +359,7 @@ int RunMain(int argc, wchar_t** argv)
 
     uint32_t totalFailures = 0;
     bool deviceLost = false;
-    bool smokeStopped = false; // --smoke stops at the first verification failure
-    for (size_t gi = 0; gi < gpus.size() && !deviceLost && !smokeStopped; ++gi)
+    for (size_t gi = 0; gi < gpus.size() && !deviceLost; ++gi)
     {
         const GpuInfo& gpu = gpus[gi];
         GpuRecord record;
@@ -362,13 +384,22 @@ int RunMain(int argc, wchar_t** argv)
             record.timestampFrequency = bench.TimestampFrequency();
             for (const auto& m : DrainDebugMessages(gpu.device.Get()))
                 Log("    %s\n", m.c_str());
-            for (size_t wi = 0; wi < workloadIds.size() && !smokeStopped; ++wi)
+            for (size_t wi = 0; wi < workloadIds.size(); ++wi)
             {
                 const uint32_t workloadId = workloadIds[wi];
-                for (size_t ai = 0; ai < compiled.size() && !smokeStopped; ++ai)
+                for (size_t ai = 0; ai < compiled.size(); ++ai)
                 {
                     const char* wname = Workloads()[workloadId].name;
                     const std::string& aname = compiled[ai].name;
+                    // --smoke: an algorithm with a verification failure on this GPU skips its remaining
+                    // workloads; the other algorithms keep running.
+                    if (std::any_of(record.smokeFailed.begin(), record.smokeFailed.end(),
+                                    [&](const SmokeFailure& sf) { return sf.algorithm == aname; }))
+                    {
+                        Log("  %-14s %-20s skipped (failed verification earlier in this smoke run)\n", wname,
+                            aname.c_str());
+                        continue;
+                    }
                     uint32_t lastLogged = 0;
                     auto progress = [&](uint32_t done, uint32_t total, uint32_t failures) {
                         const double elapsed =
@@ -405,10 +436,12 @@ int RunMain(int argc, wchar_t** argv)
                         Log("    %s\n", m.c_str());
                     if (opt.smoke && result.failures > 0)
                     {
-                        // Wrong results can be the first sign of a GPU exception; do not keep going.
-                        smokeStopped = true;
-                        record.error = "smoke test stopped at the first verification failure (" + label + ")";
-                        Log("\nSmoke test: stopping at the first verification failure. Nothing more is submitted.\n");
+                        // A device loss or fence timeout still stops everything (it throws). A
+                        // verification failure only takes this algorithm out of the rest of the run.
+                        record.smokeFailed.push_back({aname, wname});
+                        Log("  Smoke test: %s failed verification on %s; skipping its remaining workloads on "
+                            "this GPU\n",
+                            aname.c_str(), wname);
                     }
                 }
             }

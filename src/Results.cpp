@@ -69,8 +69,10 @@ std::string FormatResults(const RunInfo& info)
     out += Format("Shader dir:   %s\n", info.shaderDir.c_str());
     out += Format("Iterations:   %u measured + %u warmup per GPU x workload x algorithm, %u sorts per iteration\n",
                   info.iterations, info.warmup, kSortsPerIteration);
-    out += Format("Cache flush:  %llu MB read+write compute pass before every timed sort\n",
-                  static_cast<unsigned long long>(GpuBenchmark::kFlushBytes >> 20));
+    out += Format("Cache flush:  %llu MB read+write compute pass before every timed sort (flush mode '%s' for\n"
+                  "              algorithms without their own; full = code + data cold, code = only code cold,\n"
+                  "              data = only data cold (untimed warm-up run first), none = no flush)\n",
+                  static_cast<unsigned long long>(GpuBenchmark::kFlushBytes >> 20), FlushModeName(info.defaultFlush));
     out += "Timing:       GPU timestamps around the sort ExecuteIndirect dispatches only, per iteration (all 20 sorts)\n";
     out += "GPUs:\n";
     for (size_t g = 0; g < info.gpus.size(); ++g)
@@ -89,6 +91,24 @@ std::string FormatResults(const RunInfo& info)
 
     out += FormatSizeDistribution(info.workloadIds, info.iterations);
     out += "\n";
+
+    if (!info.algorithmInfos.empty())
+    {
+        size_t w = 9;
+        for (const auto& a : info.algorithmInfos)
+            w = std::max(w, a.name.size());
+        out += Format("Algorithms (flush mode; DXIL container bytes per dispatch, compiled for WAVE_SIZE=%u)\n",
+                      info.dxilWaveSize);
+        for (const auto& a : info.algorithmInfos)
+        {
+            std::string sizes;
+            for (size_t b : a.dxilBytes)
+                sizes += Format("%s%zu", sizes.empty() ? "" : " + ", b);
+            out += Format("  %-*s  %-4s  %s\n", static_cast<int>(w), a.name.c_str(), FlushModeName(a.flush),
+                          sizes.c_str());
+        }
+        out += "\n";
+    }
 
     size_t algoWidth = 9;
     for (const auto& a : info.algorithms)
@@ -151,6 +171,10 @@ std::string FormatResults(const RunInfo& info)
         }
         if (!gpu.error.empty())
             out += Format("  ERROR: %s\n", gpu.error.c_str());
+        // Fixed prefix "SMOKE FAILED:" (tools/run_all.bat copies these lines into summary.txt).
+        for (const auto& sf : gpu.smokeFailed)
+            out += Format("  SMOKE FAILED: %s on %s (first failing workload %s; its remaining workloads were skipped)\n",
+                          sf.algorithm.c_str(), gpu.name.c_str(), sf.workload.c_str());
         for (const auto& c : gpu.combos)
         {
             for (const auto& m : c.result.failureMessages)
