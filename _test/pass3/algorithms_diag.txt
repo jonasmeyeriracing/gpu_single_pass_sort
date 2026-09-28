@@ -1,0 +1,125 @@
+# Algorithm registry for this shader directory (read by GpuSort at startup).
+#
+#   algorithm <name>
+#   dispatch <file.hlsl> <entryPoint> <groupSize> [NAME=VALUE ...]
+#
+# Each 'dispatch' line is one ExecuteIndirect(DISPATCH {numSorts, 1, 1}) of that shader, compiled
+# at runtime for cs_6_6 with -O3. The framework always adds -D GROUP_SIZE=<groupSize> and
+# -D WAVE_SIZE=<device WaveLaneCountMin> (plus WAVE_SIZE_REQUIRED=1 if the device reports a range of
+# wave sizes; see common.hlsli); extra NAME=VALUE tokens become further defines (e.g. the size tier
+# bounds MIN_COUNT / MAX_COUNT).
+# One group handles one sort (SV_GroupID.x = sort index). The dispatches of an algorithm are
+# issued back-to-back WITHOUT barriers, so each one must early-out for sorts outside its tier.
+#
+# Bindings (see common.hlsli): b0 root constants, t0 sort descriptors, t1 input, u0 output.
+#
+# pass3 DIAGNOSTIC set (smoke run): references, per-path curves, combinations, microbenchmarks.
+
+# --- references (pass2 shaders, unchanged) --------------------------------------------------------
+
+algorithm s1_rank512_bitreg4096_radix
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 LARGE_RADIX=1
+
+algorithm s1_rank512_bitreg2048_radix
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+
+algorithm s1_radix
+dispatch single_pass.hlsl main 1024 RANK_MAX=0 LARGE_RADIX=1
+
+# --- pass3: one path for (almost) every size, for the sweep curves --------------------------------
+
+# radix_sort2 for every size; RS2_MIN_KPT = minimum keys per thread, RS2_SKIP = skip constant digits
+algorithm s3_radix2_k1
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 RADIX=2 RS2_MIN_KPT=1
+
+algorithm s3_radix2_k4
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 RADIX=2 RS2_MIN_KPT=4
+
+algorithm s3_radix2_k8
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_radix2_k4_skip
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 RADIX=2 RS2_MIN_KPT=4 RS2_SKIP=1
+
+algorithm s3_radix2_k8_skip
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 RADIX=2 RS2_MIN_KPT=8 RS2_SKIP=1
+
+# register bitonic with E elements per thread up to its limit, radix_sort2 (k8) above
+algorithm s3_bitE1_rx2
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 MID_E=1 MID_MAX=1024 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_bitE2_rx2
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 MID_E=2 MID_MAX=2048 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_bitE4_rx2
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 MID_E=4 MID_MAX=4096 RADIX=2 RS2_MIN_KPT=8
+
+# register bitonic E = 8 (template version) for every size
+algorithm s3_bitE8
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 RADIX=0
+
+# rank sort up to 1024, bitonic E = 8 above (rank curve)
+algorithm s3_rank1024_bitE8
+dispatch single_pass3.hlsl main 1024 RANK_MAX=1024 RADIX=0
+
+# --- pass3: combinations ---------------------------------------------------------------------------
+
+algorithm s3_rank512_bitreg2048_radix2
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_rank512_bitreg4096_radix2
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_rank512_radix2
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_rank512_bitreg2048_radix2k4
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 RADIX=2 RS2_MIN_KPT=4
+
+algorithm s3_rank512_bitreg2048_radix2s
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 RADIX=2 RS2_MIN_KPT=8 RS2_SKIP=1
+
+algorithm s3_rank512_bitE2_2048_radix2
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 MID_E=2 MID_MAX=2048 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_rank512_bitE4_4096_radix2
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 MID_E=4 MID_MAX=4096 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_rank256_bitreg2048_radix2
+dispatch single_pass3.hlsl main 1024 RANK_MAX=256 BITREG_MAX=2048 RADIX=2 RS2_MIN_KPT=8
+
+# --- microbenchmarks (see ubench.hlsli): prelude of 256 dependent ops per thread before the sort ----
+# Compare each ub_* against ub_none on the same workload: delta / 256 = cost per op per group.
+
+algorithm ub_none
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 RADIX=2
+
+algorithm ub_alu
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 RADIX=2 UB_OP=1
+
+algorithm ub_shfl
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 RADIX=2 UB_OP=2
+
+algorithm ub_shfl_uniform
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 RADIX=2 UB_OP=3
+
+algorithm ub_ballot
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 RADIX=2 UB_OP=4
+
+algorithm ub_prefixsum
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 RADIX=2 UB_OP=5
+
+algorithm ub_activesum
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 RADIX=2 UB_OP=6
+
+algorithm ub_activeor
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 RADIX=2 UB_OP=7
+
+algorithm ub_prefixbits
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 RADIX=2 UB_OP=8
+
+algorithm ub_match
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 RADIX=2 UB_OP=9
+
+algorithm ub_barrier
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 RADIX=2 UB_OP=10

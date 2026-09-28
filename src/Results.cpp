@@ -105,6 +105,45 @@ std::string FormatResults(const RunInfo& info)
             out += Format("  %-14s %-*s %9.2f %9.2f %9.2f %9.2f %9.2f %6u\n", wname, static_cast<int>(algoWidth),
                           c.algorithm.c_str(), st.min, st.median, st.mean, st.p95, st.max, c.result.failures);
         }
+        // Sweep workload: the same numbers grouped by sort size (measured iteration i has size
+        // SweepSizes()[i % n]; all 20 sorts of an iteration have that size).
+        bool anySweep = false;
+        for (const auto& c : gpu.combos)
+            anySweep |= IsSweepWorkload(c.workloadId);
+        if (anySweep)
+        {
+            const std::vector<uint32_t>& sizes = SweepSizes();
+            const char* statNames[3] = {"median", "mean", "p95"};
+            for (int stat = 0; stat < 3; ++stat)
+            {
+                out += Format("\n  sweep: %s us per iteration by sort size (all 20 sorts of an iteration have that size)\n",
+                              statNames[stat]);
+                out += Format("  %-*s", static_cast<int>(algoWidth), "algorithm");
+                for (uint32_t size : sizes)
+                    out += Format(" %7u", size);
+                out += "\n";
+                for (const auto& c : gpu.combos)
+                {
+                    if (!IsSweepWorkload(c.workloadId))
+                        continue;
+                    out += Format("  %-*s", static_cast<int>(algoWidth), c.algorithm.c_str());
+                    for (size_t si = 0; si < sizes.size(); ++si)
+                    {
+                        std::vector<double> v;
+                        for (size_t i = si; i < c.result.timesUs.size(); i += sizes.size())
+                            v.push_back(c.result.timesUs[i]);
+                        if (v.empty())
+                        {
+                            out += Format(" %7s", "-");
+                            continue;
+                        }
+                        const Stats st = ComputeStats(v);
+                        out += Format(" %7.2f", stat == 0 ? st.median : stat == 1 ? st.mean : st.p95);
+                    }
+                    out += "\n";
+                }
+            }
+        }
         if (!gpu.error.empty())
             out += Format("  ERROR: %s\n", gpu.error.c_str());
         for (const auto& c : gpu.combos)

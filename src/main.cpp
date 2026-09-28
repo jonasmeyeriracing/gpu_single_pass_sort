@@ -94,7 +94,10 @@ int RunMain(int argc, wchar_t** argv)
     }
     if (opt.smoke)
     {
-        opt.iterations = kSmokeIterations;
+        // An explicit --iterations still applies (e.g. for a few samples per sweep size); the smoke
+        // run stays serial (one iteration in flight) and has no warmup.
+        if (!opt.iterationsGiven)
+            opt.iterations = kSmokeIterations;
         opt.warmup = 0;
     }
 

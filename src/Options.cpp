@@ -87,6 +87,8 @@ bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
                 return false;
             }
             (arg == L"--iterations" ? o.iterations : o.warmup) = n;
+            if (arg == L"--iterations")
+                o.iterationsGiven = true;
         }
         else if (arg == L"--wave-size")
         {
@@ -151,7 +153,8 @@ void PrintUsage()
         "  --dred               Enable DRED auto-breadcrumbs + page-fault reporting; on device removal\n"
         "                       print the last completed GPU operation and the faulting allocation\n"
         "  --smoke              Safety check: 3 iterations (no warmup) of every algorithm x workload,\n"
-        "                       one iteration in flight at a time (overrides --iterations/--warmup)\n"
+        "                       one iteration in flight at a time (overrides --warmup; an explicit\n"
+        "                       --iterations N still sets the iteration count)\n"
         "  --test-device-removal\n"
         "                       Debug aid: call ID3D12Device5::RemoveDevice after the first batch to\n"
         "                       exercise the device-lost path (use with --warp)\n"

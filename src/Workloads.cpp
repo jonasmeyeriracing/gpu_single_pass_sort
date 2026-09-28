@@ -12,6 +12,8 @@ enum WorkloadId : uint32_t
     kEdges = 5,
     kMostlyMid = 6,
     kMostlyMedium = 7,
+    kSweep = 8,
+    kSparseKeys = 9,
 };
 
 // Deterministic sizes around every size-tier boundary the shaders use (powers of two and their
@@ -21,6 +23,11 @@ constexpr uint32_t kEdgeSizes[] = {
     257, 511, 512, 513, 1023, 1024, 1025, 2047, 2048, 2049, 4095, 4096, 4097, 8191, 8192,
 };
 constexpr uint32_t kNumEdgeSizes = static_cast<uint32_t>(sizeof(kEdgeSizes) / sizeof(kEdgeSizes[0]));
+
+// Sizes of the sweep workload, one per iteration (cycled).
+constexpr uint32_t kSweepSizes[] = {32,   64,   128,  256,  384,  512,  768,  1024,
+                                    1536, 2048, 2560, 3072, 4096, 5120, 6144, 8192};
+constexpr uint32_t kNumSweepSizes = static_cast<uint32_t>(sizeof(kSweepSizes) / sizeof(kSweepSizes[0]));
 
 uint64_t SplitMix64(uint64_t x)
 {
@@ -58,6 +65,8 @@ uint32_t DrawSize(uint32_t workloadId, Pcg32& rng)
         return rng.Range(2048, 8192);
     case kMostlyMid:
         return rng.Range(513, 2048);
+    case kSparseKeys:
+        return rng.Range(1, kMaxSortSize);
     case kMostlyMedium:
         return rng.Range(129, 512);
     case kWorstCase:
@@ -78,6 +87,8 @@ const std::vector<WorkloadDesc>& Workloads()
         {"edges", "tier boundaries 0-8192 (30 fixed sizes, cycled)"},
         {"mostly_mid", "uniform 513-2048"},
         {"mostly_medium", "uniform 129-512"},
+        {"sweep", "all 20 sorts the same size, 16 sizes 32-8192 cycled per iteration"},
+        {"sparse_keys", "uniform 1-8192; each 4-bit key digit is constant within a sort with p = 1/2"},
     };
     return list;
 }
@@ -93,8 +104,25 @@ int FindWorkload(const std::string& name)
     return -1;
 }
 
+const std::vector<uint32_t>& SweepSizes()
+{
+    static const std::vector<uint32_t> list(kSweepSizes, kSweepSizes + kNumSweepSizes);
+    return list;
+}
+
+bool IsSweepWorkload(uint32_t workloadId)
+{
+    return workloadId == kSweep;
+}
+
 void GenerateSizes(uint32_t workloadId, uint32_t iteration, uint32_t sizes[kSortsPerIteration])
 {
+    if (workloadId == kSweep)
+    {
+        for (uint32_t i = 0; i < kSortsPerIteration; ++i)
+            sizes[i] = kSweepSizes[iteration % kNumSweepSizes];
+        return;
+    }
     if (workloadId == kEdges)
     {
         for (uint32_t i = 0; i < kSortsPerIteration; ++i)
@@ -126,6 +154,22 @@ void GenerateIteration(uint32_t workloadId, uint32_t iteration, IterationData& o
         uint32_t* dst = out.elements.data() + out.sorts[i].offset;
         for (uint32_t j = 0; j < out.sorts[i].count; ++j)
             dst[j] = rng.Next(); // random key16 in the high half, random payload16 in the low half
+        if (workloadId == kSparseKeys)
+        {
+            // Real sort keys often have constant fields: per sort, each 4-bit digit of the key is
+            // either random or one constant value (p = 1/2 each).
+            Pcg32 keyRng(IterationSeed(workloadId, iteration), 3 + i);
+            const uint32_t digitMask = keyRng.Next() & 15u;
+            uint32_t varyBits = 0;
+            for (uint32_t d = 0; d < 4; ++d)
+            {
+                if (digitMask & (1u << d))
+                    varyBits |= 0xFu << (16 + 4 * d);
+            }
+            const uint32_t constBits = keyRng.Next() & 0xFFFF0000u & ~varyBits;
+            for (uint32_t j = 0; j < out.sorts[i].count; ++j)
+                dst[j] = (dst[j] & (varyBits | 0xFFFFu)) | constBits;
+        }
     }
 }
 

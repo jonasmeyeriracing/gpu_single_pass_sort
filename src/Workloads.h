@@ -75,6 +75,12 @@ const std::vector<WorkloadDesc>& Workloads();
 // Returns -1 if unknown.
 int FindWorkload(const std::string& name);
 
+// Workload "sweep": all sorts of an iteration have the same size, SweepSizes()[iteration % n], so the
+// per-iteration time is the latency of one sort of that size (20 in parallel). Results are grouped
+// by size (measured iteration i has size SweepSizes()[i % n]).
+const std::vector<uint32_t>& SweepSizes();
+bool IsSweepWorkload(uint32_t workloadId);
+
 // Sort sizes for one iteration (only the size RNG stream; cheap).
 void GenerateSizes(uint32_t workloadId, uint32_t iteration, uint32_t sizes[kSortsPerIteration]);
 
