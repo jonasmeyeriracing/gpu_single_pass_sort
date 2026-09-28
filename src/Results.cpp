@@ -75,6 +75,8 @@ std::string FormatResults(const RunInfo& info)
         const GpuRecord& gpu = info.gpus[g];
         out += Format("  [%zu] %s  (driver %s, timestamp freq %llu Hz, wall time %.1f s)\n", g, gpu.name.c_str(),
                       gpu.driver.c_str(), static_cast<unsigned long long>(gpu.timestampFrequency), gpu.wallSeconds);
+        out += Format("      wave lanes %u-%u, shaders compiled with WAVE_SIZE=%u%s\n", gpu.waveLaneCountMin,
+                      gpu.waveLaneCountMax, gpu.waveSize, gpu.waveSizeAttribute ? " + [WaveSize]" : "");
     }
     for (const auto& s : info.skippedAdapters)
         out += Format("  skipped: %s\n", s.c_str());
@@ -91,7 +93,7 @@ std::string FormatResults(const RunInfo& info)
     for (size_t g = 0; g < info.gpus.size(); ++g)
     {
         const GpuRecord& gpu = info.gpus[g];
-        out += Format("\n[%zu] %s\n", g, gpu.name.c_str());
+        out += Format("\n[%zu] %s  (WAVE_SIZE %u)\n", g, gpu.name.c_str(), gpu.waveSize);
         out += Format("  %-14s %-*s %9s %9s %9s %9s %9s %6s\n", "workload", static_cast<int>(algoWidth), "algorithm",
                       "min", "median", "mean", "p95", "max", "fails");
         uint32_t lastWorkload = UINT32_MAX;

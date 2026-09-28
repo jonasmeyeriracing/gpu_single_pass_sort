@@ -344,6 +344,16 @@ static std::string TryCreate(IDXGIAdapter1* adapter, GpuInfo& info)
         info.device.Reset();
         return "shader model 6.6 not supported";
     }
+
+    D3D12_FEATURE_DATA_D3D12_OPTIONS1 options1{};
+    if (FAILED(info.device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &options1, sizeof(options1))) ||
+        !options1.WaveOps || options1.WaveLaneCountMin == 0)
+    {
+        info.device.Reset();
+        return "wave operations not supported";
+    }
+    info.waveLaneCountMin = options1.WaveLaneCountMin;
+    info.waveLaneCountMax = options1.WaveLaneCountMax;
     return {};
 }
 

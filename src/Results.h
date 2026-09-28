@@ -24,6 +24,10 @@ struct GpuRecord
     std::string name;
     std::string driver;
     uint64_t timestampFrequency = 0;
+    uint32_t waveLaneCountMin = 0;  // D3D12_FEATURE_DATA_D3D12_OPTIONS1
+    uint32_t waveLaneCountMax = 0;
+    uint32_t waveSize = 0;          // WAVE_SIZE the shaders were compiled with
+    bool waveSizeAttribute = false; // compiled with [WaveSize(WAVE_SIZE)]
     double wallSeconds = 0;
     std::vector<ComboRecord> combos;
     std::string error; // non-empty if the GPU run aborted

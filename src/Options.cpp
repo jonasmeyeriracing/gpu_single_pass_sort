@@ -88,6 +88,18 @@ bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
             }
             (arg == L"--iterations" ? o.iterations : o.warmup) = n;
         }
+        else if (arg == L"--wave-size")
+        {
+            if (!next(value))
+                return false;
+            uint32_t n = 0;
+            if (!ParseUInt(value, n) || n < 4 || n > 128 || (n & (n - 1)) != 0)
+            {
+                error = "invalid value for --wave-size (power of two 4..128): " + WideToUtf8(value);
+                return false;
+            }
+            o.waveSize = n;
+        }
         else if (arg == L"--algo")
         {
             if (!next(value))
@@ -129,6 +141,9 @@ void PrintUsage()
         "  --algo <a[,b]>       Algorithms to run (default: all in algorithms.txt); repeatable\n"
         "  --workload <w[,x]>   Workloads to run (default: all); repeatable\n"
         "  --gpu <substring>    Only run on GPUs whose name contains <substring> (case-insensitive)\n"
+        "  --wave-size <N>      Compile the shaders for wave size N with [WaveSize(N)] (N must be within\n"
+        "                       the device's WaveLaneCountMin..Max). Default: WAVE_SIZE = WaveLaneCountMin,\n"
+        "                       plus [WaveSize] only if the device reports a range (Min != Max)\n"
         "  --warp               Run only on the WARP software adapter (no prompt, no window)\n"
         "  --no-prompt          Skip the confirmation message box\n"
         "  --debug              Enable the D3D12 debug layer\n"

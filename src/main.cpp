@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <ctime>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -149,28 +150,6 @@ int RunMain(int argc, wchar_t** argv)
     if (!flushShader)
         throw std::runtime_error("flush shader failed to compile:\n" + log);
 
-    std::vector<CompiledAlgorithm> compiled;
-    for (const auto& algorithm : algorithms)
-    {
-        CompiledAlgorithm ca;
-        ca.name = algorithm.name;
-        for (const auto& d : algorithm.dispatches)
-        {
-            ShaderDefines defines = d.defines;
-            defines.emplace_back("GROUP_SIZE", std::to_string(d.groupSize));
-            ComPtr<IDxcBlob> blob = compiler.CompileFile(shaderDir / d.file, d.entry, defines, log);
-            if (!log.empty())
-                Log("%s [%s:%s]:\n%s\n", blob ? "Shader warnings" : "Shader errors", d.file.c_str(), d.entry.c_str(),
-                    log.c_str());
-            if (!blob)
-                throw std::runtime_error("failed to compile " + d.file + " for algorithm " + algorithm.name);
-            ca.shaders.push_back(blob);
-        }
-        Log("Compiled algorithm %s (%zu dispatch%s)\n", ca.name.c_str(), ca.shaders.size(),
-            ca.shaders.size() == 1 ? "" : "es");
-        compiled.push_back(std::move(ca));
-    }
-
     // --- adapters -------------------------------------------------------------------------
     // Both must happen before any device is created.
     if (opt.debugLayer && !EnableD3D12DebugLayer(opt.gpuValidation))
@@ -202,8 +181,68 @@ int RunMain(int argc, wchar_t** argv)
         throw std::runtime_error(opt.warp ? "WARP adapter does not qualify (needs SM 6.6)"
                                           : "no qualifying hardware GPU found (needs D3D12 + SM 6.6)");
     for (const auto& g : gpus)
-        Log("Using adapter: %s (driver %s, %llu MB)\n", g.name.c_str(), g.driver.c_str(),
-            static_cast<unsigned long long>(g.dedicatedVideoMemory >> 20));
+        Log("Using adapter: %s (driver %s, %llu MB, wave lanes %u-%u)\n", g.name.c_str(), g.driver.c_str(),
+            static_cast<unsigned long long>(g.dedicatedVideoMemory >> 20), g.waveLaneCountMin, g.waveLaneCountMax);
+
+    // --- shader compilation, per wave-size configuration ----------------------------------
+    // Every shader gets -D WAVE_SIZE=<n> (the device's WaveLaneCountMin, or --wave-size). If the
+    // device reports a range (Min != Max) or --wave-size is given, it also gets
+    // -D WAVE_SIZE_REQUIRED=1 and must put [WaveSize(WAVE_SIZE)] on entry points that depend on it
+    // (common.hlsli: WAVE_SIZE_ATTR). GPUs with the same configuration share the compiled blobs.
+    struct WaveConfig
+    {
+        uint32_t size = 0;
+        bool attribute = false;
+    };
+    std::vector<WaveConfig> gpuWave(gpus.size());
+    for (size_t gi = 0; gi < gpus.size(); ++gi)
+    {
+        const GpuInfo& g = gpus[gi];
+        WaveConfig& wc = gpuWave[gi];
+        wc.size = opt.waveSize ? opt.waveSize : g.waveLaneCountMin;
+        wc.attribute = opt.waveSize != 0 || g.waveLaneCountMin != g.waveLaneCountMax;
+        if (wc.size < g.waveLaneCountMin || wc.size > g.waveLaneCountMax)
+            throw std::runtime_error(Format("--wave-size %u is outside the wave lane range %u-%u of %s", wc.size,
+                                            g.waveLaneCountMin, g.waveLaneCountMax, g.name.c_str()));
+    }
+    std::deque<std::pair<std::pair<uint32_t, bool>, std::vector<CompiledAlgorithm>>> compiledByWave; // stable references
+    auto compileFor = [&](const WaveConfig& wc) -> const std::vector<CompiledAlgorithm>& {
+        for (const auto& entry : compiledByWave)
+        {
+            if (entry.first == std::make_pair(wc.size, wc.attribute))
+                return entry.second;
+        }
+        Log("Compiling shaders for WAVE_SIZE=%u%s\n", wc.size, wc.attribute ? " with [WaveSize]" : "");
+        std::vector<CompiledAlgorithm> compiled;
+        for (const auto& algorithm : algorithms)
+        {
+            CompiledAlgorithm ca;
+            ca.name = algorithm.name;
+            for (const auto& d : algorithm.dispatches)
+            {
+                ShaderDefines defines = d.defines;
+                defines.emplace_back("GROUP_SIZE", std::to_string(d.groupSize));
+                defines.emplace_back("WAVE_SIZE", std::to_string(wc.size));
+                if (wc.attribute)
+                    defines.emplace_back("WAVE_SIZE_REQUIRED", "1");
+                ComPtr<IDxcBlob> blob = compiler.CompileFile(shaderDir / d.file, d.entry, defines, log);
+                if (!log.empty())
+                    Log("%s [%s:%s]:\n%s\n", blob ? "Shader warnings" : "Shader errors", d.file.c_str(),
+                        d.entry.c_str(), log.c_str());
+                if (!blob)
+                    throw std::runtime_error("failed to compile " + d.file + " for algorithm " + algorithm.name);
+                ca.shaders.push_back(blob);
+            }
+            Log("Compiled algorithm %s (%zu dispatch%s)\n", ca.name.c_str(), ca.shaders.size(),
+                ca.shaders.size() == 1 ? "" : "es");
+            compiled.push_back(std::move(ca));
+        }
+        compiledByWave.push_back({{wc.size, wc.attribute}, std::move(compiled)});
+        return compiledByWave.back().second;
+    };
+    // Compile everything up front, so shader errors show up before the prompt.
+    for (const auto& wc : gpuWave)
+        compileFor(wc);
 
     Log("\n%s\n", FormatSizeDistribution(workloadIds, opt.iterations).c_str());
 
@@ -259,8 +298,14 @@ int RunMain(int argc, wchar_t** argv)
         GpuRecord record;
         record.name = gpu.name;
         record.driver = gpu.driver;
+        record.waveLaneCountMin = gpu.waveLaneCountMin;
+        record.waveLaneCountMax = gpu.waveLaneCountMax;
+        record.waveSize = gpuWave[gi].size;
+        record.waveSizeAttribute = gpuWave[gi].attribute;
+        const std::vector<CompiledAlgorithm>& compiled = compileFor(gpuWave[gi]);
         const auto gpuStart = std::chrono::steady_clock::now();
-        Log("\n=== GPU %zu/%zu: %s ===\n", gi + 1, gpus.size(), gpu.name.c_str());
+        Log("\n=== GPU %zu/%zu: %s (WAVE_SIZE %u%s) ===\n", gi + 1, gpus.size(), gpu.name.c_str(),
+            gpuWave[gi].size, gpuWave[gi].attribute ? " + [WaveSize]" : "");
         std::unique_ptr<GpuBenchmark> benchPtr;
         try
         {

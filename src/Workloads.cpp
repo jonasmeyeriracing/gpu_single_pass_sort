@@ -11,6 +11,7 @@ enum WorkloadId : uint32_t
     kWorstCase = 4,
     kEdges = 5,
     kMostlyMid = 6,
+    kMostlyMedium = 7,
 };
 
 // Deterministic sizes around every size-tier boundary the shaders use (powers of two and their
@@ -57,6 +58,8 @@ uint32_t DrawSize(uint32_t workloadId, Pcg32& rng)
         return rng.Range(2048, 8192);
     case kMostlyMid:
         return rng.Range(513, 2048);
+    case kMostlyMedium:
+        return rng.Range(129, 512);
     case kWorstCase:
     default:
         return kMaxSortSize;
@@ -74,6 +77,7 @@ const std::vector<WorkloadDesc>& Workloads()
         {"worst_case", "all 8192"},
         {"edges", "tier boundaries 0-8192 (30 fixed sizes, cycled)"},
         {"mostly_mid", "uniform 513-2048"},
+        {"mostly_medium", "uniform 129-512"},
     };
     return list;
 }

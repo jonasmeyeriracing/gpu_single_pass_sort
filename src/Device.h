@@ -16,6 +16,9 @@ struct GpuInfo
     std::string driver;          // UMD driver version, e.g. "32.0.16.1088"
     uint64_t dedicatedVideoMemory = 0;
     bool isWarp = false;
+    // D3D12_FEATURE_DATA_D3D12_OPTIONS1 (0 if wave ops are not supported).
+    uint32_t waveLaneCountMin = 0;
+    uint32_t waveLaneCountMax = 0;
 };
 
 // Enables the D3D12 debug layer, optionally with GPU-based validation (must be called before any

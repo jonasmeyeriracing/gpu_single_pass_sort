@@ -13,6 +13,7 @@ struct Options
     std::vector<std::string> algorithms; // --algo name[,name]; empty = all registered
     std::vector<std::string> workloads;  // --workload name[,name]; empty = all
     std::string gpuFilter;               // --gpu <substring>; empty = all qualifying GPUs
+    uint32_t waveSize = 0;               // --wave-size N: compile with WAVE_SIZE=N + [WaveSize(N)]; 0 = device min
     bool warp = false;                   // --warp: run only on WARP (no prompt, no window)
     bool noPrompt = false;               // --no-prompt
     bool debugLayer = false;             // --debug: enable the D3D12 debug layer
