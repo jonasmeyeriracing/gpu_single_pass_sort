@@ -1,0 +1,29 @@
+[0] NVIDIA GeForce RTX 5080  LUID 00000000:00529DED  vendor 10DE device 2C02 subsys 209510DE rev 161  flags 0x0  vram 15977 MB  sysmem 0 MB  shared 104662 MB
+      desc3 flags 0x2C
+      KMT type 0x231B (render 1 display 1 software 0 indirectDisplay 0)  PCI 1:0.0
+      D3D12 device LUID 00000000:00529DED  highest SM 0x66  nodes 1  wave ops 1 lanes 32-32
+[1] NVIDIA GeForce RTX 2060  LUID 00000000:00538715  vendor 10DE device 1F08 subsys 868C1043 rev 161  flags 0x0  vram 5955 MB  sysmem 0 MB  shared 104662 MB
+      desc3 flags 0x2C
+      KMT type 0x2313 (render 1 display 1 software 0 indirectDisplay 0)  PCI 7:0.0
+      D3D12 device LUID 00000000:00538715  highest SM 0x66  nodes 1  wave ops 1 lanes 32-32
+[2] Microsoft Basic Render Driver  LUID 00000000:00051326  vendor 1414 device 008C subsys 00000000 rev 0  flags 0x0  vram 0 MB  sysmem 0 MB  shared 104662 MB
+      desc3 flags 0x2C
+      KMT type 0x106 (render 0 display 1 software 1 indirectDisplay 0)  PCI 4294967295:65535.65535
+      D3D12 device LUID 00000000:00051326  highest SM 0x66  nodes 1  wave ops 1 lanes 4-4
+[3] Microsoft Basic Render Driver  LUID 00000000:00051383  vendor 1414 device 008C subsys 00000000 rev 0  flags 0x2  vram 0 MB  sysmem 0 MB  shared 104662 MB
+      desc3 flags 0x2E
+      KMT type 0x105 (render 1 display 0 software 1 indirectDisplay 0)  PCI 4294967295:65535.65535
+      D3D12 device LUID 00000000:00051383  highest SM 0x66  nodes 1  wave ops 1 lanes 4-4
+[4] NVIDIA GeForce RTX 5080  LUID 00000000:00058E5B  vendor 10DE device 2C02 subsys 209510DE rev 161  flags 0x0  vram 15977 MB  sysmem 0 MB  shared 104662 MB
+      desc3 flags 0x2C
+      KMT type 0x342 (render 0 display 1 software 0 indirectDisplay 1)  PCI 4294967295:65535.65535
+      D3D12 device LUID 00000000:00058E5B  highest SM 0x66  nodes 1  wave ops 1 lanes 32-32
+
+Benchmark adapters (used by a hardware run):
+  [0] NVIDIA GeForce RTX 5080  vendor 10DE device 2C02  driver 32.0.16.1714  vram 15977 MB
+      wave lane range: min 32 max 32  integrated no  vendor 10DE
+  [1] NVIDIA GeForce RTX 2060  vendor 10DE device 1F08  driver 32.0.16.1714  vram 5955 MB
+      wave lane range: min 32 max 32  integrated no  vendor 10DE
+  skipped: Microsoft Basic Render Driver (LUID 00000000:00051326): indirect display / non-render adapter
+  skipped: Microsoft Basic Render Driver: software adapter
+  skipped: NVIDIA GeForce RTX 5080 (LUID 00000000:00058E5B): indirect display / non-render adapter

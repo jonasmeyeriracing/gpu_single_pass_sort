@@ -1,0 +1,16 @@
+GpuSort portable run on STIMULATOR, started 29/09/2026 15.29.40,55
+Mode: final
+No popups (noprompt): every GpuSort.exe run got --no-prompt
+Qualifying GPUs: 2 (details in adapters.txt)
+GPUs:
+  GPU [0] AMD Radeon RX 7900 XTX: discrete, vendor 1002, wave lanes 32-64, 1000 iterations
+  GPU [1] AMD Radeon(TM) Graphics: integrated, vendor 1002, wave lanes 32-64, 300 iterations
+Plan: 4 GPU runs of shaders\algorithms_final.txt (69 algorithms, default flush full_d50), estimated ~64.2 min
+  integrated GPU(s) with a wave size range: default wave size only (no igpu64)
+  smoke, then full: default wave size on every GPU, and --wave-size 64 on discrete GPU(s) only, --discrete-only
+No popups: 10 s countdown before the first GPU run
+[1/4: smoke final default wave size, every GPU] exit code 0 (ok) -> final_smoke.txt / final_smoke.log
+[2/4: smoke final wave64, discrete GPU only] exit code 0 (ok) -> final_smoke_wave64.txt / final_smoke_wave64.log
+[3/4: full final default wave size, every GPU] exit code 0 (ok) -> final.txt / final.log
+[4/4: full final wave64, discrete GPU only] exit code 0 (ok) -> final_wave64.txt / final_wave64.log
+Finished 29/09/2026 16.25.17,32, overall exit code 0

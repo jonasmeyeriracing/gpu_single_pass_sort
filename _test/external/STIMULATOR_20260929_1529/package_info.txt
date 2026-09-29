@@ -1,0 +1,12 @@
+GpuSort portable package GpuSort-portable-99a07b4
+Built:        2026-09-29 14:22:25 on JONAS-CPH
+Git commit:   99a07b4 (main) 2026-09-29 14:22:04 +0200 Final set: algorithms_final.txt, default flush full_d50, run_all.bat final, CSV schema 4
+Shader sets:
+    shaders\     (current)
+    _test\pass0
+    _test\pass1
+    _test\pass2
+    _test\pass3
+    _test\pass4
+    _test\pass5
+    _test\pass7

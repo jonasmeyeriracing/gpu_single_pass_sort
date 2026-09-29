@@ -1,0 +1,10 @@
+[1/2: smoke final default wave size, every GPU] final_smoke.txt
+      Wave probe: compiled without [WaveSize] (driver's choice), groups 64/128/256/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK, shflscan x8 OK, shflscan after if OK, shflscan after select OK
+      Wave probe verdict: OK, the sort shaders' configuration (WAVE_SIZE=32) runs with 32 lanes and lane = SV_GroupIndex % 32
+      Wave probe: compiled without [WaveSize] (driver's choice), groups 64/128/256/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK, shflscan x8 OK, shflscan after if OK, shflscan after select OK
+      Wave probe verdict: OK, the sort shaders' configuration (WAVE_SIZE=32) runs with 32 lanes and lane = SV_GroupIndex % 32
+[2/2: full final default wave size, every GPU] final.txt
+      Wave probe: compiled without [WaveSize] (driver's choice), groups 64/128/256/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK, shflscan x8 OK, shflscan after if OK, shflscan after select OK
+      Wave probe verdict: OK, the sort shaders' configuration (WAVE_SIZE=32) runs with 32 lanes and lane = SV_GroupIndex % 32
+      Wave probe: compiled without [WaveSize] (driver's choice), groups 64/128/256/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK, shflscan x8 OK, shflscan after if OK, shflscan after select OK
+      Wave probe verdict: OK, the sort shaders' configuration (WAVE_SIZE=32) runs with 32 lanes and lane = SV_GroupIndex % 32

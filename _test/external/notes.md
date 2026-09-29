@@ -23,7 +23,11 @@ failure) and `STIMULATOR_20260928_2131/wave_probe.log` (7 KB). Packages since 60
 CSV files (tools/CSV_FORMAT.md): kept are the results `*.csv` and `*_wave_probe.csv`, and the
 per-iteration `*_samples.csv` as long as a folder's files stay below ~5 MB zipped (both
 2026-09-29 folders: 0.5 and 1.8 MB zipped incl. the samples, so the samples are kept; 6 and 18 MB
-unpacked). Left out there as well: dxdiag.txt and every `*.log` (50-180 KB; no run failed).
+unpacked). Left out there as well: dxdiag.txt and every `*.log` (50-180 KB; no run failed). The two
+final-run folders (STIMULATOR_20260929_1529, JONAS-CPH_20260929_1658) leave out every
+`*_samples.csv` (156 and 134 MB); the samples of their benchmark runs are in
+_test/final/all_samples.csv.gz, the raw zips are `G:\My Drive\STIMULATOR_20260929_1529.zip` and
+`C:\Users\jonas\Desktop\GpuSort-portable-3ebe93b\results\JONAS-CPH_20260929_1658.zip`.
 
 | folder | GPUs | package (shaders) | mode | runs | result |
 |---|---|---|---|---|---|
@@ -33,6 +37,8 @@ unpacked). Left out there as well: dxdiag.txt and every `*.log` (50-180 KB; no r
 | IMS-MDETURCK_20260928_1226 | Intel UHD Graphics 770 | b8d5c19 (pass4 shaders) | `run_all.bat current`: smoke + full | 2 of 2 | exit 0, **0 verification failures** (150 combos x 1000 iterations); probe OK at 16 lanes |
 | STIMULATOR_20260929_1213 | 7900 XTX + Ryzen iGPU | 627724b (pass5 shaders, algorithms_diag_flush.txt) | `run_all.bat diag`: 300 iterations x mostly_empty / realistic_mix / worst_case, normal clocks + `--stable-power` | 2 of 2 | exit 0, 0 failures; the drain-length sweep (see below) |
 | STIMULATOR_20260929_1225 | 7900 XTX + Ryzen iGPU | 627724b (_test/pass7) | `run_all.bat pass7`: smoke + full (300 iterations), wave32 both GPUs + wave64 iGPU only | 4 of 4 | exit 0, **0 verification failures** (21 algorithms x 10 workloads, every run; smoke 24 algorithms) |
+| STIMULATOR_20260929_1529 | 7900 XTX + Ryzen iGPU | 99a07b4 (final set) | `run_all.bat final`: smoke + full (1000 iterations XTX, 300 iGPU), default wave32 both GPUs + wave64 XTX only | 4 of 4 | exit 0, **0 verification failures** (69 algorithm entries x 10 workloads, every run); see _test/final/notes.md |
+| JONAS-CPH_20260929_1658 | RTX 5080 + RTX 2060 | 3ebe93b (final set) | `run_all.bat final`: smoke + full (1000 iterations), wave32 | 2 of 2 | exit 0, **0 verification failures**; see _test/final/notes.md |
 
 ## Machines
 

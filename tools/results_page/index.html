@@ -1,0 +1,562 @@
+<title>Draw-Call Sort Benchmarks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; a filter row scopes the charts below it; charts stack full width. */
+:root {
+  --bg: #f7f8f9; --surface: #fcfcfb; --fg: #0e1116; --fg-2: #4d525b; --muted: #858a93;
+  --grid: #e3e5e8; --axis: #c3c6cc; --ring: rgba(14,17,22,0.10); --wash: rgba(42,120,214,0.08);
+  --accent: #2a78d6; --de: #b9bdc4;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
+  --q1: #e6eefa; --q2: #b7d3f6; --q3: #86b6ef; --q4: #5598e7; --q5: #2a78d6; --q6: #1c5cab; --q7: #104281;
+  --good: #006300;
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --step-0: 0.8125rem; --step-1: 0.9375rem; --step-2: 1.125rem; --step-3: 1.5rem; --step-4: 2rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111317; --surface: #1a1b1e; --fg: #f3f4f6; --fg-2: #c2c5cc; --muted: #8d929b;
+    --grid: #2a2c30; --axis: #3a3d42; --ring: rgba(255,255,255,0.10); --wash: rgba(57,135,229,0.14);
+    --accent: #3987e5; --de: #5a5e66;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+    --q1: #1f2733; --q2: #104281; --q3: #184f95; --q4: #1c5cab; --q5: #2a78d6; --q6: #5598e7; --q7: #9ec5f4;
+    --good: #0ca30c; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111317; --surface: #1a1b1e; --fg: #f3f4f6; --fg-2: #c2c5cc; --muted: #8d929b;
+  --grid: #2a2c30; --axis: #3a3d42; --ring: rgba(255,255,255,0.10); --wash: rgba(57,135,229,0.14);
+  --accent: #3987e5; --de: #5a5e66;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+  --q1: #1f2733; --q2: #104281; --q3: #184f95; --q4: #1c5cab; --q5: #2a78d6; --q6: #5598e7; --q7: #9ec5f4;
+  --good: #0ca30c; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: var(--step-1); line-height: 1.5; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-inline: 20px; padding-block: 32px 64px; display: grid; gap: 28px; }
+h1, h2, h3 { text-wrap: balance; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+h1 { font-size: var(--step-4); line-height: 1.15; }
+h2 { font-size: var(--step-2); }
+p { margin: 0; max-width: 68ch; }
+.lede { color: var(--fg-2); display: grid; gap: 8px; }
+.eyebrow { font-family: var(--font-data); font-size: var(--step-0); color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+.meta { font-family: var(--font-data); font-size: var(--step-0); color: var(--muted); }
+.ok { color: var(--good); font-weight: 500; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 14px 16px; display: grid; gap: 4px; min-width: 0; }
+.tile .name { font-size: var(--step-0); color: var(--fg-2); display: flex; align-items: center; gap: 8px; }
+.tile .key { width: 14px; height: 2px; border-radius: 1px; flex: none; }
+.tile .val { font-size: var(--step-3); font-weight: 600; line-height: 1.2; }
+.tile .val small { font-size: var(--step-0); font-weight: 400; color: var(--muted); margin-left: 2px; }
+.tile .delta { font-size: var(--step-0); color: var(--fg-2); }
+.tile .delta b { color: var(--good); font-weight: 600; }
+.tile .algo { font-family: var(--font-data); font-size: 0.75rem; color: var(--muted); overflow-wrap: anywhere; word-break: break-word; }
+
+.filters { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: end; position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--bg); padding-block: 10px; border-bottom: 1px solid var(--grid); }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field label { font-size: var(--step-0); color: var(--fg-2); }
+select { font: inherit; font-size: var(--step-0); color: var(--fg); background: var(--surface); border: 1px solid var(--axis); border-radius: 6px; padding: 6px 28px 6px 10px; max-width: 100%; }
+select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.seg { display: inline-flex; border: 1px solid var(--axis); border-radius: 6px; overflow: hidden; }
+.seg button { font: inherit; font-size: var(--step-0); background: var(--surface); color: var(--fg-2); border: 0; padding: 6px 10px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--wash); color: var(--fg); font-weight: 500; }
+
+.card { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px; padding: 20px; display: grid; gap: 14px; min-width: 0; }
+.card header { display: grid; gap: 4px; }
+.card header p { color: var(--fg-2); font-size: var(--step-0); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: var(--step-0); color: var(--fg-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 16px; height: 2px; border-radius: 1px; display: inline-block; }
+.legend i.box { width: 10px; height: 10px; border-radius: 2px; }
+.chart { width: 100%; overflow-x: auto; }
+svg { display: block; }
+svg text { font-family: var(--font-data); font-size: 11px; fill: var(--muted); }
+svg .lbl { fill: var(--fg-2); }
+svg .lbl-strong { fill: var(--fg); font-weight: 500; }
+.gridline { stroke: var(--grid); stroke-width: 1; shape-rendering: crispEdges; }
+.axisline { stroke: var(--axis); stroke-width: 1; shape-rendering: crispEdges; }
+
+.tip { position: fixed; pointer-events: none; z-index: 20; background: var(--surface); color: var(--fg); border: 1px solid var(--ring);
+  border-radius: 8px; padding: 8px 10px; font-size: var(--step-0); box-shadow: 0 6px 20px rgba(0,0,0,0.12); max-width: 320px; display: grid; gap: 3px; }
+.tip .t-head { color: var(--fg-2); font-size: 0.75rem; }
+.tip .row { display: flex; align-items: center; gap: 8px; }
+.tip .row i { width: 12px; height: 2px; border-radius: 1px; flex: none; }
+.tip .row b { font-family: var(--font-data); font-weight: 500; min-width: 64px; }
+.tip .row span { color: var(--fg-2); overflow-wrap: anywhere; }
+
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: var(--step-0); }
+th, td { padding: 6px 10px; border-bottom: 1px solid var(--grid); text-align: right; white-space: nowrap; }
+th { color: var(--fg-2); font-weight: 500; position: sticky; top: 0; background: var(--surface); }
+td { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+td.best { color: var(--fg); font-weight: 600; }
+td.name { font-family: var(--font-data); color: var(--fg); }
+tr.rec td.name::after { content: " ★"; color: var(--accent); }
+details summary { cursor: pointer; color: var(--fg-2); font-size: var(--step-0); }
+.notes { display: grid; gap: 8px; color: var(--fg-2); font-size: var(--step-0); }
+.notes li { max-width: 80ch; }
+@media (prefers-reduced-motion: no-preference) { .fade { transition: opacity .2s ease; } }
+</style>
+
+<div class="wrap">
+  <header class="lede">
+    <div class="eyebrow">gpu_single_pass_sort · final run · September 2026</div>
+    <h1>Draw-Call Sort Benchmarks</h1>
+    <p>Each measurement is one batch of 20 independent sorts (0 to 8,192 elements each, 16-bit key with a 16-bit payload), dispatched without barriers and timed with GPU timestamps around the sort dispatches only. Values are medians over 1,000 batches on discrete GPUs and 300 on the integrated GPU, with the data evicted from the caches before every batch.</p>
+    <p class="meta" id="runmeta"></p>
+  </header>
+
+
+  <div class="filters" role="group" aria-label="Filters">
+    <div class="field">
+      <label for="f-workload">Workload</label>
+      <select id="f-workload"></select>
+    </div>
+    <div class="field">
+      <label for="f-gpu">GPU (size and algorithm charts)</label>
+      <select id="f-gpu"></select>
+    </div>
+    <div class="field">
+      <label for="f-algo">Compare algorithm (size chart)</label>
+      <select id="f-algo"></select>
+    </div>
+    <div class="field">
+      <span id="f-scale-l" style="font-size:var(--step-0);color:var(--fg-2)">Time axis</span>
+      <div class="seg" role="group" aria-labelledby="f-scale-l">
+        <button type="button" id="f-log" aria-pressed="true">Log</button>
+        <button type="button" id="f-lin" aria-pressed="false">Linear</button>
+      </div>
+    </div>
+  </div>
+
+
+  <section aria-labelledby="tiles-h" style="display:grid;gap:10px">
+    <h2 id="tiles-h" style="font-size:var(--step-1)">Recommended configuration vs. the pass0 baseline</h2>
+    <div class="tiles" id="tiles"></div>
+  </section>
+
+  <section class="card" aria-labelledby="c1-h">
+    <header>
+      <h2 id="c1-h">Best time reached by each pass</h2>
+      <p id="c1-sub"></p>
+    </header>
+    <div class="legend" id="c1-legend"></div>
+    <div class="chart" id="c1"></div>
+  </section>
+
+  <section class="card" aria-labelledby="c2-h">
+    <header>
+      <h2 id="c2-h">Batch time by sort size</h2>
+      <p id="c2-sub"></p>
+    </header>
+    <div class="legend" id="c2-legend"></div>
+    <div class="chart" id="c2"></div>
+  </section>
+
+  <section class="card" aria-labelledby="c3-h">
+    <header>
+      <h2 id="c3-h">Every algorithm, ranked</h2>
+      <p id="c3-sub"></p>
+    </header>
+    <div class="legend" id="c3-legend"></div>
+    <div class="chart" id="c3"></div>
+  </section>
+
+  <section class="card" aria-labelledby="c4-h">
+    <header>
+      <h2 id="c4-h">Slowdown against the best algorithm on each GPU</h2>
+      <p id="c4-sub"></p>
+    </header>
+    <div class="legend" id="c4-legend"></div>
+    <div class="chart" id="c4"></div>
+  </section>
+
+  <section class="card" aria-labelledby="t-h">
+    <header>
+      <h2 id="t-h">Table</h2>
+      <p id="t-sub"></p>
+    </header>
+    <div class="tablewrap" id="table"></div>
+  </section>
+
+  <section class="notes" aria-labelledby="n-h">
+    <h2 id="n-h" style="font-size:var(--step-1);color:var(--fg)">How to read this</h2>
+    <ul id="notes" style="margin:0;padding-left:18px;display:grid;gap:6px"></ul>
+  </section>
+</div>
+<div class="tip" id="tip" hidden></div>
+
+<script src="data.js"></script>
+<script>
+(function () {
+  const D = window.SORT_DATA;
+  const $ = (id) => document.getElementById(id);
+  const NS = "http://www.w3.org/2000/svg";
+  const WL_LABEL = {
+    mostly_empty: "Mostly empty (70% empty, rest ≤ 64)", mostly_small: "Mostly small (0–128)",
+    mostly_medium: "Mostly medium (129–512)", mostly_mid: "Mostly mid (513–2,048)",
+    realistic_mix: "Realistic mix", mostly_large: "Mostly large (2,048–8,192)",
+    worst_case: "Worst case (20 × 8,192)", edges: "Tier edges (fixed boundary sizes)",
+    sparse_keys: "Sparse keys (constant digits)"
+  };
+  const PASS_LABEL = { 0: "pass0 · LDS bitonic baseline", 1: "pass1 · size tiers + rank sort",
+    2: "pass2 · register bitonic + radix", 3: "pass3 · radix2, mid tier", 4: "pass4 · 4-tier, rolled radix",
+    5: "pass5 · measurement method", 7: "pass7 · low-end / integrated" };
+  const SERIES = ["--s1", "--s2", "--s3", "--s4", "--s5"];
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const col = (name) => D.cols.indexOf(name);
+  const med = (ci, ai, c) => { const v = D.values[ci][ai][c]; return v ? v[2] : null; };
+  const algoIdx = (id) => D.algos.findIndex((a) => a.id === id);
+  const isMethod = (a) => a.tags.includes("method") || a.id.includes("@");
+  const recFor = (cfg) => cfg.integrated ? "m4_b128_p" : "s1_rank512_bitreg2048_radix";
+  const fmt = (v) => v == null ? "–" : v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
+
+  const state = { workload: "realistic_mix", cfg: 0, algo: "s1_radix", log: true };
+  try { const s = JSON.parse(localStorage.getItem("sortviz") || "{}"); Object.assign(state, s); } catch (e) {}
+  const save = () => { try { localStorage.setItem("sortviz", JSON.stringify(state)); } catch (e) {} };
+
+  // ---------- helpers ----------
+  function el(tag, attrs, parent) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function text(parent, x, y, str, cls, anchor) {
+    const t = el("text", { x, y, class: cls || "", "text-anchor": anchor || "start" }, parent);
+    t.textContent = str;
+    return t;
+  }
+  function scaleY(lo, hi, h, log) {
+    if (log) {
+      const a = Math.log10(lo), b = Math.log10(hi);
+      return { f: (v) => h - (Math.log10(v) - a) / (b - a) * h, ticks: logTicks(lo, hi) };
+    }
+    const nice = niceMax(hi);
+    return { f: (v) => h - v / nice * h, ticks: linTicks(nice) };
+  }
+  function niceMax(v) { const p = Math.pow(10, Math.floor(Math.log10(v))); const m = v / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p; }
+  function linTicks(max) { const n = 5, out = []; for (let i = 0; i <= n; i++) out.push(max * i / n); return out; }
+  function logTicks(lo, hi) {
+    const out = []; for (let e = Math.floor(Math.log10(lo)); e <= Math.ceil(Math.log10(hi)); e++)
+      for (const m of [1, 2, 5]) { const v = m * Math.pow(10, e); if (v >= lo * 0.999 && v <= hi * 1.001) out.push(v); }
+    return out;
+  }
+  function logBounds(vals) {
+    const lo = Math.min(...vals), hi = Math.max(...vals);
+    return [Math.pow(10, Math.floor(Math.log10(lo) * 2) / 2), Math.pow(10, Math.ceil(Math.log10(hi) * 2) / 2)];
+  }
+  const tip = $("tip");
+  function showTip(evt, head, rows) {
+    tip.replaceChildren();
+    const h = document.createElement("div"); h.className = "t-head"; h.textContent = head; tip.appendChild(h);
+    for (const r of rows) {
+      const row = document.createElement("div"); row.className = "row";
+      const i = document.createElement("i"); i.style.background = r.color || "transparent"; row.appendChild(i);
+      const b = document.createElement("b"); b.textContent = r.value; row.appendChild(b);
+      const s = document.createElement("span"); s.textContent = r.label; row.appendChild(s);
+      tip.appendChild(row);
+    }
+    tip.hidden = false;
+    const pad = 14, w = tip.offsetWidth, hgt = tip.offsetHeight;
+    let x = evt.clientX + pad, y = evt.clientY + pad;
+    if (x + w > window.innerWidth - 8) x = evt.clientX - w - pad;
+    if (y + hgt > window.innerHeight - 8) y = evt.clientY - hgt - pad;
+    tip.style.left = Math.max(8, x) + "px"; tip.style.top = Math.max(8, y) + "px";
+  }
+  const hideTip = () => { tip.hidden = true; };
+  function legend(node, items, box) {
+    node.replaceChildren();
+    for (const it of items) {
+      const s = document.createElement("span"); const i = document.createElement("i");
+      if (box) i.className = "box"; i.style.background = it.color; s.appendChild(i);
+      s.appendChild(document.createTextNode(it.label)); node.appendChild(s);
+    }
+  }
+
+  // ---------- header, tiles, filters ----------
+  const commits = [...new Set(D.cfgs.map((c) => c.commit))];
+  $("runmeta").textContent = D.cfgs.map((c) => `${c.label} (${c.machine}, driver ${c.driver})`).join(" · ") +
+    ` · package ${commits.join(" / ")} · `;
+  const okSpan = document.createElement("span"); okSpan.className = "ok";
+  okSpan.textContent = D.fails === 0 ? "0 verification failures" : `${D.fails} verification failures`;
+  $("runmeta").appendChild(okSpan);
+
+  function renderTiles() {
+    const c = col(state.workload), base = algoIdx("pass0_bitonic");
+    const box = $("tiles"); box.replaceChildren();
+    D.cfgs.forEach((cfg, ci) => {
+      const ai = algoIdx(recFor(cfg)), v = med(ci, ai, c), b = med(ci, base, c);
+      const t = document.createElement("div"); t.className = "tile";
+      const n = document.createElement("div"); n.className = "name";
+      const k = document.createElement("span"); k.className = "key"; k.style.background = `var(${SERIES[ci % 5]})`;
+      n.appendChild(k); n.appendChild(document.createTextNode(cfg.label)); t.appendChild(n);
+      const val = document.createElement("div"); val.className = "val"; val.textContent = fmt(v);
+      const u = document.createElement("small"); u.textContent = "µs"; val.appendChild(u); t.appendChild(val);
+      const d = document.createElement("div"); d.className = "delta";
+      const bb = document.createElement("b"); const rr = b / v; bb.textContent = rr >= 1 ? rr.toFixed(1) + "× faster" : (1 / rr).toFixed(1) + "× slower"; if (rr < 1) bb.style.color = "var(--fg)";
+      d.appendChild(bb); d.appendChild(document.createTextNode(` than pass0 (${fmt(b)} µs)`)); t.appendChild(d);
+      const a = document.createElement("div"); a.className = "algo"; a.textContent = recFor(cfg) + (cfg.integrated ? " · integrated" : " · discrete");
+      t.appendChild(a);
+      box.appendChild(t);
+    });
+  }
+
+  const fW = $("f-workload");
+  for (const w of D.workloads) { const o = document.createElement("option"); o.value = w; o.textContent = WL_LABEL[w] || w; fW.appendChild(o); }
+  const fG = $("f-gpu");
+  D.cfgs.forEach((c, i) => { const o = document.createElement("option"); o.value = i; o.textContent = c.label; fG.appendChild(o); });
+  const fA = $("f-algo");
+  D.algos.filter((a) => !isMethod(a)).forEach((a) => { const o = document.createElement("option"); o.value = a.id; o.textContent = `pass${a.pass} · ${a.id}`; fA.appendChild(o); });
+  if (!D.workloads.includes(state.workload)) state.workload = "realistic_mix";
+  if (!(state.cfg >= 0 && state.cfg < D.cfgs.length)) state.cfg = 0;
+  if (algoIdx(state.algo) < 0) state.algo = "s1_radix";
+  fW.value = state.workload; fG.value = state.cfg; fA.value = state.algo;
+  fW.addEventListener("change", () => { state.workload = fW.value; save(); renderAll(); });
+  fG.addEventListener("change", () => { state.cfg = +fG.value; save(); renderAll(); });
+  fA.addEventListener("change", () => { state.algo = fA.value; save(); renderAll(); });
+  function setScale(log) { state.log = log; $("f-log").setAttribute("aria-pressed", log); $("f-lin").setAttribute("aria-pressed", !log); save(); renderAll(); }
+  $("f-log").addEventListener("click", () => setScale(true));
+  $("f-lin").addEventListener("click", () => setScale(false));
+  $("f-log").setAttribute("aria-pressed", state.log); $("f-lin").setAttribute("aria-pressed", !state.log);
+
+  // ---------- chart 1: best per pass ----------
+  function renderPasses() {
+    const node = $("c1"); node.replaceChildren();
+    const c = col(state.workload);
+    const passes = [...new Set(D.algos.filter((a) => !isMethod(a)).map((a) => a.pass))].sort((a, b) => a - b);
+    const series = D.cfgs.map((cfg, ci) => {
+      let best = null; const pts = [];
+      for (const p of passes) {
+        D.algos.forEach((a, ai) => {
+          if (a.pass !== p || isMethod(a)) return;
+          const v = med(ci, ai, c);
+          if (v != null && (!best || v < best.v)) best = { v, algo: a.id, pass: a.pass };
+        });
+        pts.push({ pass: p, v: best.v, algo: best.algo, from: best.pass });
+      }
+      return { ci, label: cfg.label, color: css(SERIES[ci % 5]), pts };
+    });
+    legend($("c1-legend"), series.map((s) => ({ label: s.label, color: s.color })));
+    $("c1-sub").textContent = `${WL_LABEL[state.workload]}. For each GPU, the fastest algorithm available up to that pass (median µs per batch of 20 sorts). Pass 5 changed only the measurement method and pass 6 added diagnostics, so they have no new sort algorithms.`;
+    const W = Math.max(560, node.clientWidth || 900), H = 300, m = { l: 56, r: 150, t: 12, b: 34 };
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const svg = el("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Best batch time per pass for each GPU" }, node);
+    const g = el("g", { transform: `translate(${m.l},${m.t})` }, svg);
+    const all = series.flatMap((s) => s.pts.map((p) => p.v));
+    const [lo, hi] = state.log ? logBounds(all) : [0, Math.max(...all) * 1.05];
+    const sy = scaleY(lo, hi, ih, state.log);
+    const x = (i) => passes.length === 1 ? iw / 2 : i / (passes.length - 1) * iw;
+    for (const t of sy.ticks) { el("line", { x1: 0, x2: iw, y1: sy.f(t), y2: sy.f(t), class: "gridline" }, g); text(g, -8, sy.f(t) + 4, fmt(t), "", "end"); }
+    el("line", { x1: 0, x2: iw, y1: ih, y2: ih, class: "axisline" }, g);
+    passes.forEach((p, i) => text(g, x(i), ih + 20, "pass" + p, "lbl", "middle"));
+    // lines
+    const ends = [];
+    for (const s of series) {
+      const d = s.pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${sy.f(p.v).toFixed(1)}`).join("");
+      el("path", { d, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, g);
+      s.pts.forEach((p, i) => el("circle", { cx: x(i), cy: sy.f(p.v), r: 4, fill: s.color, stroke: css("--surface"), "stroke-width": 2 }, g));
+      const last = s.pts[s.pts.length - 1];
+      ends.push({ y: sy.f(last.v), label: `${s.label}  ${fmt(last.v)}`, color: s.color });
+    }
+    // end labels with leader lines, de-collided
+    ends.sort((a, b) => a.y - b.y);
+    const minGap = 15; let prev = -Infinity;
+    for (const e of ends) { e.ly = Math.max(e.y, prev + minGap); prev = e.ly; }
+    const overflow = prev - ih; if (overflow > 0) for (const e of ends) e.ly -= overflow;
+    for (const e of ends) {
+      el("path", { d: `M${iw + 6},${e.y} L${iw + 14},${e.ly}`, stroke: css("--axis"), "stroke-width": 1, fill: "none" }, g);
+      text(g, iw + 18, e.ly + 4, e.label, "lbl");
+    }
+    // hover: crosshair snaps to nearest pass
+    const hair = el("line", { x1: 0, x2: 0, y1: 0, y2: ih, stroke: css("--axis"), "stroke-width": 1, visibility: "hidden" }, g);
+    const hit = el("rect", { x: -10, y: 0, width: iw + 20, height: ih, fill: "transparent", tabindex: 0, "aria-label": "Hover or focus for values per pass" }, g);
+    function at(evt, i) {
+      hair.setAttribute("x1", x(i)); hair.setAttribute("x2", x(i)); hair.setAttribute("visibility", "visible");
+      showTip(evt, `Up to pass${passes[i]} · ${PASS_LABEL[passes[i]] ? PASS_LABEL[passes[i]].split(" · ")[1] : ""}`,
+        series.map((s) => ({ color: s.color, value: fmt(s.pts[i].v) + " µs", label: `${s.label} · ${s.pts[i].algo}` })));
+    }
+    hit.addEventListener("pointermove", (evt) => {
+      const r = svg.getBoundingClientRect(); const px = evt.clientX - r.left - m.l;
+      const i = Math.max(0, Math.min(passes.length - 1, Math.round(px / (iw / Math.max(1, passes.length - 1)))));
+      at(evt, i);
+    });
+    hit.addEventListener("pointerleave", () => { hair.setAttribute("visibility", "hidden"); hideTip(); });
+    hit.addEventListener("focus", () => { const r = svg.getBoundingClientRect(); at({ clientX: r.left + m.l + x(passes.length - 1), clientY: r.top + m.t }, passes.length - 1); });
+    hit.addEventListener("blur", () => { hair.setAttribute("visibility", "hidden"); hideTip(); });
+  }
+
+  // ---------- chart 2: sweep ----------
+  function renderSweep() {
+    const node = $("c2"); node.replaceChildren();
+    const ci = state.cfg, cfg = D.cfgs[ci];
+    const picks = [
+      { id: "pass0_bitonic", label: "pass0 baseline" },
+      { id: "s1_rank512_bitreg2048_radix", label: "recommended, discrete" },
+      { id: "m4_b128_p", label: "recommended, integrated" },
+    ];
+    if (!picks.some((p) => p.id === state.algo)) picks.push({ id: state.algo, label: "selected" });
+    const colors = ["--de", "--s6", "--s7", "--s8"].map(css);
+    const series = picks.map((p, k) => {
+      const ai = algoIdx(p.id);
+      return { ...p, color: colors[k], pts: D.sweep.map((s) => ({ s, v: med(ci, ai, col("sweep:" + s)) })).filter((q) => q.v != null) };
+    });
+    legend($("c2-legend"), series.map((s) => ({ label: `${s.id} (${s.label})`, color: s.color })));
+    $("c2-sub").textContent = `${cfg.label}. All 20 sorts in the batch have the same size; median µs per batch. The sort size axis is logarithmic.`;
+    const W = Math.max(560, node.clientWidth || 900), H = 300, m = { l: 56, r: 24, t: 12, b: 38 };
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const svg = el("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Batch time by sort size" }, node);
+    const g = el("g", { transform: `translate(${m.l},${m.t})` }, svg);
+    const all = series.flatMap((s) => s.pts.map((p) => p.v));
+    const [lo, hi] = state.log ? logBounds(all) : [0, Math.max(...all) * 1.05];
+    const sy = scaleY(lo, hi, ih, state.log);
+    const lx0 = Math.log2(D.sweep[0]), lx1 = Math.log2(D.sweep[D.sweep.length - 1]);
+    const x = (s) => (Math.log2(s) - lx0) / (lx1 - lx0) * iw;
+    for (const t of sy.ticks) { el("line", { x1: 0, x2: iw, y1: sy.f(t), y2: sy.f(t), class: "gridline" }, g); text(g, -8, sy.f(t) + 4, fmt(t), "", "end"); }
+    el("line", { x1: 0, x2: iw, y1: ih, y2: ih, class: "axisline" }, g);
+    for (const s of [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]) text(g, x(s), ih + 18, s >= 1024 ? (s / 1024) + "k" : s, "lbl", "middle");
+    text(g, iw, ih + 34, "elements per sort", "", "end");
+    for (const s of series) {
+      const d = s.pts.map((p, i) => `${i ? "L" : "M"}${x(p.s).toFixed(1)},${sy.f(p.v).toFixed(1)}`).join("");
+      el("path", { d, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, g);
+      const last = s.pts[s.pts.length - 1];
+      el("circle", { cx: x(last.s), cy: sy.f(last.v), r: 4, fill: s.color, stroke: css("--surface"), "stroke-width": 2 }, g);
+    }
+    const hair = el("line", { x1: 0, x2: 0, y1: 0, y2: ih, stroke: css("--axis"), "stroke-width": 1, visibility: "hidden" }, g);
+    const hit = el("rect", { x: -10, y: 0, width: iw + 20, height: ih, fill: "transparent", tabindex: 0, "aria-label": "Hover or focus for values per sort size" }, g);
+    function at(evt, s) {
+      hair.setAttribute("x1", x(s)); hair.setAttribute("x2", x(s)); hair.setAttribute("visibility", "visible");
+      showTip(evt, `${s.toLocaleString()} elements per sort · ${cfg.label}`,
+        series.map((q) => { const p = q.pts.find((z) => z.s === s); return { color: q.color, value: p ? fmt(p.v) + " µs" : "–", label: q.id }; }));
+    }
+    hit.addEventListener("pointermove", (evt) => {
+      const r = svg.getBoundingClientRect(); const px = evt.clientX - r.left - m.l;
+      let best = D.sweep[0], bd = Infinity; for (const s of D.sweep) { const dd = Math.abs(x(s) - px); if (dd < bd) { bd = dd; best = s; } }
+      at(evt, best);
+    });
+    hit.addEventListener("pointerleave", () => { hair.setAttribute("visibility", "hidden"); hideTip(); });
+    hit.addEventListener("focus", () => { const r = svg.getBoundingClientRect(); const s = 2048; at({ clientX: r.left + m.l + x(s), clientY: r.top + m.t }, s); });
+    hit.addEventListener("blur", () => { hair.setAttribute("visibility", "hidden"); hideTip(); });
+  }
+
+  // ---------- chart 3: ranked bars for one GPU ----------
+  function renderBars() {
+    const node = $("c3"); node.replaceChildren();
+    const ci = state.cfg, cfg = D.cfgs[ci], c = col(state.workload);
+    const rows = D.algos.map((a, ai) => ({ a, v: D.values[ci][ai][c] })).filter((r) => r.v).sort((p, q) => p.v[2] - q.v[2]);
+    const rec = recFor(cfg);
+    const accent = css("--accent"), de = css("--de");
+    legend($("c3-legend"), [{ label: "recommended for this GPU class", color: accent }, { label: "other algorithms", color: de }, { label: "line: 25th–75th percentile · tick: 95th percentile", color: css("--fg-2") }], true);
+    $("c3-sub").textContent = `${cfg.label} · ${WL_LABEL[state.workload]}. Bars show the median batch time on a linear axis from zero (the log/linear switch applies to the line charts); ${rows.length} algorithms, fastest first.`;
+    const rowH = 20, W = Math.max(560, node.clientWidth || 900), m = { l: 300, r: 70, t: 20, b: 8 };
+    const H = m.t + m.b + rows.length * rowH, iw = W - m.l - m.r;
+    const svg = el("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Algorithms ranked by median batch time" }, node);
+    const g = el("g", { transform: `translate(${m.l},${m.t})` }, svg);
+    const maxV = Math.max(...rows.map((r) => r.v[5] || r.v[2]));
+    const nmax = niceMax(maxV); const sx = (v) => v / nmax * iw; const ticks = linTicks(nmax);
+    for (const t of ticks) { const X = sx(t); el("line", { x1: X, x2: X, y1: -6, y2: rows.length * rowH, class: "gridline" }, g); text(g, X, -8, fmt(t), "", "middle"); }
+    rows.forEach((r, i) => {
+      const y = i * rowH, isRec = r.a.id === rec, h = 10;
+      const row = el("g", { tabindex: 0, "aria-label": `${r.a.id}: ${fmt(r.v[2])} microseconds` }, g);
+      el("rect", { x: -m.l, y: y, width: W, height: rowH, fill: "transparent" }, row);
+      const nm = text(row, -10, y + rowH / 2 + 4, r.a.id, isRec ? "lbl-strong" : "lbl", "end");
+      text(row, -m.l + 4, y + rowH / 2 + 4, "p" + r.a.pass, "", "start");
+      const w = Math.max(2, sx(r.v[2]));
+      el("path", { d: roundEnd(0, y + (rowH - h) / 2, w, h), fill: isRec ? accent : de }, row);
+      if (r.v[1] != null && r.v[4] != null) el("line", { x1: sx(r.v[1]), x2: sx(r.v[4]), y1: y + rowH / 2, y2: y + rowH / 2, stroke: css("--fg-2"), "stroke-width": 1.5 }, row);
+      if (r.v[5] != null) el("line", { x1: sx(r.v[5]), x2: sx(r.v[5]), y1: y + 4, y2: y + rowH - 4, stroke: css("--fg-2"), "stroke-width": 1.5 }, row);
+      text(row, Math.max(w, r.v[5] != null ? sx(r.v[5]) : 0) + 6, y + rowH / 2 + 4, fmt(r.v[2]), isRec ? "lbl-strong" : "lbl");
+      const on = (evt) => showTip(evt, `${r.a.id} · pass${r.a.pass}`, [
+        { value: fmt(r.v[2]) + " µs", label: "median", color: isRec ? accent : de },
+        { value: fmt(r.v[1]) + "–" + fmt(r.v[4]), label: "25th–75th percentile" },
+        { value: fmt(r.v[5]) + " µs", label: "95th percentile" },
+        { value: fmt(r.v[0]) + " µs", label: "fastest batch" },
+        { value: "", label: r.a.desc }]);
+      row.addEventListener("pointermove", on);
+      row.addEventListener("focus", () => { const b = nm.getBoundingClientRect(); on({ clientX: b.right, clientY: b.bottom }); });
+      row.addEventListener("pointerleave", hideTip); row.addEventListener("blur", hideTip);
+    });
+  }
+  function roundEnd(x, y, w, h) { const r = Math.min(4, w / 2, h / 2); return `M${x},${y} H${x + w - r} Q${x + w},${y} ${x + w},${y + r} V${y + h - r} Q${x + w},${y + h} ${x + w - r},${y + h} H${x} Z`; }
+
+  // ---------- chart 4: heatmap ----------
+  function renderHeat() {
+    const node = $("c4"); node.replaceChildren();
+    const c = col(state.workload);
+    const best = D.cfgs.map((_, ci) => Math.min(...D.algos.map((a, ai) => isMethod(a) ? Infinity : (med(ci, ai, c) ?? Infinity))));
+    const algos = D.algos.map((a, ai) => ({ a, ai })).filter((r) => !isMethod(r.a));
+    const bins = [1.05, 1.25, 1.5, 2, 3, 5];
+    const ramp = ["--q1", "--q2", "--q3", "--q4", "--q5", "--q6", "--q7"].map(css);
+    const binOf = (r) => { let i = 0; while (i < bins.length && r > bins[i]) i++; return i; };
+    legend($("c4-legend"), ["≤ 1.05×", "≤ 1.25×", "≤ 1.5×", "≤ 2×", "≤ 3×", "≤ 5×", "> 5×"].map((l, i) => ({ label: l, color: ramp[i] })), true);
+    $("c4-sub").textContent = `${WL_LABEL[state.workload]}. Each cell is that algorithm's median divided by the fastest algorithm on the same GPU; darker is slower. Method variants (flush modes) are left out.`;
+    const cw = 118, rh = 18, m = { l: 300, r: 8, t: 34, b: 6 };
+    const W = m.l + m.r + cw * D.cfgs.length, H = m.t + m.b + rh * algos.length;
+    const svg = el("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Slowdown heatmap, algorithms by GPU" }, node);
+    const g = el("g", { transform: `translate(${m.l},${m.t})` }, svg);
+    D.cfgs.forEach((cfg, ci) => text(g, ci * cw + cw / 2, -14, cfg.label, "lbl", "middle"));
+    algos.forEach((r, i) => {
+      const y = i * rh;
+      text(g, -10, y + rh / 2 + 4, r.a.id, "lbl", "end");
+      text(g, -m.l + 4, y + rh / 2 + 4, "p" + r.a.pass, "", "start");
+      D.cfgs.forEach((cfg, ci) => {
+        const v = med(ci, r.ai, c); if (v == null) return;
+        const ratio = v / best[ci], b = binOf(ratio);
+        const cell = el("rect", { x: ci * cw + 1, y: y + 1, width: cw - 2, height: rh - 2, rx: 2, fill: ramp[b], tabindex: 0 }, g);
+        const dark = document.documentElement.matches("[data-theme=dark]") || (matchMedia("(prefers-color-scheme: dark)").matches && !document.documentElement.matches("[data-theme=light]"));
+        const t = text(g, ci * cw + cw / 2, y + rh / 2 + 4, ratio < 1.005 ? "best" : ratio.toFixed(2) + "×", "", "middle");
+        t.style.fill = dark ? (b >= 6 ? "#0b0b0b" : "#f3f4f6") : (b >= 4 ? "#ffffff" : "#0e1116");
+        t.style.pointerEvents = "none";
+        const on = (evt) => showTip(evt, `${r.a.id} · ${cfg.label}`, [
+          { value: fmt(v) + " µs", label: "median", color: ramp[b] },
+          { value: ratio.toFixed(2) + "×", label: `of the fastest (${fmt(best[ci])} µs)` }]);
+        cell.addEventListener("pointermove", on);
+        cell.addEventListener("focus", () => { const bb = cell.getBoundingClientRect(); on({ clientX: bb.right, clientY: bb.bottom }); });
+        cell.addEventListener("pointerleave", hideTip); cell.addEventListener("blur", hideTip);
+      });
+    });
+  }
+
+  // ---------- table ----------
+  function renderTable() {
+    const c = col(state.workload);
+    $("t-sub").textContent = `${WL_LABEL[state.workload]}. Median µs per batch of 20 sorts; bold marks the fastest on each GPU; ★ marks the two recommended configurations.`;
+    const best = D.cfgs.map((_, ci) => Math.min(...D.algos.map((a, ai) => med(ci, ai, c) ?? Infinity)));
+    const t = document.createElement("table");
+    const hr = document.createElement("tr");
+    for (const h of ["Algorithm", "Pass", ...D.cfgs.map((x) => x.label)]) { const th = document.createElement("th"); th.textContent = h; hr.appendChild(th); }
+    const thead = document.createElement("thead"); thead.appendChild(hr); t.appendChild(thead);
+    const tb = document.createElement("tbody");
+    D.algos.forEach((a, ai) => {
+      const tr = document.createElement("tr"); if (a.tags.some((x) => x.startsWith("rec_"))) tr.className = "rec";
+      const n = document.createElement("td"); n.className = "name"; n.textContent = a.id; n.title = a.desc; tr.appendChild(n);
+      const p = document.createElement("td"); p.textContent = a.pass; tr.appendChild(p);
+      D.cfgs.forEach((_, ci) => { const td = document.createElement("td"); const v = med(ci, ai, c); td.textContent = fmt(v); if (v != null && v <= best[ci] * 1.0001) td.className = "best"; tr.appendChild(td); });
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);
+    $("table").replaceChildren(t);
+  }
+
+  // ---------- notes ----------
+  const notes = [
+    "Batch time is set by the largest sort in the batch: the 20 sorts run concurrently, one thread group each, so a single 8k sort dominates a batch of otherwise small ones.",
+    "The flush before every batch reads and writes 256 MB, then a 50 µs arithmetic-only drain lets the memory system settle; without the drain the RX 7900 XTX measured about 12 µs of flush tail inside the timed window.",
+    "The RX 7900 XTX machine ran package 99a07b4 and the NVIDIA machine ran 3ebe93b. They differ only in a CPU-side fix to shader compilation; shaders, timing and workloads are identical.",
+    "Recommended: s1_rank512_bitreg2048_radix (one 1024-thread dispatch: rank sort ≤ 512, register bitonic ≤ 2,048, radix above) for discrete GPUs; m4_b128_p (tier-sized dispatches: rank ≤ 128, bitonic in 128- and 256-thread groups, radix above 2,048) for integrated GPUs.",
+    "Intel UHD Graphics 770 results will be added when that machine is available again.",
+  ];
+  for (const n of notes) { const li = document.createElement("li"); li.textContent = n; $("notes").appendChild(li); }
+
+  function renderAll() { renderTiles(); renderPasses(); renderSweep(); renderBars(); renderHeat(); renderTable(); }
+  renderAll();
+  let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(renderAll, 150); });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", renderAll);
+  new MutationObserver(renderAll).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+})();
+</script>

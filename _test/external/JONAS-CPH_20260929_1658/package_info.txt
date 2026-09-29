@@ -1,0 +1,12 @@
+GpuSort portable package GpuSort-portable-3ebe93b
+Built:        2026-09-29 16:56:36 on JONAS-CPH
+Git commit:   3ebe93b (main) 2026-09-29 16:56:11 +0200 ShaderCompiler: harden the DXC compile / reflection path
+Shader sets:
+    shaders\     (current)
+    _test\pass0
+    _test\pass1
+    _test\pass2
+    _test\pass3
+    _test\pass4
+    _test\pass5
+    _test\pass7
