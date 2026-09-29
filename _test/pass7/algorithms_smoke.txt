@@ -137,3 +137,16 @@ dispatch p7_sort.hlsl main 512 P7_RANK_MAX=512 P7_BIT_MAX=2048 P7_BIT_E=8 P7_LAR
 # @256: R <= 128, B4 <= 512, B8 <= 2048, X above
 algorithm s7_256b
 dispatch p7_sort.hlsl main 256 P7_RANK_MAX=128 P7_BIT_MAX=512 P7_BIT_E=4 P7_BIT2_MAX=2048 P7_BIT2_E=8 P7_LARGE=2
+
+# --- smoke-only validation (removed before the full run; see notes.md) -------------------------
+# SHUFFLE_SPAN_TEST=1: shuffle span = half the wave. On a 32-lane GPU this runs the 16-lane (Intel
+# wave16) digit-lane / table-scan path of p7_radix and 16-lane virtual waves in p7_bitonic; on WARP
+# (4 lanes) 2-lane digit groups with 8 digits per lane.
+algorithm v_x7_all_256_span
+dispatch p7_sort.hlsl main 256 P7_LARGE=2 SHUFFLE_SPAN_TEST=1
+
+algorithm v_x7_all_1024_span
+dispatch p7_sort.hlsl main 1024 P7_LARGE=2 SHUFFLE_SPAN_TEST=1
+
+algorithm v_s7_256b_span
+dispatch p7_sort.hlsl main 256 P7_RANK_MAX=128 P7_BIT_MAX=512 P7_BIT_E=4 P7_BIT2_MAX=2048 P7_BIT2_E=8 P7_LARGE=2 SHUFFLE_SPAN_TEST=1

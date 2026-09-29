@@ -34,6 +34,12 @@
 //  table of wave w lives in slots its own digit lanes read back themselves (no barrier needed
 //  before the table write), plus one barrier C before the scatter overwrites them: 10 barriers.
 //
+// Code layout: the key-slot loops are unrolled (the keys stay in registers) and leave with a
+// group-uniform 'break' at k = kpt, i.e. one jump past the unused slots. The first version guarded
+// every slot with 'if (k < kpt)': a small sort then jumped over each of the 31 unused slot blocks
+// separately, and in the serial hardware smoke (code cold) a 256-thread sort of 32 keys took 18 us
+// (6 us at 1024 threads with 8 slots).
+//
 // Groupshared: gsP7 (p7_lds.hlsli), P7_LDS_WORDS = GROUP_SIZE * P7X_KPT_MAX words.
 // Requires lane index == SV_GroupIndex % WAVE_SIZE (true on all known implementations for 1D groups,
 // checked by the wave probe); otherwise the sort is not stable, which the CPU verification would catch.
@@ -176,8 +182,14 @@ void P7RadixSort(uint tid, uint offset, uint count)
     for (uint k = 0; k < P7X_KPT_MAX; ++k)
     {
         v[k] = 0;
+    }
+    [unroll]
+    for (uint k = 0; k < P7X_KPT_MAX; ++k)
+    {
+        if (k >= kpt)
+            break; // group-uniform
         const uint slot = waveBase + (k << WAVE_BITS) + lane;
-        if (k < kpt && slot < count)
+        if (slot < count)
             v[k] = gInput[offset + slot];
     }
 
@@ -197,7 +209,8 @@ void P7RadixSort(uint tid, uint offset, uint count)
             [unroll]
             for (uint k = 0; k < P7X_KPT_MAX; ++k)
             {
-                if (k < kpt) // group-uniform
+                if (k >= kpt)
+                    break; // group-uniform
                 {
                     const uint sb = waveBase + (k << WAVE_BITS);
                     const P7XMask valid = P7xLowMask(count > sb ? min(count - sb, (uint)WAVE_SIZE) : 0u);
@@ -285,7 +298,8 @@ void P7RadixSort(uint tid, uint offset, uint count)
             [unroll]
             for (uint k = 0; k < P7X_KPT_MAX; ++k)
             {
-                if (k < kpt) // group-uniform
+                if (k >= kpt)
+                    break; // group-uniform
                 {
                     const uint sb = waveBase + (k << WAVE_BITS);
                     const uint nValid = count > sb ? min(count - sb, (uint)WAVE_SIZE) : 0u; // wave-uniform
@@ -328,8 +342,10 @@ void P7RadixSort(uint tid, uint offset, uint count)
                 [unroll]
                 for (uint k = 0; k < P7X_KPT_MAX; ++k)
                 {
+                    if (k >= kpt)
+                        break; // group-uniform
                     const uint slot = waveBase + (k << WAVE_BITS) + lane;
-                    if (k < kpt && slot < count)
+                    if (slot < count)
                         v[k] = gsP7[slot & P7_LDS_MASK];
                 }
             }
