@@ -82,6 +82,7 @@ svg .lbl-strong { fill: var(--fg); font-weight: 500; }
 
 .tip { position: fixed; pointer-events: none; z-index: 20; background: var(--surface); color: var(--fg); border: 1px solid var(--ring);
   border-radius: 8px; padding: 8px 10px; font-size: var(--step-0); box-shadow: 0 6px 20px rgba(0,0,0,0.12); max-width: 320px; display: grid; gap: 3px; }
+.tip[hidden] { display: none; }
 .tip .t-head { color: var(--fg-2); font-size: 0.75rem; }
 .tip .row { display: flex; align-items: center; gap: 8px; }
 .tip .row i { width: 12px; height: 2px; border-radius: 1px; flex: none; }
@@ -525,7 +526,7 @@ details summary { cursor: pointer; color: var(--fg-2); font-size: var(--step-0);
     const binOf = (r) => { let i = 0; while (i < bins.length && r > bins[i]) i++; return i; };
     legend($("c4-legend"), ["≤ 1.05×", "≤ 1.25×", "≤ 1.5×", "≤ 2×", "≤ 3×", "≤ 5×", "> 5×"].map((l, i) => ({ label: l, color: ramp[i] })), true);
     $("c4-sub").textContent = `${WL_LABEL[state.workload]}. Each cell is that algorithm's median divided by the fastest algorithm on the same GPU; darker is slower. Method variants (flush modes) are left out.`;
-    const cw = 118, rh = 18, m = { l: 300, r: 8, t: 34, b: 6 };
+    const cw = 146, rh = 18, m = { l: 300, r: 8, t: 34, b: 6 };
     const W = m.l + m.r + cw * D.cfgs.length, H = m.t + m.b + rh * algos.length;
     const svg = el("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Slowdown heatmap, algorithms by GPU" }, node);
     const g = el("g", { transform: `translate(${m.l},${m.t})` }, svg);
