@@ -85,8 +85,8 @@ Results folder contents
     <run>.csv                   next to every <run>.txt above (smoke and full): the same results
                                 machine-readable, one row per GPU x algorithm x workload (x sort
                                 size for the sweep workload)
-    <run>_samples.csv           every measured iteration's time (the largest file, ~20 MB per
-                                full run and GPU; compresses well in the zip)
+    <run>_samples.csv           every measured iteration's time (the largest file, ~15 MB per
+                                full run and GPU; about 1.2 MB of that in the zip)
     <run>_wave_probe.csv        the run's wave probe, one row per GPU x wave configuration
     wave_probe.csv              probe mode only: the --wave-probe report as CSV
 <set> is "current" (shaders\) or "passN" (_test\passN\). No _waveNN = default wave size.
