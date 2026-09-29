@@ -1,0 +1,152 @@
+# Algorithm registry for this shader directory (read by GpuSort at startup).
+#
+#   algorithm <name>
+#   dispatch <file.hlsl> <entryPoint> <groupSize> [NAME=VALUE ...]
+#   flush <full|full_legacy|full_ro|code|data|none>   (optional; overrides --flush-mode for this algorithm)
+#
+# Each 'dispatch' line is one ExecuteIndirect(DISPATCH {numSorts, 1, 1}) of that shader, compiled
+# at runtime for cs_6_6 with -O3 (+ GROUP_SIZE, WAVE_SIZE, WAVE_SIZE_REQUIRED; see common.hlsli).
+# One group handles one sort (SV_GroupID.x = sort index). The dispatches of an algorithm are issued
+# back-to-back WITHOUT barriers, so each one early-outs for sorts outside its size range
+# (MIN_COUNT..MAX_COUNT, inclusive) and the GPU may run them concurrently.
+#
+# pass7 set: low-end / integrated GPUs (AMD Ryzen iGPU, Intel UHD 770). See notes.md for the
+# hypothesis behind every variant and what result would confirm or refute it. Short names:
+#   R = rank sort, B<E> = register bitonic with E elements per thread, P = pass2 radix (1024
+#   threads, 32 KB), X = pass7 radix (p7_radix.hlsli), @<n> = threads per group. Multi-dispatch
+#   algorithms list the large tier first (it starts first, the small tiers fill in around it).
+# p7_sort.hlsl sizes its groupshared array per dispatch: the next power of two >= MAX_COUNT.
+
+# --- anchors -----------------------------------------------------------------------------------
+# The portable reference (pass2 code): 1 dispatch @1024, 32 KB: R <= 512, B8 <= 2048, P above.
+algorithm s1_rank512_bitreg2048_radix
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+
+# P for every size: the radix fixed cost (Intel: 117 us on mostly_empty).
+algorithm s1_radix
+dispatch single_pass.hlsl main 1024 RANK_MAX=0 LARGE_RADIX=1
+
+# --- X for every size: its fixed cost and the effect of the group size --------------------------
+algorithm x7_all_256
+dispatch p7_sort.hlsl main 256 P7_LARGE=2
+
+algorithm x7_all_1024
+dispatch p7_sort.hlsl main 1024 P7_LARGE=2
+
+# --- the reference's algorithms, one dispatch per tier with a group and LDS that fit the tier ---
+# P 2049+ @1024 (32 KB) | B8 513-2048 @256 (8 KB) | R <= 512 @512 (2 KB)
+algorithm m3_ref
+dispatch radix_sort.hlsl main 1024 MIN_COUNT=2049
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512
+
+# The same with 32 KB of groupshared memory in every dispatch: group size alone vs LDS size.
+algorithm m3_ref_32k
+dispatch radix_sort.hlsl main 1024 MIN_COUNT=2049
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8 P7_LDS_WORDS=8192
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512 P7_LDS_WORDS=8192
+
+# --- large tier: X in small groups ----------------------------------------------------------------
+# X 2049+ @256 | B8 513-2048 @256 | R <= 512 @512
+algorithm m3_x256
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512
+
+# X 2049+ @512 | B8 513-2048 @256 | R <= 512 @512
+algorithm m3_x512
+dispatch p7_sort.hlsl main 512 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512
+
+# Radix switch at 4096 with a 512-thread bitonic: X 4097+ @256 | B8 513-4096 @512 | R <= 512 @512
+algorithm m3_b4096_x256
+dispatch p7_sort.hlsl main 256 MIN_COUNT=4097 P7_LARGE=2
+dispatch p7_sort.hlsl main 512 MIN_COUNT=513 MAX_COUNT=4096 P7_BIT_MAX=4096 P7_BIT_E=8
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512
+
+# --- mid tier (513-2048) --------------------------------------------------------------------------
+# B4 @512 instead of B8 @256 (more threads, half the registers): X 2049+ @256 | B4 513-2048 @512 | R @512
+algorithm m3_mid_b4
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 512 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=4
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512
+
+# Radix from 513: X 513+ @256 | R <= 512 @512
+algorithm m2_x513
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 P7_LARGE=2
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512
+
+# Radix from 1025: X 1025+ @256 | B8 513-1024 @128 | R <= 512 @512
+algorithm m3_x1025
+dispatch p7_sort.hlsl main 256 MIN_COUNT=1025 P7_LARGE=2
+dispatch p7_sort.hlsl main 128 MIN_COUNT=513 MAX_COUNT=1024 P7_BIT_MAX=1024 P7_BIT_E=8
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512
+
+# --- small tiers (<= 512); large and mid tiers as m3_x256 -----------------------------------------
+# Bitonic instead of rank for 129-512, in a 128-thread group: ... | B4 129-512 @128 | R <= 128 @128
+algorithm m4_b128
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MIN_COUNT=129 MAX_COUNT=512 P7_BIT_MAX=512 P7_BIT_E=4
+dispatch p7_sort.hlsl main 128 MAX_COUNT=128 P7_RANK_MAX=128
+
+# ... | B4 65-512 @128 | R <= 64 @64
+algorithm m4_b64
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MIN_COUNT=65 MAX_COUNT=512 P7_BIT_MAX=512 P7_BIT_E=4
+dispatch p7_sort.hlsl main 64 MAX_COUNT=64 P7_RANK_MAX=64
+
+# ... | B4 257-512 @128 | R <= 256 @256
+algorithm m4_b256
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MIN_COUNT=257 MAX_COUNT=512 P7_BIT_MAX=512 P7_BIT_E=4
+dispatch p7_sort.hlsl main 256 MAX_COUNT=256 P7_RANK_MAX=256
+
+# B8 instead of B4 for 129-512 (fewer threads and lane stages, more registers): ... | B8 129-512 @128 | R <= 128 @128
+algorithm m4_b128e8
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MIN_COUNT=129 MAX_COUNT=512 P7_BIT_MAX=512 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MAX_COUNT=128 P7_RANK_MAX=128
+
+# Rank with 2 elements per thread (half the LDS reads per compare): ... | R <= 512 x2 @256
+algorithm m3_r2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 256 MAX_COUNT=512 P7_RANK_MAX=512 P7_RANK_EPT=2
+
+# m4_b128's small tiers with the reference's large tier P @1024 (fallback if X loses)
+algorithm m4_b128_p
+dispatch radix_sort.hlsl main 1024 MIN_COUNT=2049
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MIN_COUNT=129 MAX_COUNT=512 P7_BIT_MAX=512 P7_BIT_E=4
+dispatch p7_sort.hlsl main 128 MAX_COUNT=128 P7_RANK_MAX=128
+
+# --- single dispatch with smaller groups (32 KB groupshared, one dispatch as the reference) -------
+# @256: R <= 512 x2, B8 <= 2048, X above
+algorithm s7_256
+dispatch p7_sort.hlsl main 256 P7_RANK_MAX=512 P7_RANK_EPT=2 P7_BIT_MAX=2048 P7_BIT_E=8 P7_LARGE=2
+
+# @512: R <= 512, B8 <= 2048, X above
+algorithm s7_512
+dispatch p7_sort.hlsl main 512 P7_RANK_MAX=512 P7_BIT_MAX=2048 P7_BIT_E=8 P7_LARGE=2
+
+# @256: R <= 128, B4 <= 512, B8 <= 2048, X above
+algorithm s7_256b
+dispatch p7_sort.hlsl main 256 P7_RANK_MAX=128 P7_BIT_MAX=512 P7_BIT_E=4 P7_BIT2_MAX=2048 P7_BIT2_E=8 P7_LARGE=2
+
+# --- smoke-only validation (removed before the full run; see notes.md) -------------------------
+# SHUFFLE_SPAN_TEST=1: shuffle span = half the wave. On a 32-lane GPU this runs the 16-lane (Intel
+# wave16) digit-lane / table-scan path of p7_radix and 16-lane virtual waves in p7_bitonic; on WARP
+# (4 lanes) 2-lane digit groups with 8 digits per lane.
+algorithm v_x7_all_256_span
+dispatch p7_sort.hlsl main 256 P7_LARGE=2 SHUFFLE_SPAN_TEST=1
+
+algorithm v_x7_all_1024_span
+dispatch p7_sort.hlsl main 1024 P7_LARGE=2 SHUFFLE_SPAN_TEST=1
+
+algorithm v_s7_256b_span
+dispatch p7_sort.hlsl main 256 P7_RANK_MAX=128 P7_BIT_MAX=512 P7_BIT_E=4 P7_BIT2_MAX=2048 P7_BIT2_E=8 P7_LARGE=2 SHUFFLE_SPAN_TEST=1
