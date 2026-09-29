@@ -9,6 +9,8 @@
 struct Options
 {
     std::wstring shaderDir;              // --shaders <dir>; empty = auto-detect
+    std::wstring algoFile;               // --algo-file <file>: algorithm list (relative: to the shader dir);
+                                         // empty = algorithms.txt
     std::wstring outPath;                // --out <file>; empty = results.txt next to the exe
     std::wstring csvPath;                // --csv <file>; empty = the --out file with the extension .csv
     bool noSamples = false;              // --no-samples: do not write <csv stem>_samples.csv
@@ -22,7 +24,9 @@ struct Options
     std::string gpuFilter;               // --gpu <substring>; empty = all qualifying GPUs
     uint32_t waveSize = 0;               // --wave-size N: compile with WAVE_SIZE=N + [WaveSize(N)]; 0 = device min
                                          // (GPUs whose lane range does not contain N are skipped)
-    FlushMode flushMode = FlushMode::Full; // --flush-mode: default for algorithms without a 'flush' line
+    FlushMode flushMode = kDefaultFlushMode; // --flush-mode: default for algorithms without a 'flush' line
+    bool stablePower = false;            // --stable-power: ID3D12Device::SetStablePowerState(TRUE) per GPU (only if
+                                         // Windows Developer Mode is on; else the run continues without it)
     bool warp = false;                   // --warp: run only on WARP (no prompt, no window)
     bool noPrompt = false;               // --no-prompt
     bool debugLayer = false;             // --debug: enable the D3D12 debug layer

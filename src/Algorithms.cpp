@@ -5,37 +5,83 @@
 #include <fstream>
 #include <sstream>
 
-const char* FlushModeName(FlushMode mode)
+namespace
 {
-    switch (mode)
+constexpr std::pair<FlushKind, const char*> kKindNames[] = {
+    {FlushKind::Full, "full"}, {FlushKind::FullRo, "full_ro"}, {FlushKind::Code, "code"},
+    {FlushKind::Data, "data"}, {FlushKind::None, "none"},
+};
+
+// The drain of the pass5 mode of that name (no suffix).
+DrainKind DefaultDrain(FlushKind kind)
+{
+    return kind == FlushKind::FullRo ? DrainKind::None : DrainKind::Group;
+}
+} // namespace
+
+std::string FlushModeName(const FlushMode& mode)
+{
+    if (mode.kind == FlushKind::Full && mode.drain == DrainKind::None)
+        return "full_legacy";
+    std::string name = "?";
+    for (const auto& [kind, kindName] : kKindNames)
     {
-    case FlushMode::Full: return "full";
-    case FlushMode::FullLegacy: return "full_legacy";
-    case FlushMode::FullRo: return "full_ro";
-    case FlushMode::Code: return "code";
-    case FlushMode::Data: return "data";
-    case FlushMode::None: return "none";
+        if (kind == mode.kind)
+            name = kindName;
     }
-    return "?";
+    if (mode.drain == DefaultDrain(mode.kind))
+        return name;
+    switch (mode.drain)
+    {
+    case DrainKind::None: return name + "_d0";
+    case DrainKind::Group: return name + "_dg";
+    case DrainKind::Spin: return name + "_d" + std::to_string(mode.drainUs);
+    }
+    return name;
 }
 
 bool ParseFlushMode(const std::string& name, FlushMode& mode)
 {
-    for (FlushMode m : {FlushMode::Full, FlushMode::FullLegacy, FlushMode::FullRo, FlushMode::Code, FlushMode::Data,
-                        FlushMode::None})
+    if (name == "full_legacy")
     {
-        if (name == FlushModeName(m))
+        mode = {FlushKind::Full, DrainKind::None, 0};
+        return true;
+    }
+    for (const auto& [kind, kindName] : kKindNames)
+    {
+        const std::string base = kindName;
+        if (name.compare(0, base.size(), base) != 0)
+            continue;
+        const std::string suffix = name.substr(base.size());
+        if (suffix.empty())
         {
-            mode = m;
+            mode = {kind, DefaultDrain(kind), 0};
             return true;
         }
+        if (suffix == "_dg")
+        {
+            mode = {kind, DrainKind::Group, 0};
+            return true;
+        }
+        // _d<N>: decimal, no sign / leading zeros (except "0"), 0..kMaxDrainUs
+        if (suffix.size() < 3 || suffix.compare(0, 2, "_d") != 0)
+            continue;
+        const std::string digits = suffix.substr(2);
+        if (digits.size() > 4 || (digits.size() > 1 && digits[0] == '0') ||
+            digits.find_first_not_of("0123456789") != std::string::npos)
+            continue;
+        const uint32_t us = static_cast<uint32_t>(std::stoul(digits));
+        if (us > kMaxDrainUs)
+            continue;
+        mode = us == 0 ? FlushMode{kind, DrainKind::None, 0} : FlushMode{kind, DrainKind::Spin, us};
+        return true;
     }
     return false;
 }
 
-std::vector<AlgorithmDesc> LoadAlgorithms(const std::filesystem::path& shaderDir)
+std::vector<AlgorithmDesc> LoadAlgorithms(const std::filesystem::path& shaderDir, const std::filesystem::path& fileName)
 {
-    const std::filesystem::path file = shaderDir / "algorithms.txt";
+    const std::filesystem::path file = fileName.is_absolute() ? fileName : shaderDir / fileName;
     std::ifstream in(file);
     if (!in)
         throw std::runtime_error("cannot open " + file.string());
@@ -76,7 +122,7 @@ std::vector<AlgorithmDesc> LoadAlgorithms(const std::filesystem::path& shaderDir
             if (algorithms.empty())
                 fail("'flush' before any 'algorithm'");
             if (tokens.size() != 2 || !ParseFlushMode(tokens[1], algorithms.back().flush))
-                fail("expected: flush <full|full_legacy|full_ro|code|data|none>");
+                fail("expected: flush <full|full_legacy|full_ro|code|data|none>[_dg|_d<us>] (see --help)");
             if (algorithms.back().flushGiven)
                 fail("duplicate 'flush' for algorithm '" + algorithms.back().name + "'");
             algorithms.back().flushGiven = true;

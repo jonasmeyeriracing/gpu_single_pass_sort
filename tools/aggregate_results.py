@@ -34,8 +34,9 @@ import zipfile
 from collections import OrderedDict, defaultdict
 from pathlib import Path
 
-SUPPORTED_SCHEMA_VERSIONS = {"1"}
+SUPPORTED_SCHEMA_VERSIONS = {"1", "2"}
 
+# Required in every results CSV (schema_version 1 and 2).
 RESULTS_COLUMNS = [
     "schema_version", "run_id", "run_timestamp", "computer", "label", "package_commit", "shader_set",
     "gpu_index", "gpu_name", "vendor_id", "device_id", "driver_version", "is_integrated", "dedicated_vram_mb",
@@ -45,6 +46,8 @@ RESULTS_COLUMNS = [
     "total_elements_per_iter_mean", "algorithm_id", "run_kind", "iterations_requested", "wave_probe_ok",
     "gpu_error",
 ]
+# Added in schema_version 2 (results CSV); empty in the output for version 1 rows.
+RESULTS_COLUMNS_V2 = ["stable_power", "drain_spin_iters_per_us"]
 SAMPLES_COLUMNS = [
     "run_id", "gpu_index", "wave_size", "algorithm", "flush_mode", "workload", "iteration", "time_us",
     "largest_sort", "total_elements", "sweep_size",
@@ -218,7 +221,7 @@ def main():
 
     results = OrderedDict()   # run_id -> rows
     probes = OrderedDict()
-    results_columns = list(RESULTS_COLUMNS)
+    results_columns = list(RESULTS_COLUMNS) + list(RESULTS_COLUMNS_V2)
     probe_columns = []
     sample_sources = []
     for src in sources:
@@ -387,6 +390,7 @@ def main():
     p(f"Algorithms ({len({d['algorithm_id'] for d in used_rows})}): "
       f"{', '.join(sorted({d['algorithm_id'] for d in used_rows}))}")
     p(f"Flush modes: {fmt_set({d['flush_mode'] for d in used_rows})}")
+    p(f"Stable power: {fmt_set({d.get('stable_power') or 'n/a (schema 1)' for d in used_rows})}")
     p(f"Workloads: {', '.join(sorted({d['workload'] for d in used_rows}))}")
     p(f"Sweep sizes: {fmt_set({d['sweep_size'] for d in used_rows if d['sweep_size']})}")
     iters = sorted({int(d["iterations_requested"]) for d in used_rows if d["iterations_requested"].isdigit()})

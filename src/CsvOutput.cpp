@@ -173,7 +173,7 @@ bool WriteResultsCsv(const RunInfo& info, const std::filesystem::path& path, std
            "flush_mode", "workload", "sweep_size", "sorts_per_iteration", "iterations", "warmup", "min_us",
            "median_us", "mean_us", "p95_us", "p99_us", "max_us", "stddev_us", "verify_failures",
            "total_elements_per_iter_mean", "algorithm_id", "run_kind", "iterations_requested", "wave_probe_ok",
-           "gpu_error"});
+           "gpu_error", "stable_power", "drain_spin_iters_per_us"});
 
     SizeCache sizeCache;
     for (size_t g = 0; g < info.gpus.size(); ++g)
@@ -201,6 +201,7 @@ bool WriteResultsCsv(const RunInfo& info, const std::filesystem::path& path, std
             std::to_string(gpu.timestampFrequency),
         };
         const std::string probeOk = gpu.waveProbeRows.empty() ? "" : gpu.waveProbeWarning ? "0" : "1";
+        const std::string spinRate = gpu.drainSpinCalibrated ? Fixed(gpu.drainSpin.iterationsPerUs, 3) : "";
 
         for (const auto& c : gpu.combos)
         {
@@ -240,6 +241,8 @@ bool WriteResultsCsv(const RunInfo& info, const std::filesystem::path& path, std
                 fields.push_back(std::to_string(info.iterations));
                 fields.push_back(probeOk);
                 fields.push_back(gpu.error);
+                fields.push_back(gpu.stablePower);
+                fields.push_back(spinRate);
                 f.Row(fields);
             };
 

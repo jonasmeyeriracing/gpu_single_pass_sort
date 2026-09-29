@@ -16,8 +16,9 @@
 // A --wave-probe run writes only the wave probe CSV, as <stem>.csv.
 
 // Bump when a column is renamed, removed or changes meaning (adding columns at the end is fine;
-// tools/aggregate_results.py checks it).
-constexpr int kCsvSchemaVersion = 1;
+// tools/aggregate_results.py checks it). 2: the results CSV has the columns stable_power and
+// drain_spin_iters_per_us, and flush_mode can carry a drain suffix (full_d20, ...).
+constexpr int kCsvSchemaVersion = 2;
 
 // Git commit of this build ("<short sha>", "<short sha>-dirty" or "unknown").
 const char* PackageCommit();

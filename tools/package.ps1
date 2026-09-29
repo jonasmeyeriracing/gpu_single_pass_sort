@@ -6,7 +6,8 @@
 .DESCRIPTION
     Package contents:
       GpuSort.exe (static CRT), dxcompiler.dll, dxil.dll
-      shaders\                  the current shaders
+      shaders\                  the current shaders (the whole folder, incl. algorithms_diag_flush.txt
+                                for run_all.bat diag)
       _test\passN\              every snapshot's shader files + algorithms.txt + notes.md
                                 (no results.txt / smoke_results.txt / algorithms_diag.txt or other
                                 algorithm lists: run_all.bat only uses algorithms.txt);

@@ -1,5 +1,6 @@
 #include "Options.h"
 
+#include "Benchmark.h"
 #include "Common.h"
 
 #include <cstdio>
@@ -68,9 +69,16 @@ bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
             o.listAdapters = true;
         else if (arg == L"--wave-probe")
             o.waveProbe = true;
+        else if (arg == L"--stable-power")
+            o.stablePower = true;
         else if (arg == L"--shaders")
         {
             if (!next(o.shaderDir))
+                return false;
+        }
+        else if (arg == L"--algo-file")
+        {
+            if (!next(o.algoFile))
                 return false;
         }
         else if (arg == L"--out")
@@ -146,7 +154,9 @@ bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
                 return false;
             if (!ParseFlushMode(WideToUtf8(value), o.flushMode))
             {
-                error = "invalid value for --flush-mode (full, full_legacy, full_ro, code, data or none): " +
+                error = Format("invalid value for --flush-mode (full, full_legacy, full_ro, code, data or none, "
+                               "optionally with _dg or _d<0..%u>, see --help): ",
+                               kMaxDrainUs) +
                         WideToUtf8(value);
                 return false;
             }
@@ -168,6 +178,8 @@ void PrintUsage()
         "Usage: GpuSort.exe [options]\n"
         "  --shaders <dir>      Shader directory containing algorithms.txt (default: shaders/ found\n"
         "                       next to or above the exe, then ./shaders)\n"
+        "  --algo-file <file>   Algorithm list to use instead of algorithms.txt (a relative path is\n"
+        "                       relative to the shader directory), e.g. algorithms_diag_flush.txt\n"
         "  --out <file>         Results file (default: results.txt next to the exe)\n"
         "  --csv <file>         Results CSV (default: the --out file with the extension .csv). Next to it:\n"
         "                       <stem>_samples.csv (every measured iteration) and <stem>_wave_probe.csv\n"
@@ -186,7 +198,7 @@ void PrintUsage()
         "                       WaveLaneCountMin..Max does not contain N are skipped. Default: WAVE_SIZE =\n"
         "                       WaveLaneCountMin, plus [WaveSize] only if the device reports a range (Min != Max)\n"
         "  --flush-mode <m>     What happens between the data upload and the timed sort, for algorithms\n"
-        "                       without a 'flush' line in algorithms.txt (default full). Every mode except\n"
+        "                       without a 'flush' line in algorithms.txt (default %s). Every mode except\n"
         "                       full_legacy / full_ro ends with a drain (one-group dispatch + UAV barrier)\n"
         "                       right before the start timestamp, so no flush tail is timed:\n"
         "                         full: upload, 256 MB cache flush, drain: shader code and data cold\n"
@@ -196,6 +208,18 @@ void PrintUsage()
         "                         data: upload, flush, untimed run of the same sort on a private copy of\n"
         "                               the data, drain: code warm, data cold\n"
         "                         none: upload, drain (no flush): code and data warm\n"
+        "                       A suffix selects the drain of any of these (except full_legacy):\n"
+        "                         _d<N>: SPIN drain of about N us (1..%u): an ALU-only dispatch (%u groups\n"
+        "                                x %u threads, a dependent integer chain, one 16-byte store per\n"
+        "                                thread to a private 4 KB buffer) whose loop count comes from a\n"
+        "                                per-GPU calibration at the start of the run, then a UAV barrier\n"
+        "                         _d0:   no drain (full_d0 = full_legacy, full_ro_d0 = full_ro)\n"
+        "                         _dg:   the one-group drain above (pass5; the default of all but full_ro)\n"
+        "                       e.g. full_d20, full_ro_d20, none_d20\n"
+        "  --stable-power       ID3D12Device::SetStablePowerState(TRUE) on every GPU (fixed clocks) after\n"
+        "                       the prompt. Needs Windows Developer Mode: without it the call would\n"
+        "                       remove the device, so GpuSort checks first and, if it is off, runs\n"
+        "                       without it (results header / CSV column stable_power: unavailable)\n"
         "  --warp               Run only on the WARP software adapter (no prompt, no window)\n"
         "  --no-prompt          Skip the confirmation message box\n"
         "  --debug              Enable the D3D12 debug layer\n"
@@ -223,5 +247,6 @@ void PrintUsage()
         "                       prompt): without [WaveSize] and [WaveSize(N)] for every power of two N\n"
         "                       in each GPU's WaveLaneCountMin..Max, one verdict each; with --wave-size N\n"
         "                       only that configuration. Exit code 0 all OK, 1 any warning, 3 device lost\n"
-        "  --help               Show this help\n");
+        "  --help               Show this help\n",
+        FlushModeName(kDefaultFlushMode).c_str(), kMaxDrainUs, GpuBenchmark::kSpinGroups, GpuBenchmark::kSpinGroupSize);
 }

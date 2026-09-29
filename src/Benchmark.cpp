@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <execution>
 #include <numeric>
@@ -48,6 +49,24 @@ void main_ro(uint3 id : SV_DispatchThreadID)
     if (acc.x + acc.y + acc.z + acc.w == 0xDEADBEEFu)
         gFlush[id.x] = acc;
 }
+
+// Spin drain (DrainKind::Spin), on the 4 KB drain buffer: gNumElements = loop iterations (clamped
+// to GpuBenchmark::kMaxSpinIterations). A dependent integer chain per thread with no memory access
+// in the loop, then one store per thread (4 groups x 64 threads = the buffer's 256 uint4) so the
+// loop cannot be removed.
+[numthreads(64, 1, 1)]
+void spin(uint3 id : SV_DispatchThreadID)
+{
+    const uint n = min(gNumElements, 524288u);
+    uint x = id.x * 2654435761u + 1u;
+    [loop]
+    for (uint i = 0; i < n; ++i)
+    {
+        x = x * 1664525u + 1013904223u;
+        x ^= x >> 15;
+    }
+    gFlush[id.x] = uint4(x, n, 0, 0);
+}
 )";
 
 namespace
@@ -72,6 +91,11 @@ static_assert(kFlushGroups <= 65535);
 // Drain (see Record): the flush shader, one group, on the 4 KB drain buffer (one uint4 per thread).
 constexpr uint32_t kDrainElements = static_cast<uint32_t>(GpuBenchmark::kDrainBytes / 16);
 static_assert(kDrainElements == kFlushGroupSize, "the drain is one flush group, one element per thread");
+static_assert(GpuBenchmark::kSpinGroups * GpuBenchmark::kSpinGroupSize == kDrainElements,
+              "the spin drain writes one drain element per thread");
+static_assert(GpuBenchmark::kSpinGroupSize == 64, "must match numthreads of the spin entry point");
+static_assert(GpuBenchmark::kMaxSpinIterations == 524288, "must match the clamp in the spin entry point");
+static_assert(4 * GpuBenchmark::kSpinReps <= 2 * kBatchSize, "spin calibration timestamps fit in a frame's query heap");
 
 // Root signature layout (shared by the flush and all sort shaders).
 enum RootParam : UINT
@@ -204,7 +228,8 @@ constexpr D3D12_RESOURCE_STATES kSrvState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADE
 } // namespace
 
 GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader, IDxcBlob* flushReadOnlyShader,
-                           const std::vector<CompiledAlgorithm>& algorithms, const BenchmarkOptions& options)
+                           IDxcBlob* spinShader, const std::vector<CompiledAlgorithm>& algorithms,
+                           const BenchmarkOptions& options)
     : m_options(options), m_device(device)
 {
     m_batchSize = m_options.serial ? 1 : kBatchSize;
@@ -263,6 +288,8 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader, IDxcBlob
     SetName(m_flushPso.Get(), "PSO flush");
     m_flushReadOnlyPso = CreateComputePso(m_device.Get(), m_rootSignature.Get(), flushReadOnlyShader);
     SetName(m_flushReadOnlyPso.Get(), "PSO flush read-only");
+    m_spinPso = CreateComputePso(m_device.Get(), m_rootSignature.Get(), spinShader);
+    SetName(m_spinPso.Get(), "PSO drain spin");
     for (const auto& algorithm : algorithms)
     {
         std::vector<ComPtr<ID3D12PipelineState>> psos;
@@ -510,9 +537,9 @@ void GpuBenchmark::Record(Frame& f, const std::vector<ComPtr<ID3D12PipelineState
     ID3D12Resource* warmDesc = m_warmDescBuffer.Get();
     ID3D12Resource* warmInput = m_warmInputBuffer.Get();
     ID3D12Resource* warmOutput = m_warmOutputBuffer.Get();
-    const bool warmRun = flushMode == FlushMode::Data; // the warm buffers are only touched in this mode
-    // pass5: every mode except the two diagnostics without it drains right before the start timestamp.
-    const bool drain = flushMode != FlushMode::FullLegacy && flushMode != FlushMode::FullRo;
+    const FlushKind kind = flushMode.kind;
+    const bool warmRun = kind == FlushKind::Data; // the warm buffers are only touched in this mode
+    const uint32_t spinIterations = flushMode.drain == DrainKind::Spin ? SpinIterations(flushMode.drainUs) : 0;
 
     // Buffers decay to COMMON after every ExecuteCommandLists; start each list from there.
     {
@@ -557,6 +584,17 @@ void GpuBenchmark::Record(Frame& f, const std::vector<ComPtr<ID3D12PipelineState
         cl->Dispatch(1, 1, 1);
         cl->ResourceBarrier(1, &uavBarrier);
     };
+    // Spin drain: an ALU-only dispatch of about flushMode.drainUs on the same private buffer and
+    // table, then a UAV barrier: the GPU waits a known time after the flush without memory traffic.
+    auto spinDispatch = [&](uint32_t s) {
+        const uint32_t spinConstants[4] = {spinIterations, 0, 0, 0};
+        marker("drain (spin)", s);
+        cl->SetPipelineState(m_spinPso.Get());
+        cl->SetComputeRoot32BitConstants(kRootConstants, 4, spinConstants, 0);
+        cl->SetComputeRootDescriptorTable(kRootTable, m_drainTable);
+        cl->Dispatch(kSpinGroups, 1, 1);
+        cl->ResourceBarrier(1, &uavBarrier);
+    };
     for (uint32_t s = 0; s < f.count; ++s)
     {
         const IterationData& d = f.data[s];
@@ -566,8 +604,8 @@ void GpuBenchmark::Record(Frame& f, const std::vector<ComPtr<ID3D12PipelineState
         if (bytes)
             memcpy(f.uploadPtr + uploadOffset + kDescRegionBytes, d.elements.data(), bytes);
 
-        // FlushMode::Code: flush first, so the uploaded data is the most recent write (warm in L2).
-        if (flushMode == FlushMode::Code)
+        // FlushKind::Code: flush first, so the uploaded data is the most recent write (warm in L2).
+        if (kind == FlushKind::Code)
             flush(s, false);
 
         // 1) upload + poison the whole output (stray writes anywhere in it are detected)
@@ -596,13 +634,13 @@ void GpuBenchmark::Record(Frame& f, const std::vector<ComPtr<ID3D12PipelineState
             cl->ResourceBarrier(static_cast<UINT>(b.size()), b.data());
         }
 
-        // 2) cache flush (FlushMode::Full, FullLegacy, FullRo and Data)
-        if (flushMode == FlushMode::Full || flushMode == FlushMode::FullLegacy || flushMode == FlushMode::Data)
+        // 2) cache flush (FlushKind::Full, FullRo and Data)
+        if (kind == FlushKind::Full || kind == FlushKind::Data)
             flush(s, false);
-        else if (flushMode == FlushMode::FullRo)
+        else if (kind == FlushKind::FullRo)
             flush(s, true);
 
-        // FlushMode::Data: untimed run of the same dispatches on the private copy, so the shader code
+        // FlushKind::Data: untimed run of the same dispatches on the private copy, so the shader code
         // (and everything else except the sort's own buffers) is warm for the timed run.
         if (warmRun)
         {
@@ -617,9 +655,12 @@ void GpuBenchmark::Record(Frame& f, const std::vector<ComPtr<ID3D12PipelineState
             cl->ResourceBarrier(1, &uavBarrier);
         }
 
-        // 3) drain: everything recorded so far has executed before the timed window opens
-        if (drain)
+        // 3) drain: everything recorded so far has executed before the timed window opens (and with
+        //    the spin drain, a known time has passed since)
+        if (flushMode.drain == DrainKind::Group)
             drainDispatch(s);
+        else if (flushMode.drain == DrainKind::Spin)
+            spinDispatch(s);
 
         // 4) timed sort
         cl->EndQuery(f.queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * s);
@@ -721,7 +762,7 @@ double GpuBenchmark::Calibrate(uint32_t workloadId, uint32_t iterations)
             GenerateIteration(workloadId, kWarmupIterationBase + first + s, f.data[s]);
         });
         const auto start = std::chrono::steady_clock::now();
-        Record(f, noSort, FlushMode::Full, "calibration");
+        Record(f, noSort, FlushMode{FlushKind::Full, DrainKind::Group, 0}, "calibration");
         SubmitList(f);
         WaitForFence(f.fenceValue);
         f.pending = false;
@@ -737,6 +778,112 @@ double GpuBenchmark::Calibrate(uint32_t workloadId, uint32_t iterations)
         done += n;
     }
     return iterations ? seconds / iterations : 0.0;
+}
+
+uint32_t GpuBenchmark::SpinIterations(uint32_t us) const
+{
+    if (!(m_spinIterationsPerUs > 0.0))
+        throw std::logic_error("spin drain used before its rate was set (CalibrateDrainSpin / SetDrainSpinRate)");
+    const double n = std::round(static_cast<double>(us) * m_spinIterationsPerUs);
+    return static_cast<uint32_t>(std::clamp(n, 1.0, static_cast<double>(kMaxSpinIterations)));
+}
+
+GpuBenchmark::SpinCalibration GpuBenchmark::CalibrateDrainSpin()
+{
+    if (m_frames[0].pending || m_frames[1].pending)
+        throw std::runtime_error("spin calibration: called while iterations are in flight");
+    Frame& f = m_frames[0];
+
+    // One command list: kSpinReps x {timestamp, spin(1), barrier, timestamp, timestamp, spin(n),
+    // barrier, timestamp}; returns the median durations (us) of spin(1) and spin(n).
+    auto measure = [&](uint32_t n, double& oneUs, double& nUs) {
+        ID3D12GraphicsCommandList* cl = f.list.Get();
+        CHECK_HR(f.allocator->Reset());
+        CHECK_HR(cl->Reset(f.allocator.Get(), nullptr));
+        SetName(cl, Format("drain spin calibration (%u iterations)", n));
+        ID3D12DescriptorHeap* heaps[] = {m_descriptorHeap.Get()};
+        cl->SetDescriptorHeaps(1, heaps);
+        cl->SetComputeRootSignature(m_rootSignature.Get());
+        {
+            const D3D12_RESOURCE_BARRIER b =
+                Transition(m_drainBuffer.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            cl->ResourceBarrier(1, &b);
+        }
+        const D3D12_RESOURCE_BARRIER uavBarrier = UavBarrier(nullptr);
+        cl->SetPipelineState(m_spinPso.Get());
+        cl->SetComputeRootDescriptorTable(kRootTable, m_drainTable);
+        for (uint32_t r = 0; r < kSpinReps; ++r)
+        {
+            for (uint32_t k = 0; k < 2; ++k)
+            {
+                const uint32_t q = 4 * r + 2 * k;
+                const uint32_t constants[4] = {k == 0 ? 1u : n, 0, 0, 0};
+                cl->EndQuery(f.queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, q);
+                cl->SetComputeRoot32BitConstants(kRootConstants, 4, constants, 0);
+                cl->Dispatch(kSpinGroups, 1, 1);
+                cl->ResourceBarrier(1, &uavBarrier);
+                cl->EndQuery(f.queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, q + 1);
+            }
+        }
+        cl->ResolveQueryData(f.queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 4 * kSpinReps,
+                             f.timestampReadback.Get(), 0);
+        {
+            const D3D12_RESOURCE_BARRIER b =
+                Transition(m_drainBuffer.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+            cl->ResourceBarrier(1, &b);
+        }
+        CHECK_HR(cl->Close());
+        SubmitList(f);
+        WaitForFence(f.fenceValue);
+        f.pending = false;
+
+        const D3D12_RANGE range{0, sizeof(uint64_t) * 4 * kSpinReps};
+        uint64_t* ts = nullptr;
+        CHECK_HR(f.timestampReadback->Map(0, &range, reinterpret_cast<void**>(&ts)));
+        std::vector<double> one, many;
+        const double toUs = 1e6 / static_cast<double>(m_timestampFrequency);
+        for (uint32_t r = 0; r < kSpinReps; ++r)
+        {
+            one.push_back(static_cast<double>(ts[4 * r + 1] - ts[4 * r]) * toUs);
+            many.push_back(static_cast<double>(ts[4 * r + 3] - ts[4 * r + 2]) * toUs);
+        }
+        const D3D12_RANGE noWrite{0, 0};
+        f.timestampReadback->Unmap(0, &noWrite);
+        auto median = [](std::vector<double> v) {
+            std::sort(v.begin(), v.end());
+            const size_t m = v.size() / 2;
+            return v.size() % 2 ? v[m] : 0.5 * (v[m - 1] + v[m]);
+        };
+        oneUs = median(one);
+        nUs = median(many);
+    };
+
+    SpinCalibration c;
+    uint32_t n = 1024;
+    for (int attempt = 0; attempt < 8; ++attempt)
+    {
+        double oneUs = 0.0, nUs = 0.0;
+        measure(n, oneUs, nUs);
+        c.iterations = n;
+        c.overheadUs = oneUs;
+        c.spanUs = nUs - oneUs;
+        if (c.spanUs >= 50.0 || n >= kMaxSpinIterations)
+            break;
+        // Aim for ~100 us; at least double.
+        const double scale = c.spanUs > 1.0 ? 100.0 / c.spanUs : 16.0;
+        n = static_cast<uint32_t>(std::min<double>(kMaxSpinIterations, std::max(2.0 * n, n * scale)));
+    }
+    if (!(c.spanUs > 0.0))
+        throw std::runtime_error(Format("spin calibration: no measurable time (%u iterations: %.3f us, 1 iteration: "
+                                        "%.3f us)",
+                                        c.iterations, c.spanUs + c.overheadUs, c.overheadUs));
+    c.iterationsPerUs = static_cast<double>(c.iterations - 1) / c.spanUs;
+    SetDrainSpinRate(c.iterationsPerUs);
+
+    c.checkIterations = SpinIterations(kSpinCheckUs);
+    double oneUs = 0.0;
+    measure(c.checkIterations, oneUs, c.checkUs);
+    return c;
 }
 
 void GpuBenchmark::Process(Frame& f, uint32_t warmup, ComboResult& result)

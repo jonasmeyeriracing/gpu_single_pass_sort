@@ -78,6 +78,8 @@ std::string FormatResults(const RunInfo& info)
         out += Format("Label:        %s\n", info.label.c_str());
     out += Format("Command line: %s\n", info.commandLine.c_str());
     out += Format("Shader dir:   %s\n", info.shaderDir.c_str());
+    if (!info.algoFile.empty())
+        out += Format("Algo list:    %s\n", info.algoFile.c_str());
     if (!info.csvFiles.empty())
         out += Format("CSV files:    %s\n", info.csvFiles.c_str());
     out += Format("Iterations:   %u measured + %u warmup per GPU x workload x algorithm, %u sorts per iteration\n",
@@ -92,8 +94,13 @@ std::string FormatResults(const RunInfo& info)
                   "Flush mode:   '%s' for algorithms without their own. full = code + data cold (flush, drain);\n"
                   "              full_legacy = pre-pass5 full (no drain); full_ro = read-only flush, no drain\n"
                   "              (diagnostic); code = only code cold (flush before the upload, drain); data = only\n"
-                  "              data cold (untimed warm-up run of the same dispatches, drain); none = no flush (drain)\n",
-                  static_cast<unsigned long long>(GpuBenchmark::kFlushBytes >> 20), FlushModeName(info.defaultFlush));
+                  "              data cold (untimed warm-up run of the same dispatches, drain); none = no flush (drain)\n"
+                  "              Drain suffixes (pass6 diagnostics): <mode>_d<N> = SPIN drain of about N us instead\n"
+                  "              (an ALU-only dispatch, %u groups x %u threads, one 16-byte store per thread to the\n"
+                  "              private 4 KB buffer, loop count from the per-GPU calibration below, + UAV barrier);\n"
+                  "              _d0 = no drain (full_d0 = full_legacy); _dg = the pass5 one-group drain\n",
+                  static_cast<unsigned long long>(GpuBenchmark::kFlushBytes >> 20),
+                  FlushModeName(info.defaultFlush).c_str(), GpuBenchmark::kSpinGroups, GpuBenchmark::kSpinGroupSize);
     out += "Timing:       GPU timestamps around the sort ExecuteIndirect dispatches only, per iteration (all 20 sorts)\n";
     out += "GPUs:\n";
     for (size_t g = 0; g < info.gpus.size(); ++g)
@@ -110,6 +117,17 @@ std::string FormatResults(const RunInfo& info)
                           gpu.secondsPerIterationEstimate * 1000.0,
                           gpu.calibrated ? "calibrated up front" : "rough guess, the calibration failed",
                           gpu.estimatedSeconds, gpu.wallSeconds);
+        out += Format("      stable power: %s%s%s\n", gpu.stablePower.c_str(), gpu.stablePowerNote.empty() ? "" : " - ",
+                      gpu.stablePowerNote.c_str());
+        if (gpu.drainSpinCalibrated)
+        {
+            const GpuBenchmark::SpinCalibration& c = gpu.drainSpin;
+            out += Format("      drain spin: %.2f loop iterations per us (calibrated before the first sort: %u vs 1\n"
+                          "              iterations, median of %u each, %.2f us apart; the 1-iteration dispatch + barrier\n"
+                          "              takes %.2f us); check: %u us = %u iterations measured %.2f us incl. that overhead\n",
+                          c.iterationsPerUs, c.iterations, GpuBenchmark::kSpinReps, c.spanUs, c.overheadUs,
+                          GpuBenchmark::kSpinCheckUs, c.checkIterations, c.checkUs);
+        }
         for (const auto& line : gpu.waveProbe)
             out += Format("      %s\n", line.c_str());
     }
@@ -136,8 +154,8 @@ std::string FormatResults(const RunInfo& info)
             std::string sizes;
             for (size_t b : a.dxilBytes)
                 sizes += Format("%s%zu", sizes.empty() ? "" : " + ", b);
-            out += Format("  %-*s  %-11s  %s\n", static_cast<int>(w), a.name.c_str(), FlushModeName(a.flush),
-                          sizes.c_str());
+            out += Format("  %-*s  %-11s  %s\n", static_cast<int>(w), a.name.c_str(),
+                          FlushModeName(a.flush).c_str(), sizes.c_str());
         }
         out += "\n";
     }

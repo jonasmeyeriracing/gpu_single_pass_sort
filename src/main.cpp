@@ -39,6 +39,21 @@ constexpr uint32_t kCalibrationIterationsSerial = 4; // --smoke
 constexpr uint32_t kCalibrationIterationsWarp = 2;
 // While a GPU runs, its measured rate replaces the calibration once this many iterations are done.
 constexpr uint64_t kMeasuredRateMinIterations = 256;
+// Spin drain calibration (only if an algorithm uses a spin drain): iterations of the flush work run
+// right before it on the run's GpuBenchmark, so the clocks are where the run's flushes put them.
+constexpr uint32_t kSpinWarmupIterations = 8;
+constexpr uint32_t kSpinWarmupIterationsWarp = 1;
+
+// Windows Developer Mode (HKLM\...\AppModelUnlock, AllowDevelopmentWithoutDevLicense = 1).
+// ID3D12Device::SetStablePowerState removes the device if it is off.
+bool DeveloperModeEnabled()
+{
+    DWORD value = 0;
+    DWORD size = sizeof(value);
+    const LSTATUS st = RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock",
+                                    L"AllowDevelopmentWithoutDevLicense", RRF_RT_REG_DWORD, nullptr, &value, &size);
+    return st == ERROR_SUCCESS && value == 1;
+}
 
 std::string FormatDuration(double seconds)
 {
@@ -202,7 +217,8 @@ int RunMain(int argc, wchar_t** argv)
 
     // --- shaders / algorithms -------------------------------------------------------------
     const fs::path shaderDir = opt.shaderDir.empty() ? FindShaderDir() : fs::absolute(opt.shaderDir);
-    std::vector<AlgorithmDesc> allAlgorithms = LoadAlgorithms(shaderDir);
+    const fs::path algoFile = opt.algoFile.empty() ? fs::path(L"algorithms.txt") : fs::path(opt.algoFile);
+    std::vector<AlgorithmDesc> allAlgorithms = LoadAlgorithms(shaderDir, algoFile);
     std::vector<AlgorithmDesc> algorithms;
     if (opt.algorithms.empty())
         algorithms = allAlgorithms;
@@ -251,6 +267,8 @@ int RunMain(int argc, wchar_t** argv)
     }
 
     Log("Shader dir: %s\n", shaderDir.string().c_str());
+    if (!opt.algoFile.empty())
+        Log("Algorithm list: %s\n", algoFile.string().c_str());
     ShaderCompiler compiler;
     std::string log;
     ComPtr<IDxcBlob> flushShader = compiler.CompileSource(kFlushShaderSource, L"flush.hlsl", "main", {}, log);
@@ -260,6 +278,9 @@ int RunMain(int argc, wchar_t** argv)
         compiler.CompileSource(kFlushShaderSource, L"flush.hlsl", "main_ro", {}, log);
     if (!flushReadOnlyShader)
         throw std::runtime_error("read-only flush shader failed to compile:\n" + log);
+    ComPtr<IDxcBlob> spinShader = compiler.CompileSource(kFlushShaderSource, L"flush.hlsl", "spin", {}, log);
+    if (!spinShader)
+        throw std::runtime_error("drain spin shader failed to compile:\n" + log);
 
     // --- adapters -------------------------------------------------------------------------
     // Both must happen before any device is created.
@@ -287,6 +308,7 @@ int RunMain(int argc, wchar_t** argv)
         (shaderDir.has_filename() ? shaderDir.filename() : shaderDir.parent_path().filename()).wstring());
     info.label = opt.label;
     info.shaderDir = shaderDir.string();
+    info.algoFile = algoFile.string();
     info.commandLine = CommandLineUtf8();
     info.iterations = opt.iterations;
     info.warmup = opt.warmup;
@@ -383,7 +405,7 @@ int RunMain(int argc, wchar_t** argv)
             for (const auto& s : ca.shaders)
                 sizes += Format("%s%zu", sizes.empty() ? "" : " + ", static_cast<size_t>(s->GetBufferSize()));
             Log("Compiled algorithm %s (%zu dispatch%s, DXIL %s bytes, flush mode %s%s)\n", ca.name.c_str(),
-                ca.shaders.size(), ca.shaders.size() == 1 ? "" : "es", sizes.c_str(), FlushModeName(ca.flush),
+                ca.shaders.size(), ca.shaders.size() == 1 ? "" : "es", sizes.c_str(), FlushModeName(ca.flush).c_str(),
                 ca.usesWaveOps ? ", wave ops" : ", no wave ops");
             compiled.push_back(std::move(ca));
         }
@@ -446,6 +468,15 @@ int RunMain(int argc, wchar_t** argv)
     for (const auto& g : gpus)
         estimatedSeconds += static_cast<double>(totalIterations) * GuessSecondsPerIteration(g, opt.smoke);
 
+    // --stable-power: only with Developer Mode (checked here, applied after the prompt).
+    const bool stablePower = opt.stablePower && !opt.waveProbe;
+    const bool developerMode = stablePower && DeveloperModeEnabled();
+    if (opt.stablePower && opt.waveProbe)
+        Log("--stable-power is ignored with --wave-probe\n");
+    else if (stablePower && !developerMode)
+        Log("\n*** --stable-power: Windows Developer Mode is OFF, so SetStablePowerState is NOT called (it would\n"
+            "*** remove the device). The run continues with normal clocks (stable_power = unavailable).\n\n");
+
     // --- prompt ---------------------------------------------------------------------------
     if (!opt.warp && !opt.noPrompt)
     {
@@ -476,6 +507,10 @@ int RunMain(int argc, wchar_t** argv)
                                       "shown in the progress window and the console right after the start).\n\n",
                                       workloadIds.size(), algorithms.size(), opt.iterations, opt.warmup,
                                       FormatDuration(estimatedSeconds < 1.0 ? 1.0 : estimatedSeconds).c_str()));
+            if (stablePower)
+                text += developerMode ? L"Stable power: every GPU runs with SetStablePowerState(TRUE) (fixed clocks).\n\n"
+                                      : L"Stable power was requested, but Windows Developer Mode is off: running\n"
+                                        L"with normal clocks.\n\n";
         }
         text += L"Please pause other GPU work now, then press OK to start.\nCancel exits without running.";
         Log("Waiting for confirmation (message box)...\n");
@@ -507,6 +542,37 @@ int RunMain(int argc, wchar_t** argv)
     benchOptions.logAddresses = opt.dred;
     benchOptions.testRemoveDevice = opt.testRemove;
 
+    // --- --stable-power ---------------------------------------------------------------------
+    std::vector<std::string> gpuStablePower(gpus.size(), "off");
+    std::vector<std::string> gpuStablePowerNote(gpus.size());
+    if (stablePower)
+    {
+        for (size_t gi = 0; gi < gpus.size(); ++gi)
+        {
+            if (!developerMode)
+            {
+                gpuStablePower[gi] = "unavailable";
+                gpuStablePowerNote[gi] = "requested, but Windows Developer Mode is off: SetStablePowerState was not "
+                                         "called (it would remove the device); normal clocks";
+                continue;
+            }
+            const HRESULT hr = gpus[gi].device->SetStablePowerState(TRUE);
+            if (SUCCEEDED(hr))
+            {
+                gpuStablePower[gi] = "on";
+                gpuStablePowerNote[gi] = "SetStablePowerState(TRUE) (Developer Mode is on)";
+            }
+            else
+            {
+                gpuStablePower[gi] = "failed";
+                gpuStablePowerNote[gi] =
+                    Format("SetStablePowerState(TRUE) returned 0x%08X; normal clocks", static_cast<unsigned>(hr));
+            }
+            Log("Stable power on %s: %s (%s)\n", gpus[gi].name.c_str(), gpuStablePower[gi].c_str(),
+                gpuStablePowerNote[gi].c_str());
+        }
+    }
+
     auto newRecord = [&](size_t gi) {
         const GpuInfo& gpu = gpus[gi];
         GpuRecord record;
@@ -520,6 +586,8 @@ int RunMain(int argc, wchar_t** argv)
         record.waveLaneCountMax = gpu.waveLaneCountMax;
         record.waveSize = gpuWave[gi].size;
         record.waveSizeAttribute = gpuWave[gi].attribute;
+        record.stablePower = gpuStablePower[gi];
+        record.stablePowerNote = gpuStablePowerNote[gi];
         return record;
     };
 
@@ -550,8 +618,9 @@ int RunMain(int argc, wchar_t** argv)
             std::unique_ptr<GpuBenchmark> calibration;
             try
             {
-                calibration = std::make_unique<GpuBenchmark>(gpu.device.Get(), flushShader.Get(),
-                                                             flushReadOnlyShader.Get(), noAlgorithms, benchOptions);
+                calibration =
+                    std::make_unique<GpuBenchmark>(gpu.device.Get(), flushShader.Get(), flushReadOnlyShader.Get(),
+                                                   spinShader.Get(), noAlgorithms, benchOptions);
                 gpuSecondsPerIteration[gi] = calibration->Calibrate(workloadIds[0], calibrationIterations);
                 gpuCalibrated[gi] = true;
                 calibration.reset();
@@ -605,7 +674,7 @@ int RunMain(int argc, wchar_t** argv)
         try
         {
             benchPtr = std::make_unique<GpuBenchmark>(gpu.device.Get(), flushShader.Get(), flushReadOnlyShader.Get(),
-                                                      compiled, benchOptions);
+                                                      spinShader.Get(), compiled, benchOptions);
             GpuBenchmark& bench = *benchPtr;
             record.timestampFrequency = bench.TimestampFrequency();
             for (const auto& m : DrainDebugMessages(gpu.device.Get()))
@@ -651,6 +720,26 @@ int RunMain(int argc, wchar_t** argv)
                         marked);
                 }
                 Log("  ********************************************************************************\n\n");
+            }
+
+            // Spin drain (DrainKind::Spin): calibrate its loop rate on this GPU right before the runs,
+            // after a few iterations of the flush work (clocks as in the run).
+            const bool needSpin = std::any_of(compiled.begin(), compiled.end(), [](const CompiledAlgorithm& ca) {
+                return ca.flush.drain == DrainKind::Spin;
+            });
+            if (needSpin)
+            {
+                window.SetText(L"Calibrating the spin drain ...");
+                bench.Calibrate(workloadIds[0], opt.warp ? kSpinWarmupIterationsWarp : kSpinWarmupIterations);
+                record.drainSpin = bench.CalibrateDrainSpin();
+                record.drainSpinCalibrated = true;
+                const GpuBenchmark::SpinCalibration& c = record.drainSpin;
+                Log("  Drain spin calibration: %.2f loop iterations per us (%u vs 1 iterations: %.2f us apart; "
+                    "1-iteration dispatch %.2f us); check: %u us = %u iterations measured %.2f us\n",
+                    c.iterationsPerUs, c.iterations, c.spanUs, c.overheadUs, GpuBenchmark::kSpinCheckUs,
+                    c.checkIterations, c.checkUs);
+                for (const auto& m : DrainDebugMessages(gpu.device.Get()))
+                    Log("    %s\n", m.c_str());
             }
 
             // Run-time estimate: the iterations still to run on this GPU at its measured rate (the

@@ -10,6 +10,18 @@ rem   run_all.bat probe      only the wave probe: --list-adapters, then ONE GpuS
 rem                          run (one prompt, a few seconds, no sorts) that probes every GPU without
 rem                          [WaveSize] and with [WaveSize(N)] for every N in its wave lane range;
 rem                          report in wave_probe.txt (+ wave_probe.log). No dxdiag, smoke or full runs.
+rem   run_all.bat diag       flush-tail diagnostic (pass6): current shaders\ with the algorithm list
+rem                          shaders\algorithms_diag_flush.txt (the reference sort with every drain /
+rem                          flush variant), 300 iterations of mostly_empty, realistic_mix and
+rem                          worst_case, default wave size only, results in diag_flush.txt (+ .csv).
+rem                          If Windows Developer Mode is on, a second run with --stable-power (fixed
+rem                          clocks) follows right after it, without another prompt (diag_flush_stable).
+rem                          ONE prompt in total; no dxdiag and no smoke run (the sort shaders are the
+rem                          already validated pass5 ones; the new spin drain was validated on WARP
+rem                          with GPU-based validation and on an RTX 5080). A few minutes on a discrete
+rem                          + integrated GPU machine.
+rem   extra argument noprompt: no OK/Cancel popups: passes --no-prompt to every GpuSort.exe run, after
+rem                          a 10 s countdown (Ctrl+C aborts). For manual runs at the machine.
 rem   extra argument nopause: do not wait for a key at the end
 rem
 rem Order: adapter list, then a --smoke --dred safety run of every shader set x wave configuration,
@@ -35,6 +47,8 @@ rem   set DRYRUN=1                       required
 rem   set DRYRUN_ADAPTERS=<file>         use this file as the --list-adapters output (default: run
 rem                                      GpuSort.exe --list-adapters for real; it does no GPU work)
 rem   set DRYRUN_FAIL=<k>                pretend run k returns DRYRUN_FAIL_RC (default 1)
+rem   set DRYRUN_DEVMODE=0^|1             diag mode: pretend Developer Mode is off / on (default: read
+rem                                      the registry)
 setlocal EnableExtensions EnableDelayedExpansion
 
 set "ROOT=%~dp0"
@@ -44,10 +58,12 @@ set "SMOKE_ITERS=16"
 set "FINAL_RC=0"
 set "SKIPPED_SETS="
 set "NOPAUSE="
+set "NOPROMPT="
+set "NPARG="
 if defined DRYRUN set "NOPAUSE=1"
 :parse_args
 if "%~1"=="" goto :args_done
-if /i "%~1"=="all" (set "MODE=all") else if /i "%~1"=="latest" (set "MODE=latest") else if /i "%~1"=="current" (set "MODE=current") else if /i "%~1"=="probe" (set "MODE=probe") else if /i "%~1"=="nopause" (set "NOPAUSE=1") else (
+if /i "%~1"=="all" (set "MODE=all") else if /i "%~1"=="latest" (set "MODE=latest") else if /i "%~1"=="current" (set "MODE=current") else if /i "%~1"=="probe" (set "MODE=probe") else if /i "%~1"=="diag" (set "MODE=diag") else if /i "%~1"=="nopause" (set "NOPAUSE=1") else if /i "%~1"=="noprompt" (set "NOPROMPT=1") else (
     echo Unknown argument "%~1".
     call :usage
     set "NOPAUSE="
@@ -57,8 +73,13 @@ if /i "%~1"=="all" (set "MODE=all") else if /i "%~1"=="latest" (set "MODE=latest
 shift
 goto :parse_args
 :args_done
-echo Modes: run_all.bat [latest^|all^|current^|probe] [nopause]   ^(default latest; probe = wave probe only, seconds^)
-echo Running mode: %MODE%
+echo Modes: run_all.bat [latest^|all^|current^|probe^|diag] [noprompt] [nopause]   ^(default latest; probe = wave probe only, seconds; diag = flush diagnostic, minutes^)
+if defined NOPROMPT (
+    set "NPARG=--no-prompt"
+    echo Running mode: %MODE%, NO POPUPS ^(noprompt^)
+) else (
+    echo Running mode: %MODE%
+)
 
 if not exist "%EXE%" (
     echo ERROR: GpuSort.exe was not found next to run_all.bat.
@@ -87,6 +108,7 @@ if not exist "%OUT%" (
 set "SUMMARY=%OUT%\summary.txt"
 > "%SUMMARY%" echo GpuSort portable run on %COMPUTERNAME%, started %DATE% %TIME%
 >> "%SUMMARY%" echo Mode: %MODE%
+if defined NOPROMPT >> "%SUMMARY%" echo No popups (noprompt): every GpuSort.exe run got --no-prompt
 if defined DRYRUN >> "%SUMMARY%" echo DRY RUN: no GPU runs were executed
 if exist "%ROOT%package_info.txt" copy /y "%ROOT%package_info.txt" "%OUT%\package_info.txt" >nul
 echo Results folder: %OUT%
@@ -127,6 +149,7 @@ if "%NGPUS%"=="0" (
 )
 >> "%SUMMARY%" echo Qualifying GPUs: %NGPUS% (details in adapters.txt)
 if /i "%MODE%"=="probe" goto :probe_mode
+if /i "%MODE%"=="diag" goto :diag_mode
 
 if not defined DRYRUN (
     echo.
@@ -169,7 +192,11 @@ set /a NRUNS=2*SET_COUNT*WAVE_COUNT
 set "RUNNO=0"
 
 echo.
-echo ==== Plan: %NRUNS% GPU runs, each asks for confirmation first ====
+if defined NOPROMPT (
+    echo ==== Plan: %NRUNS% GPU runs, no popups ^(noprompt^) ====
+) else (
+    echo ==== Plan: %NRUNS% GPU runs, each asks for confirmation first ====
+)
 >> "%SUMMARY%" echo Plan: %NRUNS% GPU runs
 for /l %%s in (1,1,%SET_COUNT%) do (
     echo   shader set !SET_%%s_NAME!: !SET_%%s_DIR!
@@ -185,6 +212,8 @@ if defined SKIPPED_SETS (
     echo   skipped as identical to shaders\:!SKIPPED_SETS!
     >> "%SUMMARY%" echo   skipped as identical to shaders\:!SKIPPED_SETS!
 )
+
+call :countdown
 
 rem --- phase 1: smoke tests ----------------------------------------------------------------------
 set "FINAL_RC=0"
@@ -226,7 +255,11 @@ rem there is one prompt. The report goes to wave_probe.txt; its Summary section 
 set "NRUNS=1"
 set "RUNNO=1"
 echo.
-echo ==== Plan: 1 GPU run (wave probe only, no sorts), it asks for confirmation first ====
+if defined NOPROMPT (
+    echo ==== Plan: 1 GPU run ^(wave probe only, no sorts^), no popup ^(noprompt^) ====
+) else (
+    echo ==== Plan: 1 GPU run ^(wave probe only, no sorts^), it asks for confirmation first ====
+)
 >> "%SUMMARY%" echo Plan: 1 GPU run (GpuSort.exe --wave-probe: every GPU x wave configuration, no sorts)
 set "GPUNO=0"
 for /f "usebackq tokens=5,7" %%a in (`findstr /c:"wave lane range:" "%OUT%\adapters.txt"`) do (
@@ -236,9 +269,10 @@ for /f "usebackq tokens=5,7" %%a in (`findstr /c:"wave lane range:" "%OUT%\adapt
     >> "%SUMMARY%" echo   GPU [!GPUNO!] wave lanes %%a-%%b: !CFGS!
     set /a GPUNO+=1
 )
+call :countdown
 set "LAST_LABEL=1/1: wave probe"
 set "FILE=wave_probe"
-set CMD="%EXE%" --wave-probe --label "!LAST_LABEL!" --out "%OUT%\!FILE!.txt" --log "%OUT%\!FILE!.log"
+set CMD="%EXE%" --wave-probe !NPARG! --label "!LAST_LABEL!" --out "%OUT%\!FILE!.txt" --log "%OUT%\!FILE!.log"
 echo.
 echo ==== Run !LAST_LABEL! ====
 if defined DRYRUN goto :probe_dry
@@ -269,6 +303,73 @@ if exist "%OUT%\!FILE!.txt" (
         if "!LINE!"=="-------" set "INSUM=1"
     )
 )
+goto :finish
+
+rem --- diag mode: the flush-tail diagnostic set, normal clocks, then (Developer Mode) stable power ---
+rem Run 2 only follows a run 1 that finished with exit code 0, and never asks again: the one prompt
+rem (run 1) covers both, its label says so. SetStablePowerState removes the device without Developer
+rem Mode, so run 2 is skipped then (GpuSort.exe checks it too and would run without it).
+:diag_mode
+set "DIAG_ARGS=--shaders "%ROOT%shaders" --algo-file algorithms_diag_flush.txt --iterations 300 --workload mostly_empty,realistic_mix,worst_case"
+set "DEVMODE="
+if defined DRYRUN if defined DRYRUN_DEVMODE (
+    if "%DRYRUN_DEVMODE%"=="1" set "DEVMODE=1"
+    goto :devmode_done
+)
+set "DEVVAL="
+for /f "tokens=3" %%v in ('reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /v AllowDevelopmentWithoutDevLicense 2^>nul ^| findstr /i "AllowDevelopmentWithoutDevLicense"') do set "DEVVAL=%%v"
+if /i "!DEVVAL!"=="0x1" set "DEVMODE=1"
+:devmode_done
+if not exist "%ROOT%shaders\algorithms_diag_flush.txt" (
+    echo ERROR: shaders\algorithms_diag_flush.txt is missing. Unzip the whole package first.
+    >> "%SUMMARY%" echo shaders\algorithms_diag_flush.txt is missing
+    set "FINAL_RC=1"
+    goto :finish
+)
+if defined DEVMODE (set "NRUNS=2") else (set "NRUNS=1")
+set "RUNNO=0"
+echo.
+if defined NOPROMPT (
+    echo ==== Plan: %NRUNS% GPU run^(s^), default wave size, no popups ^(noprompt^) ====
+) else (
+    echo ==== Plan: %NRUNS% GPU run^(s^), default wave size, ONE confirmation popup in total ====
+)
+echo   algorithm list shaders\algorithms_diag_flush.txt ^(16 algorithms^), 300 iterations ^(+5 warmup^) of
+echo   mostly_empty, realistic_mix and worst_case, on every qualifying GPU
+echo   run 1: normal clocks -^> diag_flush.txt
+>> "%SUMMARY%" echo Plan: %NRUNS% GPU run(s): shaders\algorithms_diag_flush.txt, 300 iterations, mostly_empty / realistic_mix / worst_case, default wave size
+if defined DEVMODE (
+    echo   run 2: --stable-power ^(SetStablePowerState, fixed clocks^) -^> diag_flush_stable.txt, starts right
+    echo          after run 1 WITHOUT another popup
+    >> "%SUMMARY%" echo   run 2: --stable-power, no prompt of its own ^(Windows Developer Mode is on^)
+) else (
+    echo   no --stable-power run: Windows Developer Mode is off ^(SetStablePowerState needs it^)
+    >> "%SUMMARY%" echo   no --stable-power run: Windows Developer Mode is off
+)
+echo   Expected run time per run: under 1 min on a discrete GPU, 2-3 min on an integrated GPU ^(GpuSort
+echo   prints a calibrated estimate right after the start^)
+call :countdown
+set "RUNNO=1"
+set "FILE=diag_flush"
+if defined DEVMODE (set "LAST_LABEL=1/2: diag flush, normal clocks (then 2/2 with --stable-power, no further prompt)") else (set "LAST_LABEL=1/1: diag flush, normal clocks")
+set CMD="%EXE%" !DIAG_ARGS! !NPARG! --label "!LAST_LABEL!" --out "%OUT%\!FILE!.txt" --log "%OUT%\!FILE!.log"
+call :exec
+if not "!RC!"=="0" (
+    set "FINAL_RC=1"
+    if defined DEVMODE (
+        echo Run 2 ^(--stable-power^) is not started: run 1 did not finish with exit code 0.
+        >> "%SUMMARY%" echo run 2 ^(--stable-power^) not started: run 1 exit code !RC!
+    )
+    goto :finish
+)
+if not defined DEVMODE goto :finish
+set "RUNNO=2"
+set "FILE=diag_flush_stable"
+set "LAST_LABEL=2/2: diag flush, --stable-power"
+set CMD="%EXE%" !DIAG_ARGS! --stable-power --no-prompt --label "!LAST_LABEL!" --out "%OUT%\!FILE!.txt" --log "%OUT%\!FILE!.log"
+call :exec
+if not "!RC!"=="0" set "FINAL_RC=1"
+if exist "%OUT%\!FILE!.txt" findstr /c:"stable power:" "%OUT%\!FILE!.txt" >> "%SUMMARY%"
 goto :finish
 
 :smoke_failed
@@ -320,12 +421,32 @@ goto :end
 rem --- subroutines -------------------------------------------------------------------------------
 
 :usage
-echo Usage: run_all.bat [latest^|all^|current^|probe] [nopause]
+echo Usage: run_all.bat [latest^|all^|current^|probe^|diag] [noprompt] [nopause]
 echo   ^(none^) or latest  current shaders\ + the latest _test\passN snapshot that differs from shaders\
 echo   all               current shaders\ + every _test\passN snapshot
 echo   current           current shaders\ only
 echo   probe             only the wave probe: one GpuSort.exe --wave-probe run ^(one prompt, seconds^)
+echo   diag              flush-tail diagnostic: shaders\algorithms_diag_flush.txt, normal clocks + ^(with
+echo                     Developer Mode^) --stable-power, one prompt, a few minutes
+echo   noprompt          no popups ^(--no-prompt for every run^), after a 10 s countdown ^(Ctrl+C aborts^)
 echo   nopause           do not wait for a key at the end
+exit /b 0
+
+rem :countdown: with noprompt, one warning line and 10 s to abort (Ctrl+C) before the first GPU run.
+:countdown
+if not defined NOPROMPT exit /b 0
+echo.
+echo No popups: make sure other GPU work is paused
+>> "%SUMMARY%" echo No popups: 10 s countdown before the first GPU run
+if defined DRYRUN (
+    echo [DRYRUN] 10 s countdown skipped
+    exit /b 0
+)
+echo Starting in 10 seconds - press Ctrl+C to abort.
+rem (timeout.exe by full path: a GNU timeout earlier in PATH, e.g. from Git, takes other arguments;
+rem  with redirected input it fails at once, then ping waits instead.)
+"%SystemRoot%\System32\timeout.exe" /t 10 /nobreak
+if errorlevel 1 "%SystemRoot%\System32\ping.exe" -n 11 127.0.0.1 >nul
 exit /b 0
 
 rem :add_set <passN>: adds _test\<passN> unless the packager marked it identical to shaders\.
@@ -360,7 +481,10 @@ if "!KIND!"=="smoke" (
     set "KARGS=--smoke --dred --iterations %SMOKE_ITERS%"
 )
 set "LAST_LABEL=!RUNNO!/!NRUNS!: !KIND! !SNAME! !WDESC!"
-set CMD="%EXE%" --shaders "!SDIR!" !KARGS! !WARG! --label "!LAST_LABEL!" --out "%OUT%\!FILE!.txt" --log "%OUT%\!FILE!.log"
+set CMD="%EXE%" --shaders "!SDIR!" !KARGS! !WARG! !NPARG! --label "!LAST_LABEL!" --out "%OUT%\!FILE!.txt" --log "%OUT%\!FILE!.log"
+rem :exec: runs CMD (or prints it in a dry run) for FILE / LAST_LABEL; sets RC and RC_TEXT, adds the
+rem summary line and collects the run's wave probe lines. (Also called directly by the diag mode.)
+:exec
 echo.
 echo ==== Run !LAST_LABEL! ====
 if defined DRYRUN goto :run_dry

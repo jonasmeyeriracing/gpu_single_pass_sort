@@ -1,0 +1,78 @@
+# Flush-tail diagnostic set (pass6). Run with --algo-file algorithms_diag_flush.txt (run_all.bat diag:
+# --iterations 300 --workload mostly_empty,realistic_mix,worst_case, default wave size only).
+# Format: see algorithms.txt. Same shaders as algorithms.txt (no new sort code); only the flush mode
+# differs. Suffix = the flush mode.
+#
+# Question: on the RX 7900 XTX the drained 'full' (pass5 one-group drain) is still ~12 us slower than
+# '@data' / '@code' on mostly_empty; cold data and cold code each cost ~0 there, so something after
+# the 256 MB flush lasts several us. The spin drains (full_d<N>: an ALU-only dispatch of about N us
+# between the flush and the start timestamp, no memory traffic) show how long it lasts: the timing
+# should fall to the '@data' level once N covers it. full_ro_d20: the same with a read-only flush
+# (is it the dirty write-back?). none_d20: no flush, the spin only (does the spin itself, or the
+# GPU idling without the flush work, change the timing? 'none' was slow on large sorts on AMD).
+
+# --- reference: every drain variant ---
+algorithm s1_rank512_bitreg2048_radix@full
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush full
+
+algorithm s1_rank512_bitreg2048_radix@full_legacy
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush full_legacy
+
+algorithm s1_rank512_bitreg2048_radix@full_d2
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush full_d2
+
+algorithm s1_rank512_bitreg2048_radix@full_d5
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush full_d5
+
+algorithm s1_rank512_bitreg2048_radix@full_d10
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush full_d10
+
+algorithm s1_rank512_bitreg2048_radix@full_d20
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush full_d20
+
+algorithm s1_rank512_bitreg2048_radix@full_d50
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush full_d50
+
+algorithm s1_rank512_bitreg2048_radix@full_d100
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush full_d100
+
+algorithm s1_rank512_bitreg2048_radix@full_ro
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush full_ro
+
+algorithm s1_rank512_bitreg2048_radix@full_ro_d20
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush full_ro_d20
+
+algorithm s1_rank512_bitreg2048_radix@data
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush data
+
+algorithm s1_rank512_bitreg2048_radix@code
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush code
+
+algorithm s1_rank512_bitreg2048_radix@none
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush none
+
+algorithm s1_rank512_bitreg2048_radix@none_d20
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush none_d20
+
+# --- a second, very different shader (pass0 bitonic, all sizes): pass5 drain vs a 20 us spin ---
+algorithm pass0_bitonic@full
+dispatch pass0_bitonic.hlsl main 1024 MIN_COUNT=1 MAX_COUNT=8192
+flush full
+
+algorithm pass0_bitonic@full_d20
+dispatch pass0_bitonic.hlsl main 1024 MIN_COUNT=1 MAX_COUNT=8192
+flush full_d20

@@ -1,4 +1,4 @@
-# GpuSort CSV output (schema_version 1)
+# GpuSort CSV output (schema_version 2)
 
 Every GpuSort.exe benchmark / smoke run writes, next to its results `.txt` (`--out`, default
 `results.txt` next to the exe):
@@ -12,13 +12,20 @@ Every GpuSort.exe benchmark / smoke run writes, next to its results `.txt` (`--o
 `--csv <file>` sets the first file's path; the other two follow its stem. A `--wave-probe` run
 writes only the wave probe CSV, as `<stem>.csv` (default `wave_probe.csv` next to the exe). In a
 run_all.bat results folder: `current.csv`, `current_samples.csv`, `current_wave_probe.csv`,
-`smoke_pass4_wave64.csv`, ... and, in probe mode, `wave_probe.csv`.
+`smoke_pass4_wave64.csv`, ..., in probe mode `wave_probe.csv`, and in diag mode `diag_flush.csv`
+(+ `diag_flush_stable.csv`, the same with `--stable-power`).
 
 Format: UTF-8 without BOM, a header row, CRLF line ends, RFC 4180 quoting (a field with a comma,
 quote or line break is quoted, inner quotes doubled), `.` as the decimal separator whatever the
 Windows locale, times in microseconds with 3 decimals. Empty field = not applicable / no value.
 Columns are identified by their header name; new columns are only ever appended, and
 `schema_version` changes if a column is renamed, removed or changes meaning.
+
+Schema versions: **1** (packages up to 60814ed); **2** (pass6): the results CSV appends
+`stable_power` and `drain_spin_iters_per_us`, and `flush_mode` can carry a drain suffix
+(`full_d20`, ...; see below). The samples and wave probe columns are unchanged (the wave probe
+file's `schema_version` is 2 as well). `tools/aggregate_results.py` reads both and leaves the new
+columns empty for version 1 rows.
 
 `tools/aggregate_results.py` merges these files from many results folders / zips into
 `all_results.csv`, `all_samples.csv` and `all_wave_probe.csv` (see its `--help`).
@@ -35,7 +42,7 @@ Columns are identified by their header name; new columns are only ever appended,
 
 | column | meaning |
 |---|---|
-| schema_version | 1 |
+| schema_version | 2 (1: packages up to 60814ed, without the last two columns) |
 | run_id | see Keys |
 | run_timestamp | run start, ISO 8601 local time with UTC offset, e.g. `2026-09-29T14:30:12.345+02:00` |
 | computer | Windows computer name |
@@ -53,7 +60,7 @@ Columns are identified by their header name; new columns are only ever appended,
 | wave_size_attr | 1 = compiled with `[WaveSize(wave_size)]` |
 | timestamp_freq_hz | GPU timestamp frequency (time resolution = 1 / this) |
 | algorithm | algorithm name without its `@suffix` (e.g. `s4_3tier_rx3r`) |
-| flush_mode | `full` (the measurement of record), `full_legacy`, `full_ro`, `code`, `data`, `none` (see GpuSort.exe --help) |
+| flush_mode | what ran between the upload and the timed sort (see "Flush modes" below): `full` (the measurement of record), `full_legacy`, `full_ro`, `code`, `data`, `none`, or one of these with a drain suffix, e.g. `full_d20` |
 | workload | `mostly_empty`, `mostly_small`, `realistic_mix`, `mostly_large`, `worst_case`, `edges`, `mostly_mid`, `mostly_medium`, `sweep`, `sparse_keys` |
 | sweep_size | sweep workload: the sort size of this row's iterations (all 20 sorts of an iteration have it); empty otherwise |
 | sorts_per_iteration | 20 |
@@ -68,6 +75,24 @@ Columns are identified by their header name; new columns are only ever appended,
 | iterations_requested | `--iterations` of the run |
 | wave_probe_ok | 1 = the wave probe found the configuration the shaders were compiled for, 0 = WAVE PROBE WARNING, empty = the probe did not run |
 | gpu_error | non-empty if the GPU's run aborted (e.g. `DEVICE LOST: ...`); the rows hold the partial results |
+| stable_power | (v2) `off` (not requested), `on` (`--stable-power`: `ID3D12Device::SetStablePowerState(TRUE)` succeeded, fixed clocks), `unavailable` (requested, but Windows Developer Mode is off: not called, normal clocks), `failed` (the call returned an error, normal clocks) |
+| drain_spin_iters_per_us | (v2) the GPU's calibrated spin drain rate (loop iterations per microsecond; a `_d<N>` drain runs round(N x this) iterations); empty if the run has no spin drain |
+
+### Flush modes
+
+`<kind>[_dg|_d<N>]`, kind = `full` (upload, 256 MB read+write flush), `full_ro` (upload, 256 MB
+read-only flush), `code` (flush, then upload), `data` (upload, flush, untimed warm-up run of the same
+sort on a private copy), `none` (upload only). The drain runs right before the start timestamp:
+
+| suffix | drain |
+|---|---|
+| none | the pass5 default of that kind: the group drain for `full` / `code` / `data` / `none`, no drain for `full_ro` |
+| `_dg` | group drain (pass5): one group of the flush shader on a private 4 KB buffer + UAV barrier |
+| `_d<N>` | spin drain (pass6), N = 1..1000: an ALU-only dispatch of about N us (4 groups x 64 threads, a dependent integer chain, one 16-byte store per thread to the private 4 KB buffer; loop count from the per-GPU calibration, `drain_spin_iters_per_us`) + UAV barrier |
+| `_d0` | no drain |
+
+Names are canonical: `full_d0` is written as `full_legacy` (the pre-pass5 `full`), `full_ro_d0` as
+`full_ro`, `full_dg` as `full`, `code_dg` as `code`, etc.
 
 ## `<stem>_samples.csv`
 

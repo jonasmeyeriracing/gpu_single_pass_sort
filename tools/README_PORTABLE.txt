@@ -11,9 +11,11 @@ How to run
    zip view in Explorer.
 2. Close games and other GPU-heavy programs.
 3. Double-click run_all.bat. (Only the wave probe, a few seconds: open a command prompt in this
-   folder and run "run_all.bat probe", see "Modes" below.)
+   folder and run "run_all.bat probe"; the flush diagnostic, a few minutes: "run_all.bat diag";
+   see "Modes" below.)
 4. Every GPU run first shows an OK/Cancel box titled "... Run k/N: <kind> <shader set> <wave>".
    Press OK to start that run. Cancel stops the script (the results so far are kept).
+   (No boxes at all: add "noprompt", see "No popups" below.)
    While a run is active a small "GpuSort benchmark running" window shows its progress. Please
    leave the PC alone until it closes.
 5. At the end the script prints the results folder, results\<COMPUTERNAME>_<yyyymmdd_hhmm>\,
@@ -26,6 +28,10 @@ Modes (from a command prompt in this folder; run_all.bat prints them when it sta
     run_all.bat current    current shaders\ only
     run_all.bat probe      only the wave probe: a few seconds, ONE OK/Cancel box, no sorts
                            (see "Wave probe only" below)
+    run_all.bat diag       the flush diagnostic: a few minutes, ONE OK/Cancel box
+                           (see "Flush diagnostic" below)
+    add "noprompt" to any mode for no OK/Cancel boxes (see "No popups" below), e.g.
+        run_all.bat diag noprompt
     add "nopause" to any mode to skip the "press any key" at the end.
 A snapshot whose shaders are identical to shaders\ is skipped (package_info.txt says which).
 Typically the newest snapshot is the current pass itself, so the default compares the current
@@ -43,6 +49,33 @@ verdict per GPU x wave configuration ("OK" or "WAVE PROBE WARNING"). No dxdiag, 
 The results folder then has adapters.txt, wave_probe.txt (the report, with a Summary section at the
 end), wave_probe.csv (the same per GPU x wave configuration, machine-readable), wave_probe.log
 (console output) and summary.txt (plan, exit code, the probe's Summary), and is zipped as usual. Exit code 0 = every configuration OK, 1 = a warning or error, 3 = device lost.
+
+Flush diagnostic (run_all.bat diag)
+-----------------------------------
+Measures how long the effect of the 256 MB cache flush lasts after it (on the RX 7900 XTX the
+default measurement still carries ~12 us of it). One shader set: shaders\ with the algorithm list
+shaders\algorithms_diag_flush.txt: the reference sort (s1_rank512_bitreg2048_radix) with every
+flush variant (spin drains of 2 / 5 / 10 / 20 / 50 / 100 us after the flush, the read-only flush,
+code / data / none) and the pass0 bitonic sort as a second shader; 300 iterations of mostly_empty,
+realistic_mix and worst_case; default wave size only; no dxdiag and no smoke test (the sort shaders
+are the already tested ones; the new spin drain was tested on WARP with GPU-based validation and
+on an RTX 5080).
+  Run 1 (normal clocks) -> diag_flush.txt / .csv / .log.
+  Run 2 (only if Windows Developer Mode is on): the same with --stable-power (the driver's fixed
+    "stable power" clocks, ID3D12Device::SetStablePowerState) -> diag_flush_stable.txt / .csv / .log.
+    It starts right after run 1 WITHOUT another OK/Cancel box (run 1's box says so), and only if
+    run 1 finished without errors. Without Developer Mode that call removes the D3D12 device
+    (the run would fail), so the script skips run 2 then (summary.txt says so); nothing needs to
+    be changed on the machine for run 1.
+Expected time: under a minute per run on a discrete GPU, 2-3 minutes per run on an integrated GPU
+(both GPUs of a machine run in every run); GpuSort prints a calibrated estimate after the OK.
+
+No popups (noprompt)
+--------------------
+"run_all.bat <mode> noprompt" (any mode) passes --no-prompt to every GpuSort.exe run: no OK/Cancel
+boxes. Instead the script prints "No popups: make sure other GPU work is paused" once and counts
+down 10 seconds before the first GPU run; press Ctrl+C (then Y) to abort. The progress window still
+shows while a run is active. Use it when you start the runs by hand at the machine.
 
 What it runs (default, all, current)
 ------------------------------------
@@ -89,6 +122,8 @@ Results folder contents
                                 full run and GPU; about 1.2 MB of that in the zip)
     <run>_wave_probe.csv        the run's wave probe, one row per GPU x wave configuration
     wave_probe.csv              probe mode only: the --wave-probe report as CSV
+    diag_flush[_stable].txt     diag mode only: the flush diagnostic (+ .csv, _samples.csv,
+                                _wave_probe.csv, .log); _stable = the --stable-power run
 <set> is "current" (shaders\) or "passN" (_test\passN\). No _waveNN = default wave size.
 The CSV columns are described in CSV_FORMAT.md; tools\aggregate_results.py (in the repository)
 merges the CSVs of the zips from all machines.
@@ -126,4 +161,8 @@ Running GpuSort.exe directly
     GpuSort.exe --wave-probe                     (only the wave probe, every wave configuration of
                                                   every GPU; one prompt; what "run_all.bat probe" runs)
     GpuSort.exe --wave-probe --wave-size 64      (only the wave probe of that configuration; still asks)
+    GpuSort.exe --algo-file algorithms_diag_flush.txt --iterations 300
+                                                 (another algorithm list in the shader folder)
+    GpuSort.exe --stable-power                   (fixed clocks; needs Windows Developer Mode, else it
+                                                  runs with normal clocks and says so)
 The exe finds shaders\ next to itself; --shaders selects a snapshot.

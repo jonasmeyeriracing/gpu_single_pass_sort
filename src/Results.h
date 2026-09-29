@@ -20,7 +20,7 @@ struct ComboRecord
     uint32_t workloadId = 0;
     std::string algorithm;
     ComboResult result;
-    FlushMode flush = FlushMode::Full; // the algorithm's flush mode in this run
+    FlushMode flush = kDefaultFlushMode; // the algorithm's flush mode in this run
 };
 
 // --smoke: an algorithm that failed verification (its remaining workloads were skipped).
@@ -54,6 +54,13 @@ struct GpuRecord
     bool calibrated = false;
     double secondsPerIterationEstimate = 0;
     double estimatedSeconds = 0;
+    // --stable-power (main.cpp): "off" (not requested), "on" (SetStablePowerState(TRUE) succeeded),
+    // "unavailable" (Developer Mode is off: not called), "failed" (the call returned an error).
+    std::string stablePower = "off";
+    std::string stablePowerNote; // details for the results header (empty for "off")
+    // Spin drain calibration (GpuBenchmark::CalibrateDrainSpin), if the run uses a spin drain.
+    bool drainSpinCalibrated = false;
+    GpuBenchmark::SpinCalibration drainSpin;
     std::vector<ComboRecord> combos;
     std::vector<SmokeFailure> smokeFailed; // --smoke only
     std::string error; // non-empty if the GPU run aborted
@@ -62,7 +69,7 @@ struct GpuRecord
 struct AlgorithmInfo
 {
     std::string name;
-    FlushMode flush = FlushMode::Full;
+    FlushMode flush = kDefaultFlushMode;
     std::vector<size_t> dxilBytes; // per dispatch (DXIL container size, for the first wave configuration)
 };
 
@@ -84,7 +91,8 @@ struct RunInfo
     std::vector<uint32_t> workloadIds;
     std::vector<std::string> algorithms;
     std::vector<AlgorithmInfo> algorithmInfos;
-    FlushMode defaultFlush = FlushMode::Full; // --flush-mode
+    std::string algoFile;                     // the algorithm list (file name, e.g. algorithms.txt)
+    FlushMode defaultFlush = kDefaultFlushMode; // --flush-mode
     uint32_t dxilWaveSize = 0;                // WAVE_SIZE of the algorithmInfos DXIL sizes
     std::vector<std::string> skippedAdapters;
     std::vector<GpuRecord> gpus;
