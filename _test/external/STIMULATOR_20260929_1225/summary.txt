@@ -1,0 +1,12 @@
+GpuSort portable run on STIMULATOR, started 29/09/2026 12.25.26,53
+Mode: pass7
+Qualifying GPUs: 2 (details in adapters.txt)
+  GPU [0] discrete, vendor 1002, wave lanes 32-64
+  GPU [1] integrated, vendor 1002, wave lanes 32-64
+Plan: 4 GPU runs of _test\pass7 (21 algorithms, smoke 24), estimated ~24.6 min
+  smoke, then full: default wave size on every GPU, and --wave-size 64 on the integrated GPU(s) only
+[1/4: smoke pass7 default wave size, every GPU] exit code 0 (ok) -> pass7_smoke.txt / pass7_smoke.log
+[2/4: smoke pass7 wave64, integrated GPU only] exit code 0 (ok) -> pass7_smoke_igpu_wave64.txt / pass7_smoke_igpu_wave64.log
+[3/4: full pass7 default wave size, every GPU] exit code 0 (ok) -> pass7.txt / pass7.log
+[4/4: full pass7 wave64, integrated GPU only] exit code 0 (ok) -> pass7_igpu_wave64.txt / pass7_igpu_wave64.log
+Finished 29/09/2026 12.56.37,87, overall exit code 0

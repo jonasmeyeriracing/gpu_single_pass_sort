@@ -311,6 +311,7 @@ int RunMain(int argc, wchar_t** argv)
     info.algoFile = algoFile.string();
     info.commandLine = CommandLineUtf8();
     info.iterations = opt.iterations;
+    info.iterationsIntegrated = opt.iterationsIntegrated;
     info.warmup = opt.warmup;
     info.workloadIds = workloadIds;
     info.defaultFlush = opt.flushMode;
@@ -333,6 +334,23 @@ int RunMain(int argc, wchar_t** argv)
             for (const auto& s : info.skippedAdapters)
                 Log("Skipping adapter %s\n", s.c_str());
             throw std::runtime_error("no integrated GPU found (--integrated-only)");
+        }
+    }
+    if (opt.discreteOnly && !opt.warp)
+    {
+        // --discrete-only: e.g. the RX 7900 XTX at wave64 without the Ryzen iGPU (run_all.bat final).
+        const size_t qualifying = gpus.size();
+        std::erase_if(gpus, [&](const GpuInfo& g) {
+            if (!g.uma)
+                return false;
+            info.skippedAdapters.push_back(g.name + ": an integrated (UMA) GPU (--discrete-only)");
+            return true;
+        });
+        if (gpus.empty() && qualifying > 0)
+        {
+            for (const auto& s : info.skippedAdapters)
+                Log("Skipping adapter %s\n", s.c_str());
+            throw std::runtime_error("no discrete GPU found (--discrete-only)");
         }
     }
     if (opt.waveSize)
@@ -359,10 +377,22 @@ int RunMain(int argc, wchar_t** argv)
     if (gpus.empty())
         throw std::runtime_error(opt.warp ? "WARP adapter does not qualify (needs SM 6.6)"
                                           : "no qualifying hardware GPU found (needs D3D12 + SM 6.6)");
-    for (const auto& g : gpus)
-        Log("Using adapter: %s (vendor %04X device %04X, driver %s, %llu MB, wave lanes %u-%u)\n", g.name.c_str(),
-            g.vendorId, g.deviceId, g.driver.c_str(), static_cast<unsigned long long>(g.dedicatedVideoMemory >> 20),
-            g.waveLaneCountMin, g.waveLaneCountMax);
+    // Measured iterations per GPU: --iterations-integrated on integrated (UMA) GPUs, if given.
+    std::vector<uint32_t> gpuIterations(gpus.size());
+    bool iterationsDiffer = false;
+    for (size_t gi = 0; gi < gpus.size(); ++gi)
+    {
+        gpuIterations[gi] = gpus[gi].uma && opt.iterationsIntegrated ? opt.iterationsIntegrated : opt.iterations;
+        iterationsDiffer |= gpuIterations[gi] != opt.iterations;
+    }
+    for (size_t gi = 0; gi < gpus.size(); ++gi)
+    {
+        const GpuInfo& g = gpus[gi];
+        Log("Using adapter: %s (vendor %04X device %04X, driver %s, %llu MB, wave lanes %u-%u, %s, %u iterations)\n",
+            g.name.c_str(), g.vendorId, g.deviceId, g.driver.c_str(),
+            static_cast<unsigned long long>(g.dedicatedVideoMemory >> 20), g.waveLaneCountMin, g.waveLaneCountMax,
+            g.uma ? "integrated" : "discrete", gpuIterations[gi]);
+    }
 
     // --- shader compilation, per wave-size configuration ----------------------------------
     // Every shader gets -D WAVE_SIZE=<n> (the device's WaveLaneCountMin, or --wave-size). If the
@@ -437,11 +467,15 @@ int RunMain(int argc, wchar_t** argv)
         compileFor(wc);
     if (!compiledByWave.empty())
     {
-        for (const auto& ca : compiledByWave.front().second)
+        for (size_t i = 0; i < compiledByWave.front().second.size(); ++i)
         {
+            const CompiledAlgorithm& ca = compiledByWave.front().second[i];
             AlgorithmInfo ai;
             ai.name = ca.name;
             ai.flush = ca.flush;
+            ai.pass = algorithms[i].pass;
+            ai.description = algorithms[i].description;
+            ai.tags = algorithms[i].tags;
             for (const auto& s : ca.shaders)
                 ai.dxilBytes.push_back(static_cast<size_t>(s->GetBufferSize()));
             ai.dispatchInfo = ca.dispatchInfo;
@@ -484,10 +518,13 @@ int RunMain(int argc, wchar_t** argv)
         Log("\n%s\n", FormatSizeDistribution(workloadIds, opt.iterations).c_str());
 
     // Iterations per GPU (every GPU runs every workload x algorithm).
-    const uint64_t totalIterations = uint64_t(opt.iterations + opt.warmup) * workloadIds.size() * algorithms.size();
+    std::vector<uint64_t> gpuTotalIterations(gpus.size());
     double estimatedSeconds = 0.0; // rough guess for the prompt; calibrated after the prompt
-    for (const auto& g : gpus)
-        estimatedSeconds += static_cast<double>(totalIterations) * GuessSecondsPerIteration(g, opt.smoke);
+    for (size_t gi = 0; gi < gpus.size(); ++gi)
+    {
+        gpuTotalIterations[gi] = uint64_t(gpuIterations[gi] + opt.warmup) * workloadIds.size() * algorithms.size();
+        estimatedSeconds += static_cast<double>(gpuTotalIterations[gi]) * GuessSecondsPerIteration(gpus[gi], opt.smoke);
+    }
 
     // --stable-power: only with Developer Mode (checked here, applied after the prompt).
     const bool stablePower = opt.stablePower && !opt.waveProbe;
@@ -523,10 +560,13 @@ int RunMain(int argc, wchar_t** argv)
             text += L"GpuSort is about to run a GPU benchmark on:\n\n";
             for (const auto& g : gpus)
                 text += L"    " + Utf8ToWide(g.name) + L"\n";
-            text += Utf8ToWide(Format("\n%zu workload(s) x %zu algorithm(s) x %u iterations (+%u warmup) per GPU.\n"
+            const std::string integratedIterations =
+                iterationsDiffer ? Format(" (integrated GPUs: %u)", opt.iterationsIntegrated) : std::string();
+            text += Utf8ToWide(Format("\n%zu workload(s) x %zu algorithm(s) x %u iterations%s (+%u warmup) per GPU.\n"
                                       "Estimated duration: roughly %s (a rough guess; a calibrated estimate is\n"
                                       "shown in the progress window and the console right after the start).\n\n",
-                                      workloadIds.size(), algorithms.size(), opt.iterations, opt.warmup,
+                                      workloadIds.size(), algorithms.size(), opt.iterations,
+                                      integratedIterations.c_str(), opt.warmup,
                                       FormatDuration(estimatedSeconds < 1.0 ? 1.0 : estimatedSeconds).c_str()));
             if (stablePower)
                 text += developerMode ? L"Stable power: every GPU runs with SetStablePowerState(TRUE) (fixed clocks).\n\n"
@@ -607,6 +647,7 @@ int RunMain(int argc, wchar_t** argv)
         record.waveLaneCountMax = gpu.waveLaneCountMax;
         record.waveSize = gpuWave[gi].size;
         record.waveSizeAttribute = gpuWave[gi].attribute;
+        record.iterations = gpuIterations[gi];
         record.stablePower = gpuStablePower[gi];
         record.stablePowerNote = gpuStablePowerNote[gi];
         return record;
@@ -667,10 +708,10 @@ int RunMain(int argc, wchar_t** argv)
             }
             for (const auto& m : DrainDebugMessages(gpu.device.Get()))
                 Log("    %s\n", m.c_str());
-            gpuEstimateSeconds[gi] = static_cast<double>(totalIterations) * gpuSecondsPerIteration[gi];
+            gpuEstimateSeconds[gi] = static_cast<double>(gpuTotalIterations[gi]) * gpuSecondsPerIteration[gi];
             Log("  [%zu] %-32s %6.2f ms per iteration%s x %llu iterations = ~%s\n", gi, gpu.name.c_str(),
                 gpuSecondsPerIteration[gi] * 1000.0, gpuCalibrated[gi] ? "" : " (guess)",
-                static_cast<unsigned long long>(totalIterations), FormatDuration(gpuEstimateSeconds[gi]).c_str());
+                static_cast<unsigned long long>(gpuTotalIterations[gi]), FormatDuration(gpuEstimateSeconds[gi]).c_str());
         }
         double total = 0.0;
         for (double e : gpuEstimateSeconds)
@@ -691,8 +732,10 @@ int RunMain(int argc, wchar_t** argv)
         for (const auto& ca : compiled)
             record.dispatchInfo[ca.name] = ca.dispatchInfo;
         const auto gpuStart = std::chrono::steady_clock::now();
-        Log("\n=== GPU %zu/%zu: %s (WAVE_SIZE %u%s) ===\n", gi + 1, gpus.size(), gpu.name.c_str(),
-            gpuWave[gi].size, gpuWave[gi].attribute ? " + [WaveSize]" : "");
+        const uint32_t iterations = gpuIterations[gi];
+        const uint64_t totalIterations = gpuTotalIterations[gi];
+        Log("\n=== GPU %zu/%zu: %s (WAVE_SIZE %u%s, %u iterations + %u warmup) ===\n", gi + 1, gpus.size(),
+            gpu.name.c_str(), gpuWave[gi].size, gpuWave[gi].attribute ? " + [WaveSize]" : "", iterations, opt.warmup);
         std::unique_ptr<GpuBenchmark> benchPtr;
         try
         {
@@ -793,7 +836,7 @@ int RunMain(int argc, wchar_t** argv)
                                                      [&](const SmokeFailure& sf) { return sf.algorithm == aname; });
                     if (failed != record.smokeFailed.end())
                     {
-                        gpuIterationsDone += opt.iterations + opt.warmup;
+                        gpuIterationsDone += iterations + opt.warmup;
                         Log("  %-14s %-20s skipped (%s)\n", wname, aname.c_str(),
                             failed->reason.empty() ? "failed verification earlier in this smoke run"
                                                    : failed->reason.c_str());
@@ -820,13 +863,13 @@ int RunMain(int argc, wchar_t** argv)
                                     failures);
                         }
                     };
-                    progress(0, opt.iterations + opt.warmup, 0);
+                    progress(0, iterations + opt.warmup, 0);
                     // Recorded before running, so a device loss leaves the partial result in place.
                     record.combos.push_back({workloadId, aname, {}, compiled[ai].flush});
                     ComboResult& result = record.combos.back().result;
                     const std::string label = gpu.name + "/" + aname + "/" + wname;
                     Log("  starting %s\n", label.c_str());
-                    bench.Run(workloadId, ai, opt.iterations, opt.warmup, label, progress, result);
+                    bench.Run(workloadId, ai, iterations, opt.warmup, label, progress, result);
                     gpuIterationsDone += result.iterationsRun;
                     totalFailures += result.failures;
                     const Stats st = ComputeStats(result.timesUs);

@@ -1,4 +1,12 @@
-# GpuSort CSV output (schema_version 3)
+# GpuSort CSV output (schema_version 4)
+
+> **Default flush mode changed (schema_version 4, the final set):** algorithms without a `flush`
+> line now run with `full_d50` (256 MB flush, then a ~50 탎 ALU spin drain). Packages up to
+> 627724b (schema_version 1-3) used `full` (flush + the pass5 one-group drain), which on the
+> RX 7900 XTX still timed a ~12 탎 post-flush penalty in most small-workload iterations
+> (mostly_empty median 14.7 탎 `full` vs 1.8 탎 `full_d50`); pass0-pass4 used `full_legacy`.
+> **Rows with different `flush_mode` values are not directly comparable**; compare within one
+> flush mode (the RTX 5080 and the Ryzen iGPU show at most a few tenths of a 탎 between them).
 
 Every GpuSort.exe benchmark / smoke run writes, next to its results `.txt` (`--out`, default
 `results.txt` next to the exe):
@@ -12,8 +20,9 @@ Every GpuSort.exe benchmark / smoke run writes, next to its results `.txt` (`--o
 `--csv <file>` sets the first file's path; the other two follow its stem. A `--wave-probe` run
 writes only the wave probe CSV, as `<stem>.csv` (default `wave_probe.csv` next to the exe). In a
 run_all.bat results folder: `current.csv`, `current_samples.csv`, `current_wave_probe.csv`,
-`smoke_pass4_wave64.csv`, ..., in probe mode `wave_probe.csv`, and in diag mode `diag_flush.csv`
-(+ `diag_flush_stable.csv`, the same with `--stable-power`).
+`smoke_pass4_wave64.csv`, ..., in probe mode `wave_probe.csv`, in diag mode `diag_flush.csv`
+(+ `diag_flush_stable.csv`, the same with `--stable-power`), and in final mode `final_smoke.csv`,
+`final.csv` (+ `final_smoke_wave64.csv`, `final_wave64.csv` on GPUs with a wave size range).
 
 Format: UTF-8 without BOM, a header row, CRLF line ends, RFC 4180 quoting (a field with a comma,
 quote or line break is quoted, inner quotes doubled), `.` as the decimal separator whatever the
@@ -23,9 +32,12 @@ Columns are identified by their header name; new columns are only ever appended,
 
 Schema versions: **1** (packages up to 60814ed); **2** (pass6, package 6a12132): the results CSV
 appends `stable_power` and `drain_spin_iters_per_us`, and `flush_mode` can carry a drain suffix
-(`full_d20`, ...; see below); **3** (the pass7 merge): the results CSV appends `dispatch_info`.
+(`full_d20`, ...; see below); **3** (the pass7 merge): the results CSV appends `dispatch_info`;
+**4** (the final set): the results CSV appends `pass`, `description` and `tags`,
+`iterations_requested` is per GPU (`--iterations-integrated`), and the default flush mode is
+`full_d50` (see the note at the top).
 The samples and wave probe columns are unchanged (the wave probe file's `schema_version` is that of
-the package as well). `tools/aggregate_results.py` reads all three and leaves the columns a row's
+the package as well). `tools/aggregate_results.py` reads all four and leaves the columns a row's
 version does not have empty.
 
 `tools/aggregate_results.py` merges these files from many results folders / zips into
@@ -43,7 +55,7 @@ version does not have empty.
 
 | column | meaning |
 |---|---|
-| schema_version | 3 (2: without `dispatch_info`; 1: packages up to 60814ed, also without `stable_power` and `drain_spin_iters_per_us`) |
+| schema_version | 4 (3: without `pass`, `description`, `tags`, default flush `full`; 2: also without `dispatch_info`; 1: packages up to 60814ed, also without `stable_power` and `drain_spin_iters_per_us`) |
 | run_id | see Keys |
 | run_timestamp | run start, ISO 8601 local time with UTC offset, e.g. `2026-09-29T14:30:12.345+02:00` |
 | computer | Windows computer name |
@@ -61,7 +73,7 @@ version does not have empty.
 | wave_size_attr | 1 = compiled with `[WaveSize(wave_size)]` |
 | timestamp_freq_hz | GPU timestamp frequency (time resolution = 1 / this) |
 | algorithm | algorithm name without its `@suffix` (e.g. `s4_3tier_rx3r`) |
-| flush_mode | what ran between the upload and the timed sort (see "Flush modes" below): `full` (the measurement of record), `full_legacy`, `full_ro`, `code`, `data`, `none`, or one of these with a drain suffix, e.g. `full_d20` |
+| flush_mode | what ran between the upload and the timed sort (see "Flush modes" below): `full_d50` (the default, the measurement of record since schema 4), `full` (the default up to schema 3), `full_legacy`, `full_ro`, `code`, `data`, `none`, or one of these with a drain suffix, e.g. `full_d20` |
 | workload | `mostly_empty`, `mostly_small`, `realistic_mix`, `mostly_large`, `worst_case`, `edges`, `mostly_mid`, `mostly_medium`, `sweep`, `sparse_keys` |
 | sweep_size | sweep workload: the sort size of this row's iterations (all 20 sorts of an iteration have it); empty otherwise |
 | sorts_per_iteration | 20 |
@@ -73,12 +85,15 @@ version does not have empty.
 | total_elements_per_iter_mean | mean elements per iteration (sum of the 20 sort sizes) |
 | algorithm_id | full algorithm name from algorithms.txt, e.g. `s4_3tier_rx3r@data` |
 | run_kind | `benchmark`, `smoke` (`--smoke`: few iterations, one in flight, a safety check, not a measurement) |
-| iterations_requested | `--iterations` of the run |
+| iterations_requested | measured iterations requested on this GPU: `--iterations`, or `--iterations-integrated` on an integrated (UMA) GPU (v4; up to v3 always `--iterations`) |
 | wave_probe_ok | 1 = the wave probe found the configuration the shaders were compiled for, 0 = WAVE PROBE WARNING, empty = the probe did not run |
 | gpu_error | non-empty if the GPU's run aborted (e.g. `DEVICE LOST: ...`); the rows hold the partial results |
 | stable_power | (v2) `off` (not requested), `on` (`--stable-power`: `ID3D12Device::SetStablePowerState(TRUE)` succeeded, fixed clocks), `unavailable` (requested, but Windows Developer Mode is off: not called, normal clocks), `failed` (the call returned an error, normal clocks) |
 | drain_spin_iters_per_us | (v2) the GPU's calibrated spin drain rate (loop iterations per microsecond; a `_d<N>` drain runs round(N x this) iterations); empty if the run has no spin drain |
 | dispatch_info | (v3) the occupancy inputs of the algorithm's dispatches, for this GPU's wave configuration, in dispatch order, separated by `;`: `<threads per group>t/<groupshared bytes>B`, e.g. `1024t/32768B;256t/8192B;512t/2048B` (threads from the shader reflection, groupshared bytes = the sum of the DXIL's groupshared variables; `?` if unknown) |
+| pass | (v4) the pass (`_test/passN`) that introduced the algorithm (`pass` line in the algorithm list, e.g. shaders/algorithms_final.txt); empty if the list has none |
+| description | (v4) the algorithm's one-line description (`desc` line); empty if none |
+| tags | (v4) the algorithm's tags (`tag` lines), `;`-separated, e.g. `rec_discrete;reference` (the recommended configuration for discrete GPUs), `rec_integrated`, `method` (a flush-method variant of the reference); empty if none |
 
 ### Flush modes
 
@@ -88,7 +103,7 @@ sort on a private copy), `none` (upload only). The drain runs right before the s
 
 | suffix | drain |
 |---|---|
-| none | the pass5 default of that kind: the group drain for `full` / `code` / `data` / `none`, no drain for `full_ro` |
+| none | the pass5 default of that kind: the group drain for `full` / `code` / `data` / `none`, no drain for `full_ro` (the default *mode* is `full_d50`, i.e. `full` with a 50 탎 spin drain) |
 | `_dg` | group drain (pass5): one group of the flush shader on a private 4 KB buffer + UAV barrier |
 | `_d<N>` | spin drain (pass6), N = 1..1000: an ALU-only dispatch of about N us (4 groups x 64 threads, a dependent integer chain, one 16-byte store per thread to the private 4 KB buffer; loop count from the per-GPU calibration, `drain_spin_iters_per_us`) + UAV barrier |
 | `_d0` | no drain |

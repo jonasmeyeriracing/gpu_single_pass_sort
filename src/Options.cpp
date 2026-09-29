@@ -73,6 +73,8 @@ bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
             o.stablePower = true;
         else if (arg == L"--integrated-only")
             o.integratedOnly = true;
+        else if (arg == L"--discrete-only")
+            o.discreteOnly = true;
         else if (arg == L"--shaders")
         {
             if (!next(o.shaderDir))
@@ -106,19 +108,25 @@ bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
                 return false;
             o.label = WideToUtf8(value);
         }
-        else if (arg == L"--iterations" || arg == L"--warmup")
+        else if (arg == L"--iterations" || arg == L"--iterations-integrated" || arg == L"--warmup")
         {
             if (!next(value))
                 return false;
             uint32_t n = 0;
-            if (!ParseUInt(value, n) || (arg == L"--iterations" && n == 0))
+            if (!ParseUInt(value, n) || (arg != L"--warmup" && n == 0))
             {
                 error = "invalid value for " + WideToUtf8(arg) + ": " + WideToUtf8(value);
                 return false;
             }
-            (arg == L"--iterations" ? o.iterations : o.warmup) = n;
             if (arg == L"--iterations")
+            {
+                o.iterations = n;
                 o.iterationsGiven = true;
+            }
+            else if (arg == L"--iterations-integrated")
+                o.iterationsIntegrated = n;
+            else
+                o.warmup = n;
         }
         else if (arg == L"--wave-size")
         {
@@ -169,6 +177,11 @@ bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
             return false;
         }
     }
+    if (o.integratedOnly && o.discreteOnly)
+    {
+        error = "--integrated-only and --discrete-only exclude each other";
+        return false;
+    }
     return true;
 }
 
@@ -192,19 +205,28 @@ void PrintUsage()
         "  --log <file>         Also write all console output to <file>\n"
         "  --label <text>       Run label, shown in the prompt / progress window and in the results header\n"
         "  --iterations <N>     Measured iterations per GPU x workload x algorithm (default 1000)\n"
+        "  --iterations-integrated <N>\n"
+        "                       Measured iterations on integrated (UMA) GPUs instead of --iterations, e.g.\n"
+        "                       --iterations 1000 --iterations-integrated 300 (an iGPU iteration takes ~10x\n"
+        "                       as long; the 256 MB flush dominates). The CSV column iterations_requested\n"
+        "                       has each GPU's count. Default: --iterations on every GPU\n"
         "  --warmup <N>         Warmup iterations excluded from stats (default 5)\n"
         "  --algo <a[,b]>       Algorithms to run (default: all in algorithms.txt); repeatable\n"
         "  --workload <w[,x]>   Workloads to run (default: all); repeatable\n"
         "  --gpu <substring>    Only run on GPUs whose name contains <substring> (case-insensitive)\n"
         "  --integrated-only    Only run on integrated GPUs (D3D12 architecture UMA; --list-adapters shows\n"
         "                       \"integrated yes\" for them), e.g. the Ryzen iGPU next to a discrete GPU\n"
+        "  --discrete-only      Only run on discrete GPUs (not UMA), e.g. the RX 7900 XTX at --wave-size 64\n"
+        "                       without the Ryzen iGPU next to it\n"
         "  --wave-size <N>      Compile the shaders for wave size N with [WaveSize(N)]; GPUs whose\n"
         "                       WaveLaneCountMin..Max does not contain N are skipped. Default: WAVE_SIZE =\n"
         "                       WaveLaneCountMin, plus [WaveSize] only if the device reports a range (Min != Max)\n"
         "  --flush-mode <m>     What happens between the data upload and the timed sort, for algorithms\n"
-        "                       without a 'flush' line in algorithms.txt (default %s). Every mode except\n"
-        "                       full_legacy / full_ro ends with a drain (one-group dispatch + UAV barrier)\n"
-        "                       right before the start timestamp, so no flush tail is timed:\n"
+        "                       without a 'flush' line in algorithms.txt (default %s = full with a ~50 us\n"
+        "                       spin drain, since the final set; results of packages up to 627724b used\n"
+        "                       full, i.e. the one-group drain, and are not directly comparable on small\n"
+        "                       workloads). Every mode except full_legacy / full_ro ends with a drain\n"
+        "                       (one-group dispatch + UAV barrier) right before the start timestamp:\n"
         "                         full: upload, 256 MB cache flush, drain: shader code and data cold\n"
         "                         full_legacy: full without the drain (the 'full' of pass0-pass4)\n"
         "                         full_ro: upload, 256 MB read-only flush, no drain (diagnostic)\n"
@@ -219,7 +241,7 @@ void PrintUsage()
         "                                per-GPU calibration at the start of the run, then a UAV barrier\n"
         "                         _d0:   no drain (full_d0 = full_legacy, full_ro_d0 = full_ro)\n"
         "                         _dg:   the one-group drain above (pass5; the default of all but full_ro)\n"
-        "                       e.g. full_d20, full_ro_d20, none_d20\n"
+        "                       e.g. full_d50 (the default), full_d20, full_ro_d20, none_d20\n"
         "  --stable-power       ID3D12Device::SetStablePowerState(TRUE) on every GPU (fixed clocks) after\n"
         "                       the prompt. Needs Windows Developer Mode: without it the call would\n"
         "                       remove the device, so GpuSort checks first and, if it is off, runs\n"

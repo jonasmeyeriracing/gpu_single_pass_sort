@@ -2,9 +2,14 @@
 
 Results of the portable package (tools/package.ps1, tools/run_all.bat) run by other people on
 their machines, archived here with the RTX 5080 (this machine, _test/pass4) as the reference.
-Everything in this file was measured with the **pre-pass5 flush method** (`full_legacy` since
-pass5, see _test/pass5/notes.md), including the 5080 column. That matters on the 7900 XTX: its
-`full` numbers contain a ~13 µs measurement artifact (section "The 7900 XTX flush tail").
+Everything in this file up to "Conclusions" was measured with the **pre-pass5 flush method**
+(`full_legacy` since pass5, see _test/pass5/notes.md), including the 5080 column. That matters on
+the 7900 XTX: its `full` numbers contain a ~13 µs measurement artifact (section "The 7900 XTX
+flush tail"). The 2026-09-29 runs (section "2026-09-29: flush diagnostic and pass7") used the
+pass5 `full` (one-group drain) as the default, which still leaves ~12 µs of the artifact on the
+XTX; **since the final set the default is `full_d50`** (see that section). Results measured with
+different defaults are not directly comparable on small workloads (check the `flush_mode`
+column / the results header).
 
 ## What is archived
 
@@ -14,7 +19,11 @@ One folder per run (`<computer>_<date>_<time>`), with the result files of every 
 keep the repo small: `dxdiag.txt` (120-150 KB each, driver details are in adapters.txt and the
 result headers) and the console logs `*.log` (60-170 KB each; they only repeat the results plus
 progress lines). Kept logs: `STIMULATOR_20260928_1551/smoke_current_wave64.log` (11 KB, the wave64
-failure) and `STIMULATOR_20260928_2131/wave_probe.log` (7 KB).
+failure) and `STIMULATOR_20260928_2131/wave_probe.log` (7 KB). Packages since 60814ed also write
+CSV files (tools/CSV_FORMAT.md): kept are the results `*.csv` and `*_wave_probe.csv`, and the
+per-iteration `*_samples.csv` as long as a folder's files stay below ~5 MB zipped (both
+2026-09-29 folders: 0.5 and 1.8 MB zipped incl. the samples, so the samples are kept; 6 and 18 MB
+unpacked). Left out there as well: dxdiag.txt and every `*.log` (50-180 KB; no run failed).
 
 | folder | GPUs | package (shaders) | mode | runs | result |
 |---|---|---|---|---|---|
@@ -22,6 +31,8 @@ failure) and `STIMULATOR_20260928_2131/wave_probe.log` (7 KB).
 | STIMULATOR_20260928_1715 | 7900 XTX + Ryzen iGPU | 5e087c3 (pass4 shaders, patched pass3 snapshot) | default: smoke + full x {current, pass3} x {wave32, wave64} | 8 of 8 | all exit 0, **0 verification failures** (2 x 150 + 2 x 80 combos x 1000 iterations per GPU, plus the smokes) |
 | STIMULATOR_20260928_2131 | 7900 XTX + Ryzen iGPU | 095c4a9 | `run_all.bat probe` | 1 | every configuration OK; [WaveSize(64)]: 64 lanes, `readlane^32` OK |
 | IMS-MDETURCK_20260928_1226 | Intel UHD Graphics 770 | b8d5c19 (pass4 shaders) | `run_all.bat current`: smoke + full | 2 of 2 | exit 0, **0 verification failures** (150 combos x 1000 iterations); probe OK at 16 lanes |
+| STIMULATOR_20260929_1213 | 7900 XTX + Ryzen iGPU | 627724b (pass5 shaders, algorithms_diag_flush.txt) | `run_all.bat diag`: 300 iterations x mostly_empty / realistic_mix / worst_case, normal clocks + `--stable-power` | 2 of 2 | exit 0, 0 failures; the drain-length sweep (see below) |
+| STIMULATOR_20260929_1225 | 7900 XTX + Ryzen iGPU | 627724b (_test/pass7) | `run_all.bat pass7`: smoke + full (300 iterations), wave32 both GPUs + wave64 iGPU only | 4 of 4 | exit 0, **0 verification failures** (21 algorithms x 10 workloads, every run; smoke 24 algorithms) |
 
 ## Machines
 
@@ -263,7 +274,69 @@ vs 5080 2.37). Large sorts: 7900 XTX ≈ 5080 (@data / @code). The Ryzen iGPU (1
 to 1.7x (tiny) slower than the 5080; the UHD 770 ~25x (large) to 1.8x (tiny). Both iGPUs are
 occupancy-bound on the 1024-thread groups: fewer sorts in flight, so the large tiers dominate.
 
-**6. What the next external run should measure** (the pass5 package does all of it by default):
+**6. What the next external run should measure** (done: the 2026-09-29 runs below) (the pass5 package does all of it by default):
 the drained `full` method next to `full_legacy`, `full_ro`, `data`, `code` and `none`, to confirm
 that the drain removes the 13 µs XTX tail without changing anything else, and whether it is the
 flush's dirty lines (full_ro fast) or the barrier placement (full_ro slow).
+
+## 2026-09-29: flush diagnostic and pass7
+
+Two runs of package 627724b on STIMULATOR (driver 32.0.11037.4004 as before). Details and every
+pass7 hypothesis: _test/pass7/notes.md, "AMD results".
+
+**Flush diagnostic** (`run_all.bat diag`, STIMULATOR_20260929_1213; `s1_rank512_bitreg2048_radix`
+with every flush / drain variant, median µs, 300 iterations):
+
+| flush mode | XTX empty | XTX mix | XTX worst | iGPU empty | iGPU mix | iGPU worst |
+|---|---:|---:|---:|---:|---:|---:|
+| full_legacy (no drain) | 14.68 | 22.52 | 32.88 | 4.12 | 39.84 | 260.32 |
+| full (pass5 group drain) | 13.80 | 21.72 | 32.00 | 4.08 | 39.70 | 260.44 |
+| full_d2 | 13.00 | 20.92 | 31.16 | 4.40 | 39.96 | 260.68 |
+| full_d5 | 11.48 | 19.44 | 29.68 | 4.40 | 40.04 | 260.64 |
+| full_d10 | 8.88 | 16.92 | 27.04 | 4.36 | 40.14 | 260.68 |
+| full_d20 | 3.76 | 11.96 | 21.92 | 4.40 | 40.16 | 260.72 |
+| **full_d50** | **1.76** | **9.92** | **20.24** | 4.40 | 40.02 | 260.72 |
+| full_d100 | 1.76 | 10.04 | 20.40 | 4.40 | 39.98 | 260.68 |
+| full_ro (read-only flush, no drain) | 6.00 | 14.18 | 23.48 | 4.12 | 39.88 | 259.68 |
+| full_ro_d20 | 1.72 | 9.92 | 19.42 | 4.44 | 40.02 | 259.96 |
+| data | 1.68 | 9.70 | 20.18 | 4.32 | 40.00 | 259.92 |
+| code | 1.48 | 9.56 | 18.60 | 4.32 | 39.98 | 260.04 |
+| none | 1.52 | 9.72 | 34.56 | 4.06 | 39.70 | 259.28 |
+
+- On the 7900 XTX the post-flush penalty is not a fixed tail that a tiny dispatch absorbs: it
+  decays with the time the GPU waits after the flush (d5 11.5, d10 8.9, d20 3.8 µs) and is gone
+  from ~50 µs (d50 = d100 = 1.76 µs vs @data 1.68 on mostly_empty; worst_case d50 20.24 vs @data
+  20.18). A read-only flush leaves less of it (full_ro 6.0), so it is mostly the write-back of the
+  flush's dirty lines (or a clock / power state change after the 256 MB burst) overlapping the
+  sort. **The default flush mode is now `full_d50`** (Algorithms.h `kDefaultFlushMode`).
+- The Ryzen iGPU shows no such effect (every drain within 0.3 µs; the spin drain costs +0.3 µs on
+  mostly_empty); the RTX 5080 was flat from d5 (_test/pass5 / pass6 runs).
+- `--stable-power` (diag_flush_stable, Developer Mode on): XTX +20-30 % on mix / worst_case, the
+  iGPU ~3x slower (clocks locked low). Not used for the final run.
+
+**pass7** (`run_all.bat pass7`, STIMULATOR_20260929_1225): 0 failures on both GPUs at wave32 and
+on the iGPU at wave64. The flush mode was the pass5 `full`, so the XTX's small-workload numbers
+carry the ~12 µs artifact (mostly_empty ~13.8 µs for every algorithm). Main results (median µs):
+
+| | ref `s1_rank512_bitreg2048_radix` | `m4_b128_p` | best other |
+|---|---|---|---|
+| iGPU w32 realistic_mix | 39.90 | **23.72** | m4_b128e8 22.82 (X large tier: 263 on mostly_large) |
+| iGPU w32 mostly_medium | 37.58 | 18.60 | m4_b128e8 16.04 |
+| iGPU w32 mostly_mid | 109.22 | 63.68 | m4_b64 63.14 |
+| iGPU w32 worst_case | 260.40 | 258.48 | s1_radix 257.36 |
+| XTX w32 realistic_mix | 21.84 | 21.38 | m3_ref_32k 21.08 |
+| XTX w32 mostly_medium | 19.44 | 17.00 | s7_256b 16.96 |
+| XTX w32 worst_case | 32.16 | 32.32 | s1_radix 32.12 |
+
+- The Ryzen iGPU gains 40-50 % on the small and mid tiers from tier-sized groups (multi-dispatch
+  with small groups and small LDS), nothing on the large tier; the pass2 radix in 1024-thread
+  groups stays the best large tier (the pass7 radix X in 256 / 512 threads: +52 / +25 %).
+- iGPU wave64: small groups do not remove the wave64 collapse (m4_b128_p mostly_mid 384 µs,
+  X up to 2 ms for worst_case); keep wave32.
+- Per-GPU-class recommendation: discrete GPUs `s1_rank512_bitreg2048_radix` (one dispatch),
+  integrated GPUs `m4_b128_p` (4 tier-sized dispatches). Both are tagged in
+  shaders/algorithms_final.txt (`rec_discrete`, `rec_integrated`).
+
+**Next:** `run_all.bat final` (shaders/algorithms_final.txt: every distinct algorithm of pass0-7,
+default flush `full_d50`, 1000 iterations on discrete / 300 on integrated GPUs, wave64 on the XTX
+only), see tools/README_PORTABLE.txt.

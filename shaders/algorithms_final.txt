@@ -1,0 +1,463 @@
+# FINAL algorithm set: every distinct sort algorithm of pass0..pass7, run from the current shaders\
+# (GpuSort.exe --algo-file algorithms_final.txt; run_all.bat final). See _test/pass7/notes.md,
+# "Final set", for how it was built and what to read from it.
+#
+#   algorithm <name>
+#   dispatch <file.hlsl> <entryPoint> <groupSize> [NAME=VALUE ...]
+#   flush <mode>        optional: overrides --flush-mode for this algorithm (see --help)
+#   pass <N>            optional: the pass (_test/passN) that introduced the algorithm (CSV column pass)
+#   desc <text>         optional: one-line description, to the end of the line (CSV column description;
+#                       no '#' in it, that starts a comment)
+#   tag <word> [...]    optional: tags (CSV column tags, ';'-separated), e.g. rec_discrete
+#
+# Selection: the union of the algorithm lists of _test/pass0,1,2,3,4,5,7 (algorithms.txt) plus the
+# sort configurations that only the diagnostic lists had (_test/pass3 and pass4 algorithms_diag.txt:
+# per-path curves and tier combinations, marked "diag set" below), deduplicated by identical dispatch
+# lists (same shader file, entry point, group size and defines, in any define order), and then by
+# identical compiled code: s4_radix2 (pass4) = s3_radix2_k8, s3_bitE8 / s4_bitE8 (diag) = s1_bitreg,
+# s3_rank1024_bitE8 (diag) = s1_rank1024_bitreg compile to the same DXIL at wave16 / 32 / 64 (other
+# shader files, same code), so only the older name is kept. Each algorithm is listed once, under the
+# pass that introduced it. Left out: the pass3 / pass4 microbenchmarks (ub_*: a
+# synthetic prelude before the sort), the validation-only variants (pass4 v64_*, pass7 v_*_span:
+# SHUFFLE_SPAN_TEST=1, the same algorithms with the shuffle span halved), and the flush-mode variants
+# except the five of the reference below (the method story; pass5 / pass6 diag sets: the others).
+# All shader files are the current ones: every snapshot's shader files are identical to shaders\
+# (git blob hashes) except common.hlsli (pass0-pass4: comments, and pass0/pass1 lack the WAVE_SIZE /
+# SHUFFLE_SPAN defines, additions only) and ubench.hlsli (pass3: microbenchmarks only).
+#
+# Flush mode: the default (full_d50 since the final set: 256 MB flush, then a ~50 us ALU spin drain;
+# see --help) unless a 'flush' line says otherwise.
+#
+# Short names used in the descriptions: R = rank sort (1 element per thread unless xN), B<E> =
+# register/wave bitonic with E elements per thread, LDS bitonic = the pass0 bitonic, P = pass2 LDS
+# radix (1024 threads, 32 KB), radix2 / radix3 = the pass3 / pass4 radix variants, X = pass7 ballot
+# radix, @n = threads per group, m<k>_ = k dispatches (one per size tier), s<pass>_ = one dispatch.
+#
+# Recommended configurations (tags): rec_discrete = s1_rank512_bitreg2048_radix (one dispatch; the
+# best or within noise of the best on the RTX 5080 and RX 7900 XTX, no multi-dispatch cost);
+# rec_integrated = m4_b128_p (4 tier-sized dispatches; best complete configuration on the Ryzen iGPU,
+# see _test/pass7/notes.md "AMD results").
+
+# === pass0 ========================================================================================
+
+algorithm pass0_bitonic
+pass 0
+desc LDS bitonic sort for every size, one 1024-thread dispatch (the pass0 baseline)
+dispatch pass0_bitonic.hlsl main 1024 MIN_COUNT=1 MAX_COUNT=8192
+
+# === pass1: size tiers (rank sort for small sorts, pass0 bitonic above) ============================
+
+algorithm t2_rank512_bitonic
+pass 1
+desc 2 dispatches: R <=512 @512, LDS bitonic 513+ @1024
+dispatch rank_sort.hlsl main 512 MIN_COUNT=1 MAX_COUNT=512
+dispatch pass0_bitonic.hlsl main 1024 MIN_COUNT=513 MAX_COUNT=8192
+
+algorithm t3_rank128_rank512_bitonic
+pass 1
+desc 3 dispatches: R <=128 @128, R 129-512 @512, LDS bitonic 513+ @1024
+dispatch rank_sort.hlsl main 128 MIN_COUNT=1 MAX_COUNT=128
+dispatch rank_sort.hlsl main 512 MIN_COUNT=129 MAX_COUNT=512
+dispatch pass0_bitonic.hlsl main 1024 MIN_COUNT=513 MAX_COUNT=8192
+
+algorithm t3_rank64_rank512_bitonic
+pass 1
+desc 3 dispatches: R <=64 @64, R 65-512 @512, LDS bitonic 513+ @1024
+dispatch rank_sort.hlsl main 64 MIN_COUNT=1 MAX_COUNT=64
+dispatch rank_sort.hlsl main 512 MIN_COUNT=65 MAX_COUNT=512
+dispatch pass0_bitonic.hlsl main 1024 MIN_COUNT=513 MAX_COUNT=8192
+
+algorithm t4_rank128_rank512_rank1024_bitonic
+pass 1
+desc 4 dispatches: R <=128 @128, R 129-512 @512, R 513-1024 @1024, LDS bitonic 1025+ @1024
+dispatch rank_sort.hlsl main 128 MIN_COUNT=1 MAX_COUNT=128
+dispatch rank_sort.hlsl main 512 MIN_COUNT=129 MAX_COUNT=512
+dispatch rank_sort.hlsl main 1024 MIN_COUNT=513 MAX_COUNT=1024
+dispatch pass0_bitonic.hlsl main 1024 MIN_COUNT=1025 MAX_COUNT=8192
+
+algorithm t4_rank128_rank512_rank1024x2_bitonic
+pass 1
+desc 4 dispatches: R <=128 @128, R 129-512 @512, R x2 513-2048 @1024, LDS bitonic 2049+ @1024
+dispatch rank_sort.hlsl main 128 MIN_COUNT=1 MAX_COUNT=128
+dispatch rank_sort.hlsl main 512 MIN_COUNT=129 MAX_COUNT=512
+dispatch rank_sort.hlsl main 1024 MIN_COUNT=513 MAX_COUNT=2048
+dispatch pass0_bitonic.hlsl main 1024 MIN_COUNT=2049 MAX_COUNT=8192
+
+# === pass2: register bitonic, LDS radix, single dispatch ===========================================
+
+algorithm t2_rank512_bitreg
+pass 2
+desc 2 dispatches: R <=512 @512, B8 513+ @1024
+dispatch rank_sort.hlsl main 512 MIN_COUNT=1 MAX_COUNT=512
+dispatch bitonic_reg.hlsl main 1024 MIN_COUNT=513 MAX_COUNT=8192
+
+algorithm t2_rank512_bitreg16
+pass 2
+desc 2 dispatches: R <=512 @512, B16 513+ @512
+dispatch rank_sort.hlsl main 512 MIN_COUNT=1 MAX_COUNT=512
+dispatch bitonic_reg.hlsl main 512 MIN_COUNT=513 MAX_COUNT=8192 BR_ELEMS=16
+
+algorithm t2_rank512_bitreg32
+pass 2
+desc 2 dispatches: R <=512 @512, B32 513+ @256
+dispatch rank_sort.hlsl main 512 MIN_COUNT=1 MAX_COUNT=512
+dispatch bitonic_reg.hlsl main 256 MIN_COUNT=513 MAX_COUNT=8192 BR_ELEMS=32
+
+algorithm t2_rank512_radix
+pass 2
+desc 2 dispatches: R <=512 @512, P 513+ @1024
+dispatch rank_sort.hlsl main 512 MIN_COUNT=1 MAX_COUNT=512
+dispatch radix_sort.hlsl main 1024 MIN_COUNT=513 MAX_COUNT=8192
+
+algorithm t2_rank512_radix_waveops
+pass 2
+desc 2 dispatches: R <=512 @512, P 513+ @1024 with WavePrefixSum / WaveActiveSum scans instead of shuffles
+dispatch rank_sort.hlsl main 512 MIN_COUNT=1 MAX_COUNT=512
+dispatch radix_sort.hlsl main 1024 MIN_COUNT=513 MAX_COUNT=8192 RS_WAVE_INTRINSICS=1
+
+algorithm s1_rank512_bitreg
+pass 2
+desc 1 dispatch @1024: R <=512, B8 above
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 LARGE_RADIX=0
+
+algorithm s1_rank1024_bitreg
+pass 2
+desc 1 dispatch @1024: R <=1024, B8 above (= s3_rank1024_bitE8 of the pass3 diag set: identical DXIL)
+dispatch single_pass.hlsl main 1024 RANK_MAX=1024 LARGE_RADIX=0
+
+algorithm s1_rank512_radix
+pass 2
+desc 1 dispatch @1024: R <=512, P above
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 LARGE_RADIX=1
+
+algorithm s1_rank1024_radix
+pass 2
+desc 1 dispatch @1024: R <=1024, P above
+dispatch single_pass.hlsl main 1024 RANK_MAX=1024 LARGE_RADIX=1
+
+algorithm s1_rank512_bitreg2048_radix
+pass 2
+desc 1 dispatch @1024 (32 KB): R <=512, B8 <=2048, P above. The portable reference; RECOMMENDED for discrete GPUs
+tag rec_discrete reference
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+
+algorithm s1_rank512_bitreg4096_radix
+pass 2
+desc 1 dispatch @1024: R <=512, B8 <=4096, P above
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 LARGE_RADIX=1
+
+algorithm s1_bitreg
+pass 2
+desc 1 dispatch @1024: B8 for every size (= s3_bitE8 / s4_bitE8 of the pass3 / pass4 diag sets: identical DXIL)
+dispatch single_pass.hlsl main 1024 RANK_MAX=0 LARGE_RADIX=0
+
+algorithm s1_radix
+pass 2
+desc 1 dispatch @1024: P for every size (the radix fixed-cost anchor)
+dispatch single_pass.hlsl main 1024 RANK_MAX=0 LARGE_RADIX=1
+
+# === pass3: radix_sort2, register bitonic E1..E8, combinations =====================================
+
+algorithm s3_radix2_k8
+pass 3
+desc 1 dispatch @1024: radix2 (min 8 keys per thread) for every size (= s4_radix2 of pass4: identical DXIL)
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_bitE4_rx2
+pass 3
+desc 1 dispatch @1024: B4 <=4096, radix2 above
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 MID_E=4 MID_MAX=4096 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_rank512_bitreg2048_radix2
+pass 3
+desc 1 dispatch @1024: R <=512, B8 <=2048, radix2 above
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_rank512_bitreg4096_radix2
+pass 3
+desc 1 dispatch @1024: R <=512, B8 <=4096, radix2 above
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_rank512_bitreg2048_radix2s
+pass 3
+desc 1 dispatch @1024: R <=512, B8 <=2048, radix2 skipping constant digits above
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 RADIX=2 RS2_MIN_KPT=8 RS2_SKIP=1
+
+# pass3 diag set (per-path curves and further tier combinations)
+
+algorithm s3_radix2_k1
+pass 3
+desc 1 dispatch @1024: radix2 (min 1 key per thread) for every size (pass3 diag set)
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 RADIX=2 RS2_MIN_KPT=1
+
+algorithm s3_radix2_k4
+pass 3
+desc 1 dispatch @1024: radix2 (min 4 keys per thread) for every size (pass3 diag set)
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 RADIX=2 RS2_MIN_KPT=4
+
+algorithm s3_radix2_k4_skip
+pass 3
+desc 1 dispatch @1024: radix2 (min 4 keys per thread, skip constant digits) for every size (pass3 diag set)
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 RADIX=2 RS2_MIN_KPT=4 RS2_SKIP=1
+
+algorithm s3_radix2_k8_skip
+pass 3
+desc 1 dispatch @1024: radix2 (min 8 keys per thread, skip constant digits) for every size (pass3 diag set)
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 RADIX=2 RS2_MIN_KPT=8 RS2_SKIP=1
+
+algorithm s3_bitE1_rx2
+pass 3
+desc 1 dispatch @1024: B1 <=1024, radix2 above (pass3 diag set)
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 MID_E=1 MID_MAX=1024 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_bitE2_rx2
+pass 3
+desc 1 dispatch @1024: B2 <=2048, radix2 above (pass3 diag set)
+dispatch single_pass3.hlsl main 1024 RANK_MAX=0 MID_E=2 MID_MAX=2048 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_rank512_radix2
+pass 3
+desc 1 dispatch @1024: R <=512, radix2 above (pass3 diag set)
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_rank512_bitreg2048_radix2k4
+pass 3
+desc 1 dispatch @1024: R <=512, B8 <=2048, radix2 (min 4 keys per thread) above (pass3 diag set)
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 RADIX=2 RS2_MIN_KPT=4
+
+algorithm s3_rank512_bitE2_2048_radix2
+pass 3
+desc 1 dispatch @1024: R <=512, B2 <=2048, radix2 above (pass3 diag set)
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 MID_E=2 MID_MAX=2048 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_rank512_bitE4_4096_radix2
+pass 3
+desc 1 dispatch @1024: R <=512, B4 <=4096, radix2 above (pass3 diag set)
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 MID_E=4 MID_MAX=4096 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s3_rank256_bitreg2048_radix2
+pass 3
+desc 1 dispatch @1024: R <=256, B8 <=2048, radix2 above (pass3 diag set)
+dispatch single_pass3.hlsl main 1024 RANK_MAX=256 BITREG_MAX=2048 RADIX=2 RS2_MIN_KPT=8
+
+# === pass4: 4-tier single dispatch, radix_sort3 ===================================================
+
+algorithm s4_4tier_4096
+pass 4
+desc 1 dispatch @1024: R <=512, B8 <=2048, radix2 <=4096, P above
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 MID_RADIX=2 MID_RADIX_MAX=4096 LARGE_RADIX=1
+
+algorithm s4_4tier_5120
+pass 4
+desc 1 dispatch @1024: R <=512, B8 <=2048, radix2 <=5120, P above
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 MID_RADIX=2 MID_RADIX_MAX=5120 LARGE_RADIX=1
+
+algorithm s4_3tier_rx3
+pass 4
+desc 1 dispatch @1024: R <=512, B8 <=2048, radix3 (unrolled pass loop) above
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3
+
+algorithm s4_3tier_rx3r
+pass 4
+desc 1 dispatch @1024: R <=512, B8 <=2048, radix3 (rolled pass loop) above
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3 RS3_ROLLED=1
+
+algorithm s4_radix3_rolled
+pass 4
+desc 1 dispatch @1024: radix3 (rolled pass loop) for every size
+dispatch single_pass4.hlsl main 1024 RANK_MAX=0 BITREG_MAX=0 LARGE_RADIX=3 RS3_ROLLED=1
+
+# pass4 diag set (per-path curves and threshold variants)
+
+algorithm s4_radix3
+pass 4
+desc 1 dispatch @1024: radix3 (unrolled pass loop) for every size (pass4 diag set)
+dispatch single_pass4.hlsl main 1024 RANK_MAX=0 BITREG_MAX=0 LARGE_RADIX=3
+
+algorithm s4_radix3_sw
+pass 4
+desc 1 dispatch @1024: radix3 with the single-wave table scan (RS3_PERWAVE_MAX=0) for every size (pass4 diag set)
+dispatch single_pass4.hlsl main 1024 RANK_MAX=0 BITREG_MAX=0 LARGE_RADIX=3 RS3_PERWAVE_MAX=0
+
+algorithm s4_4tier_3072
+pass 4
+desc 1 dispatch @1024: R <=512, B8 <=2048, radix2 <=3072, P above (pass4 diag set)
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 MID_RADIX=2 MID_RADIX_MAX=3072 LARGE_RADIX=1
+
+algorithm s4_3tier_rx3_p3072
+pass 4
+desc 1 dispatch @1024: R <=512, B8 <=2048, radix3 (per-wave table scan up to 3072) above (pass4 diag set)
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3 RS3_PERWAVE_MAX=3072
+
+algorithm s4_3tier_rx3_p5120
+pass 4
+desc 1 dispatch @1024: R <=512, B8 <=2048, radix3 (per-wave table scan up to 5120) above (pass4 diag set)
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3 RS3_PERWAVE_MAX=5120
+
+# === flush method variants of the reference (the measurement-method story) ==========================
+# The same shader as s1_rank512_bitreg2048_radix; only what runs before the timed sort differs.
+
+algorithm s1_rank512_bitreg2048_radix@full_legacy
+pass 5
+desc reference, flush full_legacy: 256 MB flush, no drain (the method of pass0-pass4; the RX 7900 XTX times ~13 us of flush tail)
+tag method
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush full_legacy
+
+algorithm s1_rank512_bitreg2048_radix@full
+pass 5
+desc reference, flush full: 256 MB flush + one-group drain (the default of pass5 to pass7)
+tag method
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush full
+
+algorithm s1_rank512_bitreg2048_radix@data
+pass 4
+desc reference, flush data: code warm, data cold (untimed run of the same sort after the flush)
+tag method
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush data
+
+algorithm s1_rank512_bitreg2048_radix@code
+pass 4
+desc reference, flush code: code cold, input data warm (flush before the upload)
+tag method
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush code
+
+algorithm s1_rank512_bitreg2048_radix@none
+pass 4
+desc reference, flush none: no flush, code and data warm
+tag method
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+flush none
+
+# === pass7: low-end / integrated GPUs (tier-sized groups and LDS, ballot radix X) ==================
+
+algorithm x7_all_256
+pass 7
+desc 1 dispatch @256: X for every size
+dispatch p7_sort.hlsl main 256 P7_LARGE=2
+
+algorithm x7_all_1024
+pass 7
+desc 1 dispatch @1024: X for every size
+dispatch p7_sort.hlsl main 1024 P7_LARGE=2
+
+algorithm m3_ref
+pass 7
+desc 3 dispatches: P 2049+ @1024 (32 KB), B8 513-2048 @256 (8 KB), R <=512 @512 (2 KB)
+dispatch radix_sort.hlsl main 1024 MIN_COUNT=2049
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512
+
+algorithm m3_ref_32k
+pass 7
+desc 3 dispatches as m3_ref with 32 KB groupshared in every dispatch
+dispatch radix_sort.hlsl main 1024 MIN_COUNT=2049
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8 P7_LDS_WORDS=8192
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512 P7_LDS_WORDS=8192
+
+algorithm m3_x256
+pass 7
+desc 3 dispatches: X 2049+ @256, B8 513-2048 @256, R <=512 @512
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512
+
+algorithm m3_x512
+pass 7
+desc 3 dispatches: X 2049+ @512, B8 513-2048 @256, R <=512 @512
+dispatch p7_sort.hlsl main 512 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512
+
+algorithm m3_b4096_x256
+pass 7
+desc 3 dispatches: X 4097+ @256, B8 513-4096 @512, R <=512 @512
+dispatch p7_sort.hlsl main 256 MIN_COUNT=4097 P7_LARGE=2
+dispatch p7_sort.hlsl main 512 MIN_COUNT=513 MAX_COUNT=4096 P7_BIT_MAX=4096 P7_BIT_E=8
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512
+
+algorithm m3_mid_b4
+pass 7
+desc 3 dispatches: X 2049+ @256, B4 513-2048 @512, R <=512 @512
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 512 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=4
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512
+
+algorithm m2_x513
+pass 7
+desc 2 dispatches: X 513+ @256, R <=512 @512
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 P7_LARGE=2
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512
+
+algorithm m3_x1025
+pass 7
+desc 3 dispatches: X 1025+ @256, B8 513-1024 @128, R <=512 @512
+dispatch p7_sort.hlsl main 256 MIN_COUNT=1025 P7_LARGE=2
+dispatch p7_sort.hlsl main 128 MIN_COUNT=513 MAX_COUNT=1024 P7_BIT_MAX=1024 P7_BIT_E=8
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512
+
+algorithm m4_b128
+pass 7
+desc 4 dispatches: X 2049+ @256, B8 513-2048 @256, B4 129-512 @128, R <=128 @128
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MIN_COUNT=129 MAX_COUNT=512 P7_BIT_MAX=512 P7_BIT_E=4
+dispatch p7_sort.hlsl main 128 MAX_COUNT=128 P7_RANK_MAX=128
+
+algorithm m4_b64
+pass 7
+desc 4 dispatches: X 2049+ @256, B8 513-2048 @256, B4 65-512 @128, R <=64 @64
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MIN_COUNT=65 MAX_COUNT=512 P7_BIT_MAX=512 P7_BIT_E=4
+dispatch p7_sort.hlsl main 64 MAX_COUNT=64 P7_RANK_MAX=64
+
+algorithm m4_b256
+pass 7
+desc 4 dispatches: X 2049+ @256, B8 513-2048 @256, B4 257-512 @128, R <=256 @256
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MIN_COUNT=257 MAX_COUNT=512 P7_BIT_MAX=512 P7_BIT_E=4
+dispatch p7_sort.hlsl main 256 MAX_COUNT=256 P7_RANK_MAX=256
+
+algorithm m4_b128e8
+pass 7
+desc 4 dispatches: X 2049+ @256, B8 513-2048 @256, B8 129-512 @128, R <=128 @128
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MIN_COUNT=129 MAX_COUNT=512 P7_BIT_MAX=512 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MAX_COUNT=128 P7_RANK_MAX=128
+
+algorithm m3_r2
+pass 7
+desc 3 dispatches: X 2049+ @256, B8 513-2048 @256, R x2 <=512 @256
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 256 MAX_COUNT=512 P7_RANK_MAX=512 P7_RANK_EPT=2
+
+algorithm m4_b128_p
+pass 7
+desc 4 dispatches: P 2049+ @1024, B8 513-2048 @256, B4 129-512 @128, R <=128 @128. RECOMMENDED for integrated GPUs
+tag rec_integrated
+dispatch radix_sort.hlsl main 1024 MIN_COUNT=2049
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MIN_COUNT=129 MAX_COUNT=512 P7_BIT_MAX=512 P7_BIT_E=4
+dispatch p7_sort.hlsl main 128 MAX_COUNT=128 P7_RANK_MAX=128
+
+algorithm s7_256
+pass 7
+desc 1 dispatch @256 (32 KB): R x2 <=512, B8 <=2048, X above
+dispatch p7_sort.hlsl main 256 P7_RANK_MAX=512 P7_RANK_EPT=2 P7_BIT_MAX=2048 P7_BIT_E=8 P7_LARGE=2
+
+algorithm s7_512
+pass 7
+desc 1 dispatch @512 (32 KB): R <=512, B8 <=2048, X above
+dispatch p7_sort.hlsl main 512 P7_RANK_MAX=512 P7_BIT_MAX=2048 P7_BIT_E=8 P7_LARGE=2
+
+algorithm s7_256b
+pass 7
+desc 1 dispatch @256 (32 KB): R <=128, B4 <=512, B8 <=2048, X above
+dispatch p7_sort.hlsl main 256 P7_RANK_MAX=128 P7_BIT_MAX=512 P7_BIT_E=4 P7_BIT2_MAX=2048 P7_BIT2_E=8 P7_LARGE=2

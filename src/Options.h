@@ -18,11 +18,14 @@ struct Options
     std::string label;                   // --label <text>: shown in the prompt, window and results header
     uint32_t iterations = 1000;          // --iterations N (measured iterations per gpu/workload/algorithm)
     bool iterationsGiven = false;        // --iterations was given explicitly (then it also applies to --smoke)
+    uint32_t iterationsIntegrated = 0;   // --iterations-integrated N: measured iterations on integrated (UMA)
+                                         // GPUs instead of --iterations; 0 = --iterations everywhere
     uint32_t warmup = 5;                 // --warmup N (extra iterations excluded from stats)
     std::vector<std::string> algorithms; // --algo name[,name]; empty = all registered
     std::vector<std::string> workloads;  // --workload name[,name]; empty = all
     std::string gpuFilter;               // --gpu <substring>; empty = all qualifying GPUs
     bool integratedOnly = false;         // --integrated-only: only GPUs with D3D12 UMA (integrated GPUs)
+    bool discreteOnly = false;           // --discrete-only: only GPUs without D3D12 UMA (discrete GPUs)
     uint32_t waveSize = 0;               // --wave-size N: compile with WAVE_SIZE=N + [WaveSize(N)]; 0 = device min
                                          // (GPUs whose lane range does not contain N are skipped)
     FlushMode flushMode = kDefaultFlushMode; // --flush-mode: default for algorithms without a 'flush' line

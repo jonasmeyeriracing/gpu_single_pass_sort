@@ -1,0 +1,12 @@
+GpuSort portable package GpuSort-portable-627724b
+Built:        2026-09-29 12:05:32 on JONAS-CPH
+Git commit:   627724b (main) 2026-09-29 12:05:19 +0200 run_all.bat pass7, --integrated-only, dispatch_info (CSV schema 3), package ships algorithms_*.txt
+Shader sets:
+    shaders\     (current)
+    _test\pass0
+    _test\pass1
+    _test\pass2
+    _test\pass3
+    _test\pass4
+    _test\pass5
+    _test\pass7

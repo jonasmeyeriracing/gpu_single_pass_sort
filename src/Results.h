@@ -45,6 +45,8 @@ struct GpuRecord
     uint32_t waveLaneCountMax = 0;
     uint32_t waveSize = 0;          // WAVE_SIZE the shaders were compiled with
     bool waveSizeAttribute = false; // compiled with [WaveSize(WAVE_SIZE)]
+    uint32_t iterations = 0;        // measured iterations requested on this GPU (--iterations, or
+                                    // --iterations-integrated on an integrated GPU)
     std::vector<std::string> waveProbe; // wave probe report lines (WaveProbeReport::lines)
     std::vector<std::string> waveProbeSummary; // one verdict per wave configuration (WaveProbeReport::summary)
     bool waveProbeWarning = false;      // the probe found the wrong lane count / a broken lane mapping
@@ -76,6 +78,9 @@ struct AlgorithmInfo
     FlushMode flush = kDefaultFlushMode;
     std::vector<size_t> dxilBytes; // per dispatch (DXIL container size, for the first wave configuration)
     std::string dispatchInfo;      // threads / groupshared bytes per dispatch (FormatDispatchStats), same configuration
+    int pass = -1;                 // algorithms.txt 'pass' (-1 = not given)
+    std::string description;       // algorithms.txt 'desc'
+    std::vector<std::string> tags; // algorithms.txt 'tag'
 };
 
 struct RunInfo
@@ -91,7 +96,8 @@ struct RunInfo
     std::string label; // --label
     std::string shaderDir;
     std::string commandLine;
-    uint32_t iterations = 0;
+    uint32_t iterations = 0;           // --iterations
+    uint32_t iterationsIntegrated = 0; // --iterations-integrated (0 = not given)
     uint32_t warmup = 0;
     std::vector<uint32_t> workloadIds;
     std::vector<std::string> algorithms;

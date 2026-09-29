@@ -82,23 +82,32 @@ std::string FormatResults(const RunInfo& info)
         out += Format("Algo list:    %s\n", info.algoFile.c_str());
     if (!info.csvFiles.empty())
         out += Format("CSV files:    %s\n", info.csvFiles.c_str());
-    out += Format("Iterations:   %u measured + %u warmup per GPU x workload x algorithm, %u sorts per iteration\n",
-                  info.iterations, info.warmup, kSortsPerIteration);
-    out += Format("Cache flush:  %llu MB read+write compute pass before every timed sort, then a DRAIN (pass5): a\n"
-                  "              one-group dispatch on a private 4 KB buffer + UAV barrier right before the start\n"
-                  "              timestamp, so the tail of the flush (barrier wait / cache maintenance a driver defers\n"
-                  "              to the next dispatch) is no longer inside the timed window.\n"
-                  "              NOTE: results before pass5 were measured WITHOUT the drain and are not directly\n"
-                  "              comparable (flush mode full_legacy reproduces the old 'full'; on the RX 7900 XTX it\n"
-                  "              added ~13 us to most iterations, on the RTX 5080 ~0.25 us).\n"
-                  "Flush mode:   '%s' for algorithms without their own. full = code + data cold (flush, drain);\n"
-                  "              full_legacy = pre-pass5 full (no drain); full_ro = read-only flush, no drain\n"
-                  "              (diagnostic); code = only code cold (flush before the upload, drain); data = only\n"
-                  "              data cold (untimed warm-up run of the same dispatches, drain); none = no flush (drain)\n"
-                  "              Drain suffixes (pass6 diagnostics): <mode>_d<N> = SPIN drain of about N us instead\n"
-                  "              (an ALU-only dispatch, %u groups x %u threads, one 16-byte store per thread to the\n"
-                  "              private 4 KB buffer, loop count from the per-GPU calibration below, + UAV barrier);\n"
-                  "              _d0 = no drain (full_d0 = full_legacy); _dg = the pass5 one-group drain\n",
+    if (info.iterationsIntegrated && info.iterationsIntegrated != info.iterations)
+        out += Format("Iterations:   %u measured (%u on integrated GPUs) + %u warmup per GPU x workload x algorithm, %u sorts\n"
+                      "              per iteration\n",
+                      info.iterations, info.iterationsIntegrated, info.warmup, kSortsPerIteration);
+    else
+        out += Format("Iterations:   %u measured + %u warmup per GPU x workload x algorithm, %u sorts per iteration\n",
+                      info.iterations, info.warmup, kSortsPerIteration);
+    out += Format("Cache flush:  %llu MB read+write compute pass before every timed sort, then a DRAIN right before the\n"
+                  "              start timestamp (a dispatch on a private 4 KB buffer + UAV barrier), so the tail of the\n"
+                  "              flush (barrier wait / cache maintenance a driver defers to the next dispatch) is not\n"
+                  "              inside the timed window.\n"
+                  "Flush mode:   '%s' for algorithms without their own (the measurement of record).\n"
+                  "              *** NOTE: the default is full_d50 (flush, then a ~50 us ALU spin drain) since the final\n"
+                  "              *** set; packages up to 627724b used 'full' (flush + the pass5 one-group drain), which\n"
+                  "              *** on the RX 7900 XTX still timed ~12 us of post-flush penalty in most small-workload\n"
+                  "              *** iterations (mostly_empty median full 14.7 vs full_d50 1.8 us), and pass0-pass4 used\n"
+                  "              *** full_legacy (no drain). Results measured with another default are NOT directly\n"
+                  "              *** comparable; the flush_mode column / the Algorithms list below says which one ran.\n"
+                  "              full = code + data cold (flush, one-group drain, pass5); full_legacy = pre-pass5 full\n"
+                  "              (no drain); full_ro = read-only flush, no drain (diagnostic); code = only code cold\n"
+                  "              (flush before the upload, drain); data = only data cold (untimed warm-up run of the\n"
+                  "              same dispatches, drain); none = no flush (drain)\n"
+                  "              Drain suffixes (pass6): <mode>_d<N> = SPIN drain of about N us instead (an ALU-only\n"
+                  "              dispatch, %u groups x %u threads, one 16-byte store per thread to the private 4 KB\n"
+                  "              buffer, loop count from the per-GPU calibration below, + UAV barrier); _d0 = no drain\n"
+                  "              (full_d0 = full_legacy); _dg = the pass5 one-group drain\n",
                   static_cast<unsigned long long>(GpuBenchmark::kFlushBytes >> 20),
                   FlushModeName(info.defaultFlush).c_str(), GpuBenchmark::kSpinGroups, GpuBenchmark::kSpinGroupSize);
     out += "Timing:       GPU timestamps around the sort ExecuteIndirect dispatches only, per iteration (all 20 sorts)\n";
@@ -112,6 +121,8 @@ std::string FormatResults(const RunInfo& info)
                       static_cast<unsigned long long>(gpu.dedicatedVideoMemory >> 20));
         out += Format("      wave lanes %u-%u, shaders compiled with WAVE_SIZE=%u%s\n", gpu.waveLaneCountMin,
                       gpu.waveLaneCountMax, gpu.waveSize, gpu.waveSizeAttribute ? " + [WaveSize]" : "");
+        out += Format("      %s GPU, %u measured iterations per workload x algorithm\n",
+                      gpu.uma ? "integrated (UMA)" : "discrete", gpu.iterations);
         if (gpu.estimatedSeconds > 0)
             out += Format("      run-time estimate: %.2f ms per iteration (%s) -> ~%.0f s for this GPU, actual %.1f s\n",
                           gpu.secondsPerIterationEstimate * 1000.0,
@@ -148,11 +159,16 @@ std::string FormatResults(const RunInfo& info)
         for (const auto& a : info.algorithmInfos)
             w = std::max(w, a.name.size());
         size_t dw = 10;
+        bool anyMeta = false;
         for (const auto& a : info.algorithmInfos)
+        {
             dw = std::max(dw, a.dispatchInfo.size());
+            anyMeta |= a.pass >= 0 || !a.description.empty() || !a.tags.empty();
+        }
         out += Format("Algorithms (flush mode; per dispatch: threads per group t / groupshared bytes B; DXIL container\n"
-                      "bytes per dispatch; compiled for WAVE_SIZE=%u)\n",
-                      info.dxilWaveSize);
+                      "bytes per dispatch; compiled for WAVE_SIZE=%u%s)\n",
+                      info.dxilWaveSize,
+                      anyMeta ? "; then the pass that introduced it, its tags [..] and its description" : "");
         for (const auto& a : info.algorithmInfos)
         {
             std::string sizes;
@@ -160,6 +176,16 @@ std::string FormatResults(const RunInfo& info)
                 sizes += Format("%s%zu", sizes.empty() ? "" : " + ", b);
             out += Format("  %-*s  %-11s  %-*s  %s\n", static_cast<int>(w), a.name.c_str(),
                           FlushModeName(a.flush).c_str(), static_cast<int>(dw), a.dispatchInfo.c_str(), sizes.c_str());
+            if (anyMeta)
+            {
+                std::string tags;
+                for (const auto& t : a.tags)
+                    tags += (tags.empty() ? "" : " ") + t;
+                out += Format("  %-*s  %s%s%s%s\n", static_cast<int>(w), "",
+                              a.pass >= 0 ? Format("pass %d", a.pass).c_str() : "pass ?",
+                              tags.empty() ? "" : (" [" + tags + "]").c_str(), a.description.empty() ? "" : ": ",
+                              a.description.c_str());
+            }
         }
         out += "\n";
     }

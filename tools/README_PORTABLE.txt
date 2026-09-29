@@ -5,31 +5,29 @@ Runs the GpuSort DX12 sort benchmark on this machine. Nothing needs to be instal
 Studio, Windows SDK, VC++ redistributable or git. Needs Windows 10/11 x64 and a GPU driver with
 D3D12, shader model 6.6 and wave ops (any AMD RDNA, NVIDIA Turing or newer, Intel Arc).
 
-The two runs to do now on the AMD and the Intel machine
--------------------------------------------------------
-Please run these two, one after the other, from a command prompt in this folder (see "How to run"
-for unzipping and the OK/Cancel boxes), and bring back both results zips (one per run):
-    run_all.bat diag       the flush diagnostic (see "Flush diagnostic" below). AMD machine
-                           (RX 7900 XTX + Ryzen iGPU): about 5-6 min in total (both runs, if
-                           Developer Mode is on). Intel UHD 770 machine: about 2-3 min per run.
-    run_all.bat pass7      the low-end / iGPU shader set (see "Low-end shader set" below).
-                           AMD machine: about 1 min on the RX 7900 XTX + 10.5 min on the Ryzen
-                           iGPU, then the optional iGPU wave64 run (another ~10.5 min), plus the
-                           smoke tests before them (~2.5 min): ~25 min in total with wave64.
-                           Intel UHD 770 machine: about 8 min + ~1 min smoke test.
-With "noprompt" there are no OK/Cancel boxes (e.g. "run_all.bat pass7 noprompt"; see "No popups").
-To skip the optional wave64 run on the AMD machine, run without noprompt and press Cancel in the
-last box ("4/4: full pass7 wave64, integrated GPU only"); everything before it is kept (summary.txt
-then says "cancelled at the prompt", which is fine).
+The run to do now on every machine: the FINAL run
+--------------------------------------------------
+Please run this from a command prompt in this folder (see "How to run" for unzipping and the
+OK/Cancel boxes) and bring back the results zip:
+    run_all.bat final      the final algorithm set (see "Final run" below): a smoke test, then
+                           the full run, on every GPU; on AMD also the discrete GPU at wave64.
+                           AMD machine (RX 7900 XTX + Ryzen iGPU): ~1 h in total (XTX ~10 min per
+                           full run, the Ryzen iGPU ~34 min). Intel UHD 770 machine: ~31 min.
+                           RTX 5080: ~13 min; with an RTX 2060 next to it ~22 min more.
+    run_all.bat final noprompt   the same without OK/Cancel boxes (see "No popups").
+The script prints the plan with an estimated time per GPU before the first box.
+IMPORTANT: since this package the default flush mode is full_d50 (see "Final run"); results of
+earlier packages (up to 627724b) used another default and are not directly comparable.
 
 How to run
 ----------
 1. Unzip the whole package into a folder (for example the Desktop). Do not run it from inside the
    zip view in Explorer.
 2. Close games and other GPU-heavy programs.
-3. Double-click run_all.bat. (Only the wave probe, a few seconds: open a command prompt in this
-   folder and run "run_all.bat probe"; the flush diagnostic, a few minutes: "run_all.bat diag";
-   the low-end shader set: "run_all.bat pass7"; see "Modes" below.)
+3. Open a command prompt in this folder and run "run_all.bat final" (the run to do now).
+   (Double-click = the default mode; only the wave probe, a few seconds: "run_all.bat probe"; the
+   flush diagnostic, a few minutes: "run_all.bat diag"; the low-end shader set: "run_all.bat
+   pass7"; see "Modes" below.)
 4. Every GPU run first shows an OK/Cancel box titled "... Run k/N: <kind> <shader set> <wave>".
    Press OK to start that run. Cancel stops the script (the results so far are kept).
    (No boxes at all: add "noprompt", see "No popups" below.)
@@ -50,6 +48,10 @@ Modes (from a command prompt in this folder; run_all.bat prints them when it sta
     run_all.bat pass7      the low-end / iGPU shader set _test\pass7: smoke + full run, plus an
                            integrated-GPU-only wave64 smoke + full run on AMD; 2 or 4 OK/Cancel
                            boxes (see "Low-end shader set" below)
+    run_all.bat final      THE FINAL RUN: shaders\algorithms_final.txt, smoke + full run, plus a
+                           discrete-GPU-only wave64 smoke + full run on AMD; 2 or 4 OK/Cancel boxes
+                           (see "Final run" below)
+    add "igpu64" to final: also run integrated GPUs with a wave size range (Ryzen iGPU) at wave64
     add "noprompt" to any mode for no OK/Cancel boxes (see "No popups" below), e.g.
         run_all.bat diag noprompt
     add "nopause" to any mode to skip the "press any key" at the end.
@@ -107,6 +109,31 @@ Every run has its own OK/Cancel box (none with noprompt). The same stop rules as
 the full runs only start if every smoke test passed, a device loss stops at once. The script prints
 the plan with an estimated time per run before the first box (AMD machine: ~25 min in total,
 Intel UHD 770: ~9 min).
+
+Final run (run_all.bat final)
+-----------------------------
+One algorithm list, shaders\algorithms_final.txt: every distinct sort algorithm of pass0..pass7
+(69, each tagged with the pass that introduced it and a one-line description; the CSV has them in
+the columns pass / description / tags), incl. the recommended configurations (tag rec_discrete:
+s1_rank512_bitreg2048_radix, tag rec_integrated: m4_b128_p) and five flush-method variants of the
+reference. Default flush mode full_d50: after the 256 MB flush a ~50 us ALU-only "spin" dispatch
+runs before the timed sort (on the RX 7900 XTX shorter waits still time up to ~12 us of the
+flush's after-effects in small sorts; see _test\pass7\notes.md). Results of packages up to
+627724b used the default "full" (a one-group drain) and are not directly comparable.
+  1. Smoke test: GpuSort.exe --smoke --dred --algo-file algorithms_final.txt --iterations 16 on
+     every GPU, default wave size -> final_smoke.txt.
+  2. Only if a DISCRETE GPU reports a wave size range (RX 7900 XTX: 32-64): the same smoke test
+     with --wave-size 64 --discrete-only (not the Ryzen iGPU) -> final_smoke_wave64.txt.
+  3. Full run: GpuSort.exe --algo-file algorithms_final.txt --iterations 1000
+     --iterations-integrated 300 (1000 iterations on discrete GPUs, 300 on integrated ones; an
+     iGPU iteration takes ~10x longer), default wave size, every GPU -> final.txt.
+  4. Only with step 2: the full run with --wave-size 64 --discrete-only -> final_wave64.txt.
+With "igpu64" (run_all.bat final igpu64) steps 2 and 4 also include integrated GPUs with a wave
+size range (the Ryzen iGPU at wave64: known to be slow, adds ~40 min). Every run has its own
+OK/Cancel box (none with noprompt). Stop rules: a device loss or Cancel stops at once; a
+verification failure in the default smoke test (step 1) stops before every full run; one in the
+wave64 smoke test (step 2) only skips the wave64 full run (step 4). The script prints the plan
+with an estimated time per GPU; GpuSort prints a calibrated estimate after each OK.
 
 No popups (noprompt)
 --------------------
@@ -166,6 +193,10 @@ Results folder contents
                                 pass7 mode only: smoke and full runs of _test\pass7 (+ .csv,
                                 _samples.csv, _wave_probe.csv, .log); _igpu_wave64 = the
                                 integrated GPU at --wave-size 64
+    final_smoke[_wave64].txt, final[_wave64].txt
+                                final mode only: smoke and full runs of algorithms_final.txt
+                                (+ .csv, _samples.csv, _wave_probe.csv, .log); _wave64 = the
+                                discrete GPU(s) (with igpu64: every GPU with a range) at wave64
 <set> is "current" (shaders\) or "passN" (_test\passN\). No _waveNN = default wave size.
 The CSV columns are described in CSV_FORMAT.md; tools\aggregate_results.py (in the repository)
 merges the CSVs of the zips from all machines.
@@ -209,4 +240,8 @@ Running GpuSort.exe directly
                                                   runs with normal clocks and says so)
     GpuSort.exe --integrated-only --wave-size 64 (only the integrated GPU(s), e.g. the Ryzen iGPU;
                                                   --list-adapters shows "integrated yes" for them)
+    GpuSort.exe --discrete-only --wave-size 64   (only the discrete GPU(s), e.g. the RX 7900 XTX)
+    GpuSort.exe --algo-file algorithms_final.txt --iterations 1000 --iterations-integrated 300
+                                                 (the final run's full run; 300 iterations on
+                                                  integrated GPUs)
 The exe finds shaders\ next to itself; --shaders selects a snapshot.

@@ -173,7 +173,12 @@ bool WriteResultsCsv(const RunInfo& info, const std::filesystem::path& path, std
            "flush_mode", "workload", "sweep_size", "sorts_per_iteration", "iterations", "warmup", "min_us",
            "median_us", "mean_us", "p95_us", "p99_us", "max_us", "stddev_us", "verify_failures",
            "total_elements_per_iter_mean", "algorithm_id", "run_kind", "iterations_requested", "wave_probe_ok",
-           "gpu_error", "stable_power", "drain_spin_iters_per_us", "dispatch_info"});
+           "gpu_error", "stable_power", "drain_spin_iters_per_us", "dispatch_info", "pass", "description", "tags"});
+
+    // Algorithm id -> its algorithms.txt metadata (pass, desc, tags).
+    std::map<std::string, const AlgorithmInfo*> meta;
+    for (const auto& a : info.algorithmInfos)
+        meta[a.name] = &a;
 
     SizeCache sizeCache;
     for (size_t g = 0; g < info.gpus.size(); ++g)
@@ -238,13 +243,24 @@ bool WriteResultsCsv(const RunInfo& info, const std::filesystem::path& path, std
                 fields.push_back(v.empty() ? std::string() : Fixed(elements / static_cast<double>(v.size()), 1));
                 fields.push_back(c.algorithm);
                 fields.push_back(info.runKind);
-                fields.push_back(std::to_string(info.iterations));
+                fields.push_back(std::to_string(gpu.iterations ? gpu.iterations : info.iterations));
                 fields.push_back(probeOk);
                 fields.push_back(gpu.error);
                 fields.push_back(gpu.stablePower);
                 fields.push_back(spinRate);
                 const auto di = gpu.dispatchInfo.find(c.algorithm);
                 fields.push_back(di == gpu.dispatchInfo.end() ? std::string() : di->second);
+                const auto m = meta.find(c.algorithm);
+                const AlgorithmInfo* ai = m == meta.end() ? nullptr : m->second;
+                fields.push_back(ai && ai->pass >= 0 ? std::to_string(ai->pass) : std::string());
+                fields.push_back(ai ? ai->description : std::string());
+                std::string tags;
+                if (ai)
+                {
+                    for (const auto& t : ai->tags)
+                        tags += (tags.empty() ? "" : ";") + t;
+                }
+                fields.push_back(tags);
                 f.Row(fields);
             };
 

@@ -66,10 +66,14 @@ constexpr uint32_t kMaxDrainUs = 1000;
 std::string FlushModeName(const FlushMode& mode);
 bool ParseFlushMode(const std::string& name, FlushMode& mode);
 
-// The default flush mode (for algorithms without a 'flush' line, unless --flush-mode). Changing the
-// measurement of record, e.g. to a 20 us spin drain, is this one line: {FlushKind::Full,
-// DrainKind::Spin, 20}.
-constexpr FlushMode kDefaultFlushMode = {FlushKind::Full, DrainKind::Group, 0};
+// The default flush mode (for algorithms without a 'flush' line, unless --flush-mode): the
+// measurement of record. Since the final set it is full_d50 (256 MB flush, then a ~50 us spin
+// drain): on the RX 7900 XTX the post-flush penalty of the pass5 one-group drain ('full', ~12 us on
+// mostly_empty) only decays with a longer wait (full_d5 11.5, d10 8.9, d20 3.8, d50 / d100 1.76 vs
+// @data 1.68 us; _test/pass7/notes.md "AMD results"); the RTX 5080 and the Ryzen iGPU are flat from
+// d5 / d0. RESULTS OF EARLIER PACKAGES (up to 627724b) USE 'full' AS THE DEFAULT and are not
+// directly comparable on the small workloads; 'full' remains available as a flush mode.
+constexpr FlushMode kDefaultFlushMode = {FlushKind::Full, DrainKind::Spin, 50};
 
 // One ExecuteIndirect(DISPATCH {numSorts, 1, 1}) of one shader. Every group handles one sort
 // (SV_GroupID.x = sort index) and early-outs if that sort is not in its tier.
@@ -88,6 +92,9 @@ struct AlgorithmDesc
     std::vector<DispatchDesc> dispatches;
     bool flushGiven = false;             // a 'flush' line overrides --flush-mode for this algorithm
     FlushMode flush = kDefaultFlushMode;
+    int pass = -1;                       // 'pass' line: the pass that introduced it (-1 = not given)
+    std::string description;             // 'desc' line
+    std::vector<std::string> tags;       // 'tag' lines
 };
 
 // Algorithms are registered by the shader directory itself, in <shaderDir>/algorithms.txt:
@@ -95,7 +102,10 @@ struct AlgorithmDesc
 //   # comment
 //   algorithm <name>
 //   dispatch <file.hlsl> <entryPoint> <groupSize> [NAME=VALUE ...]
-//   flush <mode>   (optional: overrides --flush-mode for this algorithm; see FlushModeName)
+//   flush <mode>      (optional: overrides --flush-mode for this algorithm; see FlushModeName)
+//   pass <N>          (optional, 0..99: the pass that introduced the algorithm; CSV column pass)
+//   desc <text>       (optional: a one-line description, the rest of the line; CSV column description)
+//   tag <word> [...]  (optional, repeatable: tags such as rec_discrete; CSV column tags)
 //
 // so every _test/passN snapshot carries its own algorithm list. 'file' (--algo-file) selects another
 // list in the shader directory (a relative path is relative to shaderDir), e.g. a diagnostic set

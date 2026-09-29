@@ -300,6 +300,146 @@ The expected outcome is a per-GPU-class configuration an engine picks at startup
 wave size / CU count): e.g. `s7_512`-like single dispatches on discrete GPUs, and a tier-sized
 multi-dispatch configuration on the iGPUs if H1/H7 hold.
 
+## AMD results (STIMULATOR: RX 7900 XTX + Ryzen iGPU, 2026-09-29)
+
+`run_all.bat pass7` of package 627724b (archived: _test/external/STIMULATOR_20260929_1225): smoke
++ 300-iteration full run on both GPUs at wave32, and on the iGPU at wave64 (`--integrated-only`).
+**0 verification failures** in all four runs. The flush mode was the pass5 `full` (one-group
+drain); the flush diagnostic run the same day (STIMULATOR_20260929_1213, _test/external/notes.md)
+showed that it still leaves ~12 µs of post-flush penalty in the XTX's small-workload iterations
+(mostly_empty ~13.8 µs for every algorithm here, vs ~1.8 with a 50 µs spin drain), so on the XTX
+only differences between algorithms on the same workload mean something, and the small-workload
+multi-dispatch cost is not visible there. The iGPU has no such artifact.
+
+Ryzen iGPU, wave32, median µs per iteration (20 sorts), 300 iterations (all columns and the sweep:
+_test/external/STIMULATOR_20260929_1225/pass7.txt / .csv):
+
+| algorithm | empty | small | mix | large | worst | edges | mid | medium | sparse |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| s1_rank512_bitreg2048_radix (ref) | 4.08 | 10.64 | 39.90 | 174.26 | 260.40 | 78.50 | 109.22 | 37.58 | 150.24 |
+| s1_radix | 32.04 | 101.88 | 93.04 | **171.84** | **257.36** | 123.68 | 109.54 | 103.36 | 152.80 |
+| x7_all_256 | 8.08 | 23.70 | 48.10 | 280.14 | 425.42 | 125.56 | 90.44 | 42.32 | 234.34 |
+| x7_all_1024 | 9.58 | 28.60 | 49.88 | 239.04 | 341.30 | 108.92 | 111.88 | 47.14 | 203.58 |
+| m3_ref | 4.88 | 7.28 | 31.50 | 172.38 | 258.72 | 78.42 | 64.16 | 34.34 | 142.06 |
+| m3_ref_32k | 5.16 | 8.60 | 33.20 | 172.26 | 258.88 | 71.84 | 71.56 | 35.32 | **141.08** |
+| m3_x256 | 5.20 | 7.72 | 31.82 | 262.10 | 399.24 | 90.50 | 64.32 | 34.64 | 206.46 |
+| m3_x512 | 4.92 | 7.40 | 31.32 | 219.08 | 321.06 | 87.52 | 63.98 | 34.32 | 176.48 |
+| m3_b4096_x256 | 5.72 | 8.28 | 34.72 | 255.80 | 397.96 | 94.40 | 77.28 | 35.42 | 209.00 |
+| m3_mid_b4 | 5.64 | 8.12 | 34.56 | 261.70 | 398.20 | 98.96 | 89.00 | 35.02 | 209.26 |
+| m2_x513 | 3.40 | 5.88 | 33.30 | 260.04 | 395.78 | 101.38 | 86.92 | 32.90 | 213.06 |
+| m3_x1025 | 4.84 | 7.40 | 33.58 | 261.84 | 398.32 | 105.92 | 78.22 | 34.40 | 212.02 |
+| m4_b128 | 3.04 | **4.62** | 23.54 | 262.64 | 399.20 | 88.38 | 63.92 | 18.04 | 207.06 |
+| m4_b64 | 3.00 | 6.40 | 23.58 | 262.06 | 399.08 | 88.40 | **63.14** | 18.04 | 207.14 |
+| m4_b256 | 3.28 | 4.84 | 23.06 | 262.22 | 399.34 | 85.98 | 63.32 | 16.76 | 206.68 |
+| m4_b128e8 | 3.04 | 4.72 | **22.82** | 263.02 | 400.38 | 86.54 | 63.84 | **16.04** | 208.06 |
+| m3_r2 | 5.04 | 7.40 | 30.88 | 261.96 | 399.28 | 91.80 | 64.82 | 31.22 | 206.24 |
+| **m4_b128_p** | 3.88 | 5.42 | 23.72 | 172.00 | 258.48 | **75.00** | 63.68 | 18.60 | 142.30 |
+| s7_256 | 2.84 | 7.20 | 42.60 | 274.36 | 422.18 | 111.96 | 98.04 | 39.38 | 232.22 |
+| s7_512 | 2.84 | 6.40 | 39.62 | 219.28 | 321.00 | 89.28 | 99.76 | 37.04 | 185.82 |
+| s7_256b | **2.68** | 6.24 | 46.44 | 274.72 | 423.12 | 111.46 | 97.94 | 45.44 | 232.74 |
+
+Hypotheses on the Ryzen iGPU (wave32):
+
+| # | hypothesis | outcome |
+|---|---|---|
+| H1 | tier-sized groups and LDS raise throughput (m3_ref vs ref) | **confirmed** for 513-2048 (mostly_mid 64.2 vs 109.2, -41 %) and realistic_mix (31.5 vs 39.9, -21 %); only -9 % for 129-512 with the rank tier (34.3 vs 37.6); large tier unchanged (172 / 259 vs 174 / 260); +0.8 µs multi-dispatch cost on mostly_empty |
+| H1b | thread count or LDS size? (m3_ref_32k) | **mostly the thread count**: 32 KB everywhere keeps most of the gain (mostly_mid 71.6: 83 % of H1's gain), the small LDS adds the rest (64.2) |
+| H2 | X @256 / @512 beats P @1024 for the large tier | **refuted**: +52 / +27 % on mostly_large (262 / 219 vs 172), +54 / +24 % on worst_case; X @1024 (x7_all_1024) 239 / 341. The pass2 radix in 1024-thread groups stays the large tier |
+| H3 | bitonic @512 up to 4096 | **refuted**: sweep 2560-4096 168.8 / 171.5 / 174.8 vs P 126.5 / 133.2 / 154.1 (m3_ref); the radix switch stays at 2048 |
+| H4 / H4b | X's fixed cost is low (Intel's question; on this iGPU) | **confirmed here**: mostly_empty 8.1 (X @256) / 9.6 (X @1024) vs 32.0 for the pass2 radix, sweep 32: 25 vs 101; the group size matters little, the ballot ranking removes ~75 % of the fixed cost. Still far above rank / bitonic for small sorts (ref 4.1 / 8.0). Intel: no data yet |
+| H5 | B4 @512 for 513-2048 | **refuted**: mostly_mid 89.0 vs 64.3 (B8 @256) |
+| H6 / H6b | radix from 513 / from 1025 | **refuted**: mostly_mid 86.9 / 78.2 vs 64.3; but m3_x1025's B8 @128 for 513-1024 is the fastest there (sweep 768 / 1024: 34.5 / 35.4 vs 38.1 / 38.4 for B8 @256) |
+| H7 | bitonic in a 128-thread group beats rank for 129-512 | **confirmed, strongly**: mostly_medium 18.0 vs 34.6 (-48 %), realistic_mix 23.5 vs 31.8 (-26 %) |
+| H7b | ... from 65 (rank <= 64) | **refuted**: mostly_small 6.40 vs 4.62; rank <= 128 stays |
+| H7c | rank <= 256, bitonic above | neutral: mostly_medium 16.8 vs 18.0, mostly_small 4.84 vs 4.62, realistic_mix 23.1 vs 23.5 |
+| H8 | B8 instead of B4 for 129-512 | **confirmed**: mostly_medium 16.0 vs 18.0 (-11 %), sweep 384 / 512: 17.0 / 17.1 vs 19.9 / 20.1 |
+| H9 | rank with 2 elements per thread | partly: mostly_medium 31.2 vs 34.6 (sweep 512: 45.9 vs 65.7), worse at 128-256; far behind bitonic (H7) |
+| fallback | m4_b128_p | **best complete configuration**: better than or equal to the reference on every workload (realistic_mix 23.7 vs 39.9, mostly_mid 63.7 vs 109.2, mostly_medium 18.6 vs 37.6, mostly_small 5.4 vs 10.6, mostly_empty 3.9 vs 4.1, large / worst 172.0 / 258.5 vs 174.3 / 260.4) |
+| H10 / b / c | one dispatch with 256 / 512-thread groups gets most of the gain | **refuted** for 129-2048 (s7_512 realistic_mix 39.6, mostly_mid 99.8, mostly_medium 37.0 ≈ ref); only the smallest tier profits (mostly_empty 2.7-2.8, mostly_small 6.2-6.4 vs 4.1 / 10.6). With one dispatch every group reserves the 32 KB and the thread slots of the largest tier; tier-sized groups need their own dispatches |
+
+Ryzen iGPU, wave64 (`--wave-size 64 --integrated-only`, pass7_igpu_wave64.*): the hypothesis that
+small groups remove the wave64 collapse is **refuted**. The rank tier is faster at wave64 (as
+before: mostly_empty ref 3.20, m4_b128_p 3.16), but every bitonic tier collapses whatever the
+group size (m3_ref mostly_mid 390 vs 64 at wave32; m4_b128_p mostly_medium 130 vs 18.6, the B4
+@128 tier), and X is 3-5x slower (x7_all_256 worst_case 2038 vs 425; up to ~1.5 ms on
+mostly_large for the m3_x / m4 variants). So it is the bitonic / X code at wave64 (the 32-lane
+virtual waves: lane bit 5 through LDS) rather than register-limited 1024-thread groups. Keep
+wave32 on RDNA iGPUs; the final run does not run the iGPU at wave64 by default.
+
+RX 7900 XTX, wave32 (numbers carry the ~12 µs artifact on the small workloads; the differences
+are what counts):
+- Large tier: as on the 5080, X is latency-bound in small groups (mostly_large m3_x256 49.3,
+  m3_x512 39.2, x7_all_1024 38.6 vs 29.5 for P @1024; worst_case 52.8 / 43.3 / 42.0 vs 32.2).
+- 129-512: bitonic in small groups wins here too (H7: mostly_medium m4_b128 17.0 vs m3_x256
+  19.3, ref 19.4), and so does the single dispatch s7_256b (16.96, same tiers in 256 threads).
+- Everything else within ~1 µs: realistic_mix 21.1-21.8 for ref / m3_ref / m3_ref_32k /
+  m4_b128_p / s1_radix; mostly_mid: radix / multi-dispatch slightly ahead of the reference (21.1-
+  21.4 vs 22.0). m4_b128_p is within 0.2 µs of or up to 2.4 µs better than the reference on every
+  workload on the XTX, but its multi-dispatch cost (5080: +1.5-1.7 µs on mostly_empty / mostly_small /
+  mostly_medium) cannot be seen through the artifact; the final run (full_d50) will show it.
+
+**Recommendation per GPU class** (what an engine would pick at startup, e.g. by DXGI
+`D3D12_FEATURE_DATA_ARCHITECTURE::UMA`):
+- **Discrete GPUs: `s1_rank512_bitreg2048_radix`** (one 1024-thread dispatch: rank <= 512,
+  register bitonic E8 <= 2048, pass2 radix above; wave32 on RDNA). Best or within noise on the
+  5080 and the XTX for the realistic mix, no multi-dispatch cost. (On the 5080 `s7_512` is up to
+  0.5 µs faster below 2048 but 1.7-2.6 µs slower on mostly_large / worst_case.)
+- **Integrated GPUs: `m4_b128_p`** (4 dispatches: pass2 radix 2049+ @1024, B8 513-2048 @256, B4
+  129-512 @128, rank <= 128 @128). -41 % on realistic_mix on the Ryzen iGPU, never worse. The
+  data suggest two refinements that nobody measured together yet: B8 instead of B4 for 129-512
+  (H8, -11 % on mostly_medium) and B8 @128 for 513-1024 (H6b). Intel UHD 770: not measured yet
+  (its pass4 results favoured the same small-group direction: rank / bitonic fine, radix costly).
+- Both are tagged in shaders/algorithms_final.txt (`tag rec_discrete`, `tag rec_integrated`;
+  CSV column `tags`).
+
+## Final set (shaders/algorithms_final.txt) and the final run
+
+After the AMD results the measurement method and the algorithm list were frozen for one last run
+on every machine (`run_all.bat final`, tools/README_PORTABLE.txt):
+
+- **Default flush mode `full_d50`** (was `full`): the 7900 XTX's post-flush penalty only decays
+  with a longer wait after the flush (flush diagnostic above / _test/external/notes.md). Results
+  before this change use a different default and are not directly comparable on small
+  workloads (XTX: ~12 µs; 5080 / iGPU: a few tenths of a µs). `full` and all other modes remain.
+- **69 algorithms**: every distinct algorithm of pass0-pass7 (by pass: 0: 1, 1: 5, 2: 13,
+  3: 16, 4: 10 + 3 flush variants, 5: 2 flush variants, 7: 19): the union of the passes'
+  algorithms.txt plus the sort configurations that only the pass3 / pass4 diagnostic lists had
+  (11 + 5). Deduplicated by identical dispatch lists, then by identical compiled code: dxc
+  (-O3, cs_6_6) produces the same DXIL for s4_radix2 = s3_radix2_k8, s3_bitE8 = s4_bitE8 =
+  s1_bitreg and s3_rank1024_bitE8 = s1_rank1024_bitreg at wave16, 32 and 64 (the same code
+  behind different shader files), so only the older name is kept (noted in its desc).
+  t2_rank512_radix_waveops equals t2_rank512_radix only at wave64 (both use the wave intrinsics
+  there) and is kept. Not included: the ub_* microbenchmarks, the SHUFFLE_SPAN_TEST validation
+  variants (v64_*, v_*_span) and the flush variants other than five of the reference
+  (`@full_legacy`, `@full`, `@data`, `@code`, `@none`: the method story). Every algorithm runs
+  from the current shaders/: the snapshots' shader files are identical to shaders/ (git blob
+  hashes) except common.hlsli (pass0-pass4: comments; pass0/1 also lack the WAVE_SIZE /
+  SHUFFLE_SPAN defines, which are additions) and ubench.hlsli (microbenchmarks only), so no
+  old shader version had to be added.
+- New algorithm-list lines `pass <N>`, `desc <text>`, `tag <word>...` (Algorithms.h), written to
+  the results header and to the new CSV columns `pass`, `description`, `tags` (CSV schema 4).
+- **Iterations: 1000 on discrete GPUs, 300 on integrated GPUs** (`--iterations 1000
+  --iterations-integrated 300`, recorded per GPU in `iterations_requested`; warmup 5 as before).
+- Wave64: only on discrete GPUs with a wave size range (the XTX; `--discrete-only`); the iGPU at
+  wave64 only with `run_all.bat final igpu64`.
+- Estimated run time (69 algorithms x 10 workloads, from the measured per-iteration costs:
+  discrete 0.73-0.79 ms + 0.05 ms drain, Ryzen iGPU ~9.8 ms, UHD 770 ~7.7 ms): RTX 5080 / RX 7900
+  XTX ~10 min per full run (+ ~1 min smoke), an RTX 2060 ~22 min (not measured: ~1/3 of the
+  memory bandwidth, the flush dominates), Ryzen iGPU ~34 min, UHD 770 ~27 min (+2-3 min smoke).
+  AMD machine: ~62 min for the 4 runs (smoke, smoke wave64 XTX, full, full wave64 XTX).
+- Validation of the set: WARP `--iterations 2` and `--smoke --iterations 2` (69 x 10 = 690
+  combos each, 0 failures); WARP `--debug --gbv --iterations 2 --warmup 1` on 15 of them (5
+  shards: pass0_bitonic, t3_rank64_rank512_bitonic, t4_rank128_rank512_rank1024x2_bitonic,
+  t2_rank512_bitreg32, t2_rank512_radix_waveops, s1_rank1024_radix, s3_radix2_k1,
+  s3_rank512_bitE2_2048_radix2, s3_rank256_bitreg2048_radix2, s4_radix3_sw, s4_3tier_rx3_p5120,
+  s4_4tier_3072, the reference with full_d50 and @full_legacy, m4_b128_p; 150 combos, 0
+  failures, no debug-layer / GBV messages besides the startup notice); dxc compiles of every
+  dispatch at wave16 / 32 / 64 without errors; **RTX 5080 hardware smoke** `--smoke --dred
+  --algo-file algorithms_final.txt --iterations 16`: 690 combos, **0 failures**, wave probe OK,
+  no nvlddmkm / dxgkrnl / WHEA events, 31 s after the prompt (spin drain calibrated at 112 loop
+  iterations per µs). Results: final_smoke_rtx5080.txt / .csv (serial smoke, not a measurement).
+  The full final run on this machine is left to the user (`run_all.bat final`).
+
 ## Framework changes I would want (not made; src/ and tools/ belong to the other agent)
 
 (After the merge into main: 1 and 2 are done: `run_all.bat pass7`, `--integrated-only`, the

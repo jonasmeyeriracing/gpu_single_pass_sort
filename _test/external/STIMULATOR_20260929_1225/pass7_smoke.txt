@@ -1,0 +1,738 @@
+GpuSort benchmark results
+=========================
+Date:         2026-09-29 12:25:37
+Computer:     STIMULATOR
+Label:        1/4: smoke pass7 default wave size, every GPU
+Command line: "C:\Users\jonas\Desktop\GpuSort-portable-627724b\GpuSort-portable-627724b\GpuSort.exe"  --shaders "C:\Users\jonas\Desktop\GpuSort-portable-627724b\GpuSort-portable-627724b\_test\pass7" --smoke --dred --algo-file algorithms_smoke.txt --iterations 16   --label "1/4: smoke pass7 default wave size, every GPU" --out "C:\Users\jonas\Desktop\GpuSort-portable-627724b\GpuSort-portable-627724b\results\STIMULATOR_20260929_1225\pass7_smoke.txt" --log "C:\Users\jonas\Desktop\GpuSort-portable-627724b\GpuSort-portable-627724b\results\STIMULATOR_20260929_1225\pass7_smoke.log"
+Shader dir:   C:\Users\jonas\Desktop\GpuSort-portable-627724b\GpuSort-portable-627724b\_test\pass7
+Algo list:    algorithms_smoke.txt
+CSV files:    pass7_smoke.csv (per GPU x algorithm x workload), pass7_smoke_samples.csv (per iteration), pass7_smoke_wave_probe.csv (per wave configuration); columns: CSV_FORMAT.md
+Iterations:   16 measured + 0 warmup per GPU x workload x algorithm, 20 sorts per iteration
+Cache flush:  256 MB read+write compute pass before every timed sort, then a DRAIN (pass5): a
+              one-group dispatch on a private 4 KB buffer + UAV barrier right before the start
+              timestamp, so the tail of the flush (barrier wait / cache maintenance a driver defers
+              to the next dispatch) is no longer inside the timed window.
+              NOTE: results before pass5 were measured WITHOUT the drain and are not directly
+              comparable (flush mode full_legacy reproduces the old 'full'; on the RX 7900 XTX it
+              added ~13 us to most iterations, on the RTX 5080 ~0.25 us).
+Flush mode:   'full' for algorithms without their own. full = code + data cold (flush, drain);
+              full_legacy = pre-pass5 full (no drain); full_ro = read-only flush, no drain
+              (diagnostic); code = only code cold (flush before the upload, drain); data = only
+              data cold (untimed warm-up run of the same dispatches, drain); none = no flush (drain)
+              Drain suffixes (pass6 diagnostics): <mode>_d<N> = SPIN drain of about N us instead
+              (an ALU-only dispatch, 4 groups x 64 threads, one 16-byte store per thread to the
+              private 4 KB buffer, loop count from the per-GPU calibration below, + UAV barrier);
+              _d0 = no drain (full_d0 = full_legacy); _dg = the pass5 one-group drain
+Timing:       GPU timestamps around the sort ExecuteIndirect dispatches only, per iteration (all 20 sorts)
+GPUs:
+  [0] AMD Radeon RX 7900 XTX  (driver 32.0.11037.4004, timestamp freq 100000000 Hz, wall time 18.1 s)
+      vendor 1002 device 744C, 24512 MB VRAM
+      wave lanes 32-64, shaders compiled with WAVE_SIZE=32 + [WaveSize]
+      run-time estimate: 1.16 ms per iteration (calibrated up front) -> ~4 s for this GPU, actual 18.1 s
+      stable power: off
+      Wave probe: compiled WAVE_SIZE=32 [WaveSize(32)], groups 64/128/256/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK, shflscan x8 OK, shflscan after if OK, shflscan after select OK
+      Wave probe: compiled without [WaveSize] (driver's choice), groups 64/128/256/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK, shflscan x8 OK, shflscan after if OK, shflscan after select OK
+      Wave probe verdict: OK, the sort shaders' configuration (WAVE_SIZE=32 + [WaveSize(32)]) runs with 32 lanes and lane = SV_GroupIndex % 32
+  [1] AMD Radeon(TM) Graphics  (driver 32.0.11037.4004, timestamp freq 100000000 Hz, wall time 53.3 s)
+      vendor 1002 device 164E, 485 MB VRAM
+      wave lanes 32-64, shaders compiled with WAVE_SIZE=32 + [WaveSize]
+      run-time estimate: 9.64 ms per iteration (calibrated up front) -> ~37 s for this GPU, actual 53.3 s
+      stable power: off
+      Wave probe: compiled WAVE_SIZE=32 [WaveSize(32)], groups 64/128/256/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK, shflscan x8 OK, shflscan after if OK, shflscan after select OK
+      Wave probe: compiled without [WaveSize] (driver's choice), groups 64/128/256/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK, shflscan x8 OK, shflscan after if OK, shflscan after select OK
+      Wave probe verdict: OK, the sort shaders' configuration (WAVE_SIZE=32 + [WaveSize(32)]) runs with 32 lanes and lane = SV_GroupIndex % 32
+  skipped: Microsoft Basic Render Driver: software adapter
+  skipped: AMD Radeon RX 7900 XTX (LUID 00000000:00059E9B): indirect display / non-render adapter
+Run-time estimate: ~41 s up front (per GPU: 4 calibration iterations of the upload + flush +
+              drain + readback work without a sort, times the iterations of the run)
+Total benchmark time: 71.5 s (after confirmation)
+
+Workload size distribution (16 measured iterations x 20 sorts; counts are sorts per size tier)
+  workload         total elems elems/iter         0      1-64    65-128   129-512  513-2048 2049-8192    max  distribution
+  mostly_empty            2980      186.2       230        90         0         0         0         0     64  70% empty, rest 1-64
+  mostly_small           20761     1297.6         1       157       162         0         0         0    128  uniform 0-128
+  realistic_mix         155472     9717.0        51        24        31       172        31        11   7892  15% empty, 72% 16-512, 10% 513-2048, 3% 2049-8192
+  mostly_large         1643507   102719.2         0         0         0         0         0       320   8145  uniform 2048-8192
+  worst_case           2621440   163840.0         0         0         0         0         0       320   8192  all 8192
+  edges                 412695    25793.4        11        88        33        66        62        60   8192  tier boundaries 0-8192 (30 fixed sizes, cycled)
+  mostly_mid            412321    25770.1         0         0         0         0       320         0   2047  uniform 513-2048
+  mostly_medium          97715     6107.2         0         0         0       320         0         0    512  uniform 129-512
+  sweep                 718720    44920.0         0        40        20        60        80       120   8192  all 20 sorts the same size, 16 sizes 32-8192 cycled per iteration
+  sparse_keys          1331028    83189.2         0         6         2        15        49       248   8162  uniform 1-8192; each 4-bit key digit is constant within a sort with p = 1/2
+
+Algorithms (flush mode; per dispatch: threads per group t / groupshared bytes B; DXIL container
+bytes per dispatch; compiled for WAVE_SIZE=32)
+  s1_rank512_bitreg2048_radix  full         1024t/32768B                                  30296
+  s1_radix                     full         1024t/32768B                                  25240
+  x7_all_256                   full         256t/32768B                                   40724
+  x7_all_1024                  full         1024t/32768B                                  12664
+  m3_ref                       full         1024t/32768B;256t/8192B;512t/2048B            25232 + 8888 + 5384
+  m3_ref_32k                   full         1024t/32768B;256t/32768B;512t/32768B          25232 + 8888 + 5388
+  m3_x256                      full         256t/32768B;256t/8192B;512t/2048B             40732 + 8888 + 5384
+  m3_x512                      full         512t/32768B;256t/8192B;512t/2048B             21236 + 8888 + 5384
+  m3_b4096_x256                full         256t/32768B;512t/16384B;512t/2048B            40732 + 8888 + 5384
+  m3_mid_b4                    full         256t/32768B;512t/8192B;512t/2048B             40732 + 7108 + 5384
+  m2_x513                      full         256t/32768B;512t/2048B                        40732 + 5384
+  m3_x1025                     full         256t/32768B;128t/4096B;512t/2048B             40732 + 8888 + 5384
+  m4_b128                      full         256t/32768B;256t/8192B;128t/2048B;128t/512B   40732 + 8888 + 7108 + 5384
+  m4_b64                       full         256t/32768B;256t/8192B;128t/2048B;64t/256B    40732 + 8888 + 7108 + 5384
+  m4_b256                      full         256t/32768B;256t/8192B;128t/2048B;256t/1024B  40732 + 8888 + 7108 + 5384
+  m4_b128e8                    full         256t/32768B;256t/8192B;128t/2048B;128t/512B   40732 + 8888 + 8888 + 5384
+  m3_r2                        full         256t/32768B;256t/8192B;256t/2048B             40732 + 8888 + 5708
+  m4_b128_p                    full         1024t/32768B;256t/8192B;128t/2048B;128t/512B  25232 + 8888 + 7108 + 5384
+  s7_256                       full         256t/32768B                                   46664
+  s7_512                       full         512t/32768B                                   26412
+  s7_256b                      full         256t/32768B                                   48696
+  v_x7_all_256_span            full         256t/32768B                                   40680
+  v_x7_all_1024_span           full         1024t/32768B                                  12620
+  v_s7_256b_span               full         256t/32768B                                   48664
+
+Sort timings in microseconds (per iteration = 20 sorts)
+
+[0] AMD Radeon RX 7900 XTX  (WAVE_SIZE 32)
+  workload       algorithm                         min    median      mean       p95       max  fails
+  mostly_empty   s1_rank512_bitreg2048_radix      2.24      2.66      2.67      3.64      3.64      0
+                 s1_radix                        17.24     17.60     17.62     18.24     18.24      0
+                 x7_all_256                       3.48      4.82      4.87      6.64      6.64      0
+                 x7_all_1024                      3.60      3.72      3.72      3.80      3.80      0
+                 m3_ref                           1.32      1.56      1.54      1.80      1.80      0
+                 m3_ref_32k                       1.36      1.54      1.60      2.64      2.64      0
+                 m3_x256                          1.52      1.66      1.70      2.20      2.20      0
+                 m3_x512                          1.36      1.58      1.60      1.88      1.88      0
+                 m3_b4096_x256                    1.44      1.62      1.64      1.80      1.80      0
+                 m3_mid_b4                        1.52      1.62      1.63      1.76      1.76      0
+                 m2_x513                          1.28      1.54      1.56      1.80      1.80      0
+                 m3_x1025                         1.56      1.66      1.67      1.84      1.84      0
+                 m4_b128                          1.56      1.78      1.79      1.96      1.96      0
+                 m4_b64                           1.76      1.88      1.89      2.04      2.04      0
+                 m4_b256                          1.52      1.80      1.79      2.04      2.04      0
+                 m4_b128e8                        1.56      1.78      1.81      2.24      2.24      0
+                 m3_r2                            1.48      1.76      1.78      2.20      2.20      0
+                 m4_b128_p                        1.44      1.64      1.67      1.92      1.92      0
+                 s7_256                           1.60      1.88      1.85      2.00      2.00      0
+                 s7_512                           1.44      1.64      1.63      1.92      1.92      0
+                 s7_256b                          1.64      1.84      1.84      2.12      2.12      0
+                 v_x7_all_256_span                3.08      3.24      3.27      3.56      3.56      0
+                 v_x7_all_1024_span               3.12      3.32      3.34      3.68      3.68      0
+                 v_s7_256b_span                   1.64      1.80      1.83      2.04      2.04      0
+  mostly_small   s1_rank512_bitreg2048_radix      1.96      2.04      2.07      2.28      2.28      0
+                 s1_radix                         9.36      9.40      9.41      9.52      9.52      0
+                 x7_all_256                       3.64      3.70      3.73      4.24      4.24      0
+                 x7_all_1024                      3.80      3.88      3.92      4.04      4.04      0
+                 m3_ref                           1.84      1.94      1.95      2.08      2.08      0
+                 m3_ref_32k                       1.84      1.96      1.97      2.16      2.16      0
+                 m3_x256                          2.04      2.12      2.17      2.56      2.56      0
+                 m3_x512                          1.92      1.98      2.01      2.20      2.20      0
+                 m3_b4096_x256                    2.04      2.08      2.09      2.24      2.24      0
+                 m3_mid_b4                        2.00      2.10      2.11      2.32      2.32      0
+                 m2_x513                          1.88      1.98      2.02      2.48      2.48      0
+                 m3_x1025                         2.00      2.12      2.11      2.24      2.24      0
+                 m4_b128                          2.12      2.20      2.24      2.52      2.52      0
+                 m4_b64                           3.40      3.48      3.53      3.76      3.76      0
+                 m4_b256                          2.16      2.26      2.27      2.44      2.44      0
+                 m4_b128e8                        2.16      2.28      2.30      2.52      2.52      0
+                 m3_r2                            2.24      2.34      2.38      2.64      2.64      0
+                 m4_b128_p                        2.00      2.04      2.07      2.48      2.48      0
+                 s7_256                           2.32      2.40      2.40      2.64      2.64      0
+                 s7_512                           1.96      2.04      2.07      2.32      2.32      0
+                 s7_256b                          2.16      2.28      2.28      2.36      2.36      0
+                 v_x7_all_256_span                3.48      3.56      3.59      3.80      3.80      0
+                 v_x7_all_1024_span               3.56      3.60      3.65      3.92      3.92      0
+                 v_s7_256b_span                   2.16      2.22      2.29      2.72      2.72      0
+  realistic_mix  s1_rank512_bitreg2048_radix      6.84      9.78     10.75     16.56     16.56      0
+                 s1_radix                         9.40     10.16     11.31     16.56     16.56      0
+                 x7_all_256                       5.72     12.04     17.41     35.32     35.32      0
+                 x7_all_1024                      5.64     12.72     14.72     25.64     25.64      0
+                 m3_ref                           6.28      9.90     10.97     17.68     17.68      0
+                 m3_ref_32k                       6.40      9.34     10.64     17.04     17.04      0
+                 m3_x256                          6.52      9.50     16.60     35.64     35.64      0
+                 m3_x512                          6.28      9.34     13.50     26.52     26.52      0
+                 m3_b4096_x256                    6.52      9.48     16.30     36.24     36.24      0
+                 m3_mid_b4                        6.28     11.48     17.26     36.04     36.04      0
+                 m2_x513                          7.12     12.26     17.82     37.84     37.84      0
+                 m3_x1025                         6.48     12.54     17.73     36.16     36.16      0
+                 m4_b128                          5.16      9.64     16.53     36.88     36.88      0
+                 m4_b64                           5.12      9.58     16.75     36.88     36.88      0
+                 m4_b256                          5.56      9.60     16.80     36.88     36.88      0
+                 m4_b128e8                        5.24      9.76     16.87     37.84     37.84      0
+                 m3_r2                            6.68      9.80     16.63     36.16     36.16      0
+                 m4_b128_p                        5.44      9.44     10.53     17.00     17.00      0
+                 s7_256                           6.96      9.86     16.71     35.12     35.12      0
+                 s7_512                           6.52      9.36     13.49     26.08     26.08      0
+                 s7_256b                          5.08      9.76     16.74     36.72     36.72      0
+                 v_x7_all_256_span                6.08     12.52     17.66     35.32     35.32      0
+                 v_x7_all_1024_span               6.12     15.16     16.47     27.52     27.52      0
+                 v_s7_256b_span                   5.44     10.06     16.88     35.68     35.68      0
+  mostly_large   s1_rank512_bitreg2048_radix     18.08     32.98     30.08     34.92     34.92      0
+                 s1_radix                        31.36     33.42     33.29     34.28     34.28      0
+                 x7_all_256                      65.76     67.66     67.78     69.84     69.84      0
+                 x7_all_1024                     45.60     49.54     49.03     50.00     50.00      0
+                 m3_ref                          32.12     33.84     33.73     35.20     35.20      0
+                 m3_ref_32k                      31.96     33.82     33.70     35.16     35.16      0
+                 m3_x256                         63.48     67.72     67.52     69.76     69.76      0
+                 m3_x512                         46.84     49.44     49.27     49.88     49.88      0
+                 m3_b4096_x256                   63.52     67.72     67.42     69.76     69.76      0
+                 m3_mid_b4                       65.32     68.20     67.78     70.24     70.24      0
+                 m2_x513                         65.44     68.12     67.99     70.52     70.52      0
+                 m3_x1025                        65.44     68.30     68.18     70.28     70.28      0
+                 m4_b128                         64.64     68.88     68.33     70.36     70.36      0
+                 m4_b64                          63.68     68.22     67.77     69.68     69.68      0
+                 m4_b256                         63.92     68.70     68.34     71.04     71.04      0
+                 m4_b128e8                       65.04     68.66     68.37     69.96     69.96      0
+                 m3_r2                           62.84     68.10     67.93     69.88     69.88      0
+                 m4_b128_p                       32.08     34.12     33.94     35.36     35.36      0
+                 s7_256                          63.92     68.10     67.84     69.24     69.24      0
+                 s7_512                          47.04     49.30     49.24     49.84     49.84      0
+                 s7_256b                         66.32     68.08     68.18     69.88     69.88      0
+                 v_x7_all_256_span               64.28     68.94     68.43     71.32     71.32      0
+                 v_x7_all_1024_span              49.72     53.88     53.27     54.76     54.76      0
+                 v_s7_256b_span                  66.36     68.42     68.56     70.28     70.28      0
+  worst_case     s1_rank512_bitreg2048_radix     37.04     38.50     38.24     39.24     39.24      0
+                 s1_radix                        36.96     38.50     38.34     39.56     39.56      0
+                 x7_all_256                      71.04     71.76     71.73     72.20     72.20      0
+                 x7_all_1024                     53.36     54.24     54.27     55.28     55.28      0
+                 m3_ref                          37.24     38.14     38.27     39.24     39.24      0
+                 m3_ref_32k                      37.08     37.64     37.88     39.36     39.36      0
+                 m3_x256                         71.80     72.08     72.15     72.80     72.80      0
+                 m3_x512                         53.76     54.68     54.65     55.88     55.88      0
+                 m3_b4096_x256                   71.60     72.06     72.03     72.32     72.32      0
+                 m3_mid_b4                       71.48     72.12     72.09     72.52     72.52      0
+                 m2_x513                         71.60     72.10     72.04     72.44     72.44      0
+                 m3_x1025                        71.88     72.20     72.22     72.44     72.44      0
+                 m4_b128                         71.88     72.42     72.40     72.84     72.84      0
+                 m4_b64                          71.80     72.44     72.36     72.80     72.80      0
+                 m4_b256                         71.84     72.34     72.31     72.96     72.96      0
+                 m4_b128e8                       71.88     72.32     72.30     72.56     72.56      0
+                 m3_r2                           71.68     72.02     72.12     72.68     72.68      0
+                 m4_b128_p                       36.60     37.88     38.41     39.80     39.80      0
+                 s7_256                          71.40     71.86     71.88     72.64     72.64      0
+                 s7_512                          53.84     54.66     54.75     55.64     55.64      0
+                 s7_256b                         71.44     71.92     71.92     72.56     72.56      0
+                 v_x7_all_256_span               71.92     72.60     72.56     73.08     73.08      0
+                 v_x7_all_1024_span              58.04     58.80     58.79     59.72     59.72      0
+                 v_s7_256b_span                  72.08     72.68     72.66     73.24     73.24      0
+  edges          s1_rank512_bitreg2048_radix     13.72     32.76     25.77     33.24     33.24      0
+                 s1_radix                        17.84     32.74     27.32     33.08     33.08      0
+                 x7_all_256                      14.40     66.76     47.82     69.40     69.40      0
+                 x7_all_1024                     19.64     49.18     38.25     49.72     49.72      0
+                 m3_ref                          13.64     32.90     25.87     33.44     33.44      0
+                 m3_ref_32k                      13.64     33.00     25.95     33.44     33.44      0
+                 m3_x256                         13.72     65.94     47.64     69.64     69.64      0
+                 m3_x512                         13.72     48.98     35.91     49.40     49.40      0
+                 m3_b4096_x256                   13.92     67.70     47.98     69.80     69.80      0
+                 m3_mid_b4                       13.68     66.54     47.59     69.76     69.76      0
+                 m2_x513                         13.92     67.04     48.27     69.72     69.72      0
+                 m3_x1025                        13.68     68.36     48.03     69.60     69.60      0
+                 m4_b128                         12.00     66.54     46.91     69.72     69.72      0
+                 m4_b64                          12.00     68.52     47.79     70.40     70.40      0
+                 m4_b256                         11.92     67.30     47.32     69.84     69.84      0
+                 m4_b128e8                       12.08     66.66     47.72     77.52     77.52      0
+                 m3_r2                           14.20     67.40     48.05     69.84     69.84      0
+                 m4_b128_p                       11.80     33.08     25.30     33.64     33.64      0
+                 s7_256                          14.08     67.84     48.09     69.72     69.72      0
+                 s7_512                          13.72     48.96     35.88     49.32     49.32      0
+                 s7_256b                         12.08     67.92     47.52     69.60     69.60      0
+                 v_x7_all_256_span               14.44     68.00     48.98     70.68     70.68      0
+                 v_x7_all_1024_span              23.24     53.20     42.27     53.72     53.72      0
+                 v_s7_256b_span                  12.84     67.54     47.93     70.24     70.24      0
+  mostly_mid     s1_rank512_bitreg2048_radix     18.32     18.52     18.52     18.88     18.88      0
+                 s1_radix                        18.72     18.96     19.09     20.20     20.20      0
+                 x7_all_256                      21.52     22.08     22.18     23.44     23.44      0
+                 x7_all_1024                     15.68     17.58     18.08     21.84     21.84      0
+                 m3_ref                          16.68     17.74     17.65     17.96     17.96      0
+                 m3_ref_32k                      17.64     17.84     17.86     18.08     18.08      0
+                 m3_x256                         17.72     17.96     17.97     18.32     18.32      0
+                 m3_x512                         17.52     17.84     17.84     18.20     18.20      0
+                 m3_b4096_x256                   17.44     17.68     17.71     18.08     18.08      0
+                 m3_mid_b4                       19.12     19.36     19.40     19.64     19.64      0
+                 m2_x513                         21.28     22.40     22.26     23.16     23.16      0
+                 m3_x1025                        21.76     22.60     22.52     23.64     23.64      0
+                 m4_b128                         10.88     17.92     15.37     18.28     18.28      0
+                 m4_b64                           9.80     10.32     10.46     11.60     11.60      0
+                 m4_b256                          9.60      9.72      9.75     10.04     10.04      0
+                 m4_b128e8                       10.16     12.96     13.68     18.32     18.32      0
+                 m3_r2                           17.64     18.00     18.10     19.08     19.08      0
+                 m4_b128_p                       17.76     17.88     17.93     18.16     18.16      0
+                 s7_256                          18.00     18.26     18.35     18.80     18.80      0
+                 s7_512                          17.52     17.88     17.88     18.36     18.36      0
+                 s7_256b                         17.88     18.32     18.36     19.08     19.08      0
+                 v_x7_all_256_span               21.52     22.70     22.66     23.60     23.60      0
+                 v_x7_all_1024_span              24.76     26.86     26.60     28.28     28.28      0
+                 v_s7_256b_span                  12.52     19.06     17.00     19.28     19.28      0
+  mostly_medium  s1_rank512_bitreg2048_radix      5.96      7.20      7.17      8.44      8.44      0
+                 s1_radix                         9.32      9.44      9.45      9.60      9.60      0
+                 x7_all_256                       5.24      5.74      5.68      5.96      5.96      0
+                 x7_all_1024                      5.20      5.58      5.60      5.80      5.80      0
+                 m3_ref                           6.52      7.10      7.01      7.32      7.32      0
+                 m3_ref_32k                       5.80      7.18      7.05      7.44      7.44      0
+                 m3_x256                          6.04      7.26      7.15      7.48      7.48      0
+                 m3_x512                          5.96      7.14      6.99      7.40      7.40      0
+                 m3_b4096_x256                    5.92      7.20      7.11      7.48      7.48      0
+                 m3_mid_b4                        6.00      7.22      7.09      7.48      7.48      0
+                 m2_x513                          5.88      7.16      7.01      7.36      7.36      0
+                 m3_x1025                         6.04      7.22      7.13      7.76      7.76      0
+                 m4_b128                          5.16      5.18      5.19      5.28      5.28      0
+                 m4_b64                           5.12      5.16      5.18      5.36      5.36      0
+                 m4_b256                          5.12      5.24      5.28      5.52      5.52      0
+                 m4_b128e8                        5.16      5.24      5.29      5.68      5.68      0
+                 m3_r2                            6.84      7.48      7.44      8.08      8.08      0
+                 m4_b128_p                        5.04      5.12      5.17      5.60      5.60      0
+                 s7_256                           6.88      7.70      7.66      8.92      8.92      0
+                 s7_512                           6.00      7.22      7.10      7.48      7.48      0
+                 s7_256b                          4.96      5.04      5.09      5.56      5.56      0
+                 v_x7_all_256_span                5.28      5.94      5.89      6.12      6.12      0
+                 v_x7_all_1024_span               5.80      6.18      6.14      6.44      6.44      0
+                 v_s7_256b_span                   5.12      5.20      5.24      5.72      5.72      0
+  sweep          s1_rank512_bitreg2048_radix      1.68      8.72     10.30     38.00     38.00      0
+                 s1_radix                        17.68     18.78     21.45     38.60     38.60      0
+                 x7_all_256                       6.20     16.92     24.49     71.40     71.40      0
+                 x7_all_1024                      6.88     18.92     21.59     52.96     52.96      0
+                 m3_ref                           2.32     15.48     16.08     39.08     39.08      0
+                 m3_ref_32k                       2.44     15.52     16.16     37.64     37.64      0
+                 m3_x256                          2.88     15.72     23.38     72.16     72.16      0
+                 m3_x512                          2.72     15.68     19.06     54.84     54.84      0
+                 m3_b4096_x256                    2.72     15.90     23.11     71.44     71.44      0
+                 m3_mid_b4                        2.88     16.72     23.63     72.12     72.12      0
+                 m2_x513                          2.44     17.26     23.89     71.28     71.28      0
+                 m3_x1025                         2.72     16.78     23.90     71.48     71.48      0
+                 m4_b128                          3.28     15.16     23.45     71.80     71.80      0
+                 m4_b64                           3.48     15.28     23.69     72.28     72.28      0
+                 m4_b256                          3.12     15.34     23.43     72.04     72.04      0
+                 m4_b128e8                        3.36     15.18     23.51     72.08     72.08      0
+                 m3_r2                            2.80     16.12     23.78     71.88     71.88      0
+                 m4_b128_p                        3.08     14.70     16.33     39.00     39.00      0
+                 s7_256                           2.72     16.66     23.72     71.44     71.44      0
+                 s7_512                           2.48     15.78     19.04     53.96     53.96      0
+                 s7_256b                          2.96     14.90     23.20     71.92     71.92      0
+                 v_x7_all_256_span                5.72     17.68     24.83     71.88     71.88      0
+                 v_x7_all_1024_span               6.00     21.94     23.78     57.64     57.64      0
+                 v_s7_256b_span                   2.80     15.86     23.68     72.16     72.16      0
+  sparse_keys    s1_rank512_bitreg2048_radix     26.88     32.12     31.73     34.24     34.24      0
+                 s1_radix                        27.00     32.08     31.91     34.36     34.36      0
+                 x7_all_256                      57.12     65.84     65.34     69.52     69.52      0
+                 x7_all_1024                     43.72     48.36     47.60     49.64     49.64      0
+                 m3_ref                          27.72     32.48     32.09     34.68     34.68      0
+                 m3_ref_32k                      28.00     32.64     32.39     34.52     34.52      0
+                 m3_x256                         58.24     66.26     65.66     69.80     69.80      0
+                 m3_x512                         43.92     48.98     48.07     49.92     49.92      0
+                 m3_b4096_x256                   59.80     65.36     65.24     68.92     68.92      0
+                 m3_mid_b4                       61.32     66.62     66.13     70.08     70.08      0
+                 m2_x513                         59.88     66.40     65.71     69.04     69.04      0
+                 m3_x1025                        57.12     66.52     65.41     68.64     68.64      0
+                 m4_b128                         58.72     65.92     65.52     69.08     69.08      0
+                 m4_b64                          59.88     67.60     66.29     69.40     69.40      0
+                 m4_b256                         58.52     66.12     65.55     69.72     69.72      0
+                 m4_b128e8                       57.56     65.50     65.54     69.44     69.44      0
+                 m3_r2                           58.72     66.06     65.62     69.60     69.60      0
+                 m4_b128_p                       28.24     32.64     32.36     34.24     34.24      0
+                 s7_256                          57.72     66.02     65.28     69.72     69.72      0
+                 s7_512                          43.76     49.06     48.18     49.72     49.72      0
+                 s7_256b                         60.44     66.48     65.98     69.32     69.32      0
+                 v_x7_all_256_span               58.68     67.20     66.62     70.12     70.12      0
+                 v_x7_all_1024_span              47.32     52.26     51.76     54.28     54.28      0
+                 v_s7_256b_span                  59.12     67.48     66.42     69.12     69.12      0
+
+  sweep: median us per iteration by sort size (all 20 sorts of an iteration have that size)
+  algorithm                        32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  s1_rank512_bitreg2048_radix    1.76    1.68    2.12    3.08    4.96    7.44    6.80    6.96   10.00   10.04   10.88   11.68   13.40   14.56   21.48   38.00
+  s1_radix                      17.72   17.68   17.96   18.16   17.92   17.88   17.80   18.52   19.04   20.36   20.88   21.96   24.28   25.20   29.16   38.60
+  x7_all_256                     6.20    6.20    6.56    8.68    9.76   10.64   13.16   14.84   19.00   23.12   26.92   31.44   40.20   47.40   56.32   71.40
+  x7_all_1024                    7.16    6.88    7.12    8.32    9.28   10.68   14.32   20.12   17.72   24.60   24.20   28.64   34.32   37.16   41.92   52.96
+  m3_ref                         2.32    2.64    3.68    5.72    9.12   13.84   11.76   12.04   17.12   18.20   20.64   22.40   24.48   25.76   28.52   39.08
+  m3_ref_32k                     2.44    2.76    3.48    5.48    9.36   14.00   11.88   12.32   17.04   18.36   20.80   22.00   25.64   25.84   29.52   37.64
+  m3_x256                        2.92    2.88    3.68    5.76    9.40   14.04   11.92   12.24   17.40   18.40   27.16   31.72   40.28   47.72   56.40   72.16
+  m3_x512                        2.72    2.88    3.64    5.60    9.12   14.24   11.96   12.04   17.12   18.28   21.68   24.28   30.72   35.28   40.60   54.84
+  m3_b4096_x256                  2.72    3.04    3.76    5.68    9.36   14.12   12.36   12.36   17.68   18.04   30.68   31.56   32.60   47.92   56.48   71.44
+  m3_mid_b4                      2.88    2.92    3.68    5.64    9.36   14.08   12.12   12.24   19.36   19.96   27.24   32.12   39.92   47.80   56.56   72.12
+  m2_x513                        2.44    2.76    3.48    5.36    9.04   13.84   12.72   15.24   19.28   23.52   27.24   31.68   40.28   47.72   56.44   71.28
+  m3_x1025                       2.72    3.20    4.04    5.68    9.36   14.08   11.88   12.52   19.48   24.04   27.80   31.52   40.12   47.76   56.76   71.48
+  m4_b128                        3.28    3.72    4.08    7.84    9.60    9.68   12.12   12.48   17.84   18.64   27.36   31.84   40.40   47.84   56.64   71.80
+  m4_b64                         3.48    3.48    6.36    7.80    9.84    9.72   12.12   12.56   18.00   18.44   27.56   32.12   40.40   48.12   56.68   72.28
+  m4_b256                        3.12    3.44    4.08    6.12    9.56    9.96   12.64   12.64   18.04   18.44   27.44   32.12   40.60   48.00   56.68   72.04
+  m4_b128e8                      3.36    3.36    4.12    7.88    9.72    9.80   12.36   12.48   17.88   18.68   27.72   31.76   40.40   48.00   56.52   72.08
+  m3_r2                          2.80    3.16    4.16    8.32   11.44   14.64   12.64   12.08   17.60   18.24   27.28   31.68   40.60   47.64   56.28   71.88
+  m4_b128_p                      3.24    3.08    4.08    7.88    9.36   10.24   11.92   12.24   17.16   18.88   21.12   23.48   25.44   25.72   28.40   39.00
+  s7_256                         2.72    3.08    4.12    8.20   11.36   15.56   12.12   12.48   17.76   18.48   27.24   31.32   40.04   47.56   56.08   71.44
+  s7_512                         2.48    2.88    3.64    5.40    9.08   13.96   12.08   12.76   17.60   18.28   21.72   23.84   30.56   35.72   40.68   53.96
+  s7_256b                        3.12    2.96    3.72    7.52    9.16    9.16   12.08   12.48   17.32   18.92   27.56   31.44   39.76   47.64   56.48   71.92
+  v_x7_all_256_span              5.72    5.76    6.32    8.80    9.20   11.20   13.52   15.76   19.60   23.72   27.84   32.36   40.88   48.24   56.44   71.88
+  v_x7_all_1024_span             6.04    6.00    6.60    8.16    9.72   11.56   16.12   23.84   20.04   28.68   26.56   32.40   39.88   41.48   45.80   57.64
+  v_s7_256b_span                 2.80    3.24    3.84    7.84   10.00    9.52   12.68   13.28   18.44   19.36   27.72   31.96   40.60   48.72   56.76   72.16
+
+  sweep: mean us per iteration by sort size (all 20 sorts of an iteration have that size)
+  algorithm                        32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  s1_rank512_bitreg2048_radix    1.76    1.68    2.12    3.08    4.96    7.44    6.80    6.96   10.00   10.04   10.88   11.68   13.40   14.56   21.48   38.00
+  s1_radix                      17.72   17.68   17.96   18.16   17.92   17.88   17.80   18.52   19.04   20.36   20.88   21.96   24.28   25.20   29.16   38.60
+  x7_all_256                     6.20    6.20    6.56    8.68    9.76   10.64   13.16   14.84   19.00   23.12   26.92   31.44   40.20   47.40   56.32   71.40
+  x7_all_1024                    7.16    6.88    7.12    8.32    9.28   10.68   14.32   20.12   17.72   24.60   24.20   28.64   34.32   37.16   41.92   52.96
+  m3_ref                         2.32    2.64    3.68    5.72    9.12   13.84   11.76   12.04   17.12   18.20   20.64   22.40   24.48   25.76   28.52   39.08
+  m3_ref_32k                     2.44    2.76    3.48    5.48    9.36   14.00   11.88   12.32   17.04   18.36   20.80   22.00   25.64   25.84   29.52   37.64
+  m3_x256                        2.92    2.88    3.68    5.76    9.40   14.04   11.92   12.24   17.40   18.40   27.16   31.72   40.28   47.72   56.40   72.16
+  m3_x512                        2.72    2.88    3.64    5.60    9.12   14.24   11.96   12.04   17.12   18.28   21.68   24.28   30.72   35.28   40.60   54.84
+  m3_b4096_x256                  2.72    3.04    3.76    5.68    9.36   14.12   12.36   12.36   17.68   18.04   30.68   31.56   32.60   47.92   56.48   71.44
+  m3_mid_b4                      2.88    2.92    3.68    5.64    9.36   14.08   12.12   12.24   19.36   19.96   27.24   32.12   39.92   47.80   56.56   72.12
+  m2_x513                        2.44    2.76    3.48    5.36    9.04   13.84   12.72   15.24   19.28   23.52   27.24   31.68   40.28   47.72   56.44   71.28
+  m3_x1025                       2.72    3.20    4.04    5.68    9.36   14.08   11.88   12.52   19.48   24.04   27.80   31.52   40.12   47.76   56.76   71.48
+  m4_b128                        3.28    3.72    4.08    7.84    9.60    9.68   12.12   12.48   17.84   18.64   27.36   31.84   40.40   47.84   56.64   71.80
+  m4_b64                         3.48    3.48    6.36    7.80    9.84    9.72   12.12   12.56   18.00   18.44   27.56   32.12   40.40   48.12   56.68   72.28
+  m4_b256                        3.12    3.44    4.08    6.12    9.56    9.96   12.64   12.64   18.04   18.44   27.44   32.12   40.60   48.00   56.68   72.04
+  m4_b128e8                      3.36    3.36    4.12    7.88    9.72    9.80   12.36   12.48   17.88   18.68   27.72   31.76   40.40   48.00   56.52   72.08
+  m3_r2                          2.80    3.16    4.16    8.32   11.44   14.64   12.64   12.08   17.60   18.24   27.28   31.68   40.60   47.64   56.28   71.88
+  m4_b128_p                      3.24    3.08    4.08    7.88    9.36   10.24   11.92   12.24   17.16   18.88   21.12   23.48   25.44   25.72   28.40   39.00
+  s7_256                         2.72    3.08    4.12    8.20   11.36   15.56   12.12   12.48   17.76   18.48   27.24   31.32   40.04   47.56   56.08   71.44
+  s7_512                         2.48    2.88    3.64    5.40    9.08   13.96   12.08   12.76   17.60   18.28   21.72   23.84   30.56   35.72   40.68   53.96
+  s7_256b                        3.12    2.96    3.72    7.52    9.16    9.16   12.08   12.48   17.32   18.92   27.56   31.44   39.76   47.64   56.48   71.92
+  v_x7_all_256_span              5.72    5.76    6.32    8.80    9.20   11.20   13.52   15.76   19.60   23.72   27.84   32.36   40.88   48.24   56.44   71.88
+  v_x7_all_1024_span             6.04    6.00    6.60    8.16    9.72   11.56   16.12   23.84   20.04   28.68   26.56   32.40   39.88   41.48   45.80   57.64
+  v_s7_256b_span                 2.80    3.24    3.84    7.84   10.00    9.52   12.68   13.28   18.44   19.36   27.72   31.96   40.60   48.72   56.76   72.16
+
+  sweep: p95 us per iteration by sort size (all 20 sorts of an iteration have that size)
+  algorithm                        32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  s1_rank512_bitreg2048_radix    1.76    1.68    2.12    3.08    4.96    7.44    6.80    6.96   10.00   10.04   10.88   11.68   13.40   14.56   21.48   38.00
+  s1_radix                      17.72   17.68   17.96   18.16   17.92   17.88   17.80   18.52   19.04   20.36   20.88   21.96   24.28   25.20   29.16   38.60
+  x7_all_256                     6.20    6.20    6.56    8.68    9.76   10.64   13.16   14.84   19.00   23.12   26.92   31.44   40.20   47.40   56.32   71.40
+  x7_all_1024                    7.16    6.88    7.12    8.32    9.28   10.68   14.32   20.12   17.72   24.60   24.20   28.64   34.32   37.16   41.92   52.96
+  m3_ref                         2.32    2.64    3.68    5.72    9.12   13.84   11.76   12.04   17.12   18.20   20.64   22.40   24.48   25.76   28.52   39.08
+  m3_ref_32k                     2.44    2.76    3.48    5.48    9.36   14.00   11.88   12.32   17.04   18.36   20.80   22.00   25.64   25.84   29.52   37.64
+  m3_x256                        2.92    2.88    3.68    5.76    9.40   14.04   11.92   12.24   17.40   18.40   27.16   31.72   40.28   47.72   56.40   72.16
+  m3_x512                        2.72    2.88    3.64    5.60    9.12   14.24   11.96   12.04   17.12   18.28   21.68   24.28   30.72   35.28   40.60   54.84
+  m3_b4096_x256                  2.72    3.04    3.76    5.68    9.36   14.12   12.36   12.36   17.68   18.04   30.68   31.56   32.60   47.92   56.48   71.44
+  m3_mid_b4                      2.88    2.92    3.68    5.64    9.36   14.08   12.12   12.24   19.36   19.96   27.24   32.12   39.92   47.80   56.56   72.12
+  m2_x513                        2.44    2.76    3.48    5.36    9.04   13.84   12.72   15.24   19.28   23.52   27.24   31.68   40.28   47.72   56.44   71.28
+  m3_x1025                       2.72    3.20    4.04    5.68    9.36   14.08   11.88   12.52   19.48   24.04   27.80   31.52   40.12   47.76   56.76   71.48
+  m4_b128                        3.28    3.72    4.08    7.84    9.60    9.68   12.12   12.48   17.84   18.64   27.36   31.84   40.40   47.84   56.64   71.80
+  m4_b64                         3.48    3.48    6.36    7.80    9.84    9.72   12.12   12.56   18.00   18.44   27.56   32.12   40.40   48.12   56.68   72.28
+  m4_b256                        3.12    3.44    4.08    6.12    9.56    9.96   12.64   12.64   18.04   18.44   27.44   32.12   40.60   48.00   56.68   72.04
+  m4_b128e8                      3.36    3.36    4.12    7.88    9.72    9.80   12.36   12.48   17.88   18.68   27.72   31.76   40.40   48.00   56.52   72.08
+  m3_r2                          2.80    3.16    4.16    8.32   11.44   14.64   12.64   12.08   17.60   18.24   27.28   31.68   40.60   47.64   56.28   71.88
+  m4_b128_p                      3.24    3.08    4.08    7.88    9.36   10.24   11.92   12.24   17.16   18.88   21.12   23.48   25.44   25.72   28.40   39.00
+  s7_256                         2.72    3.08    4.12    8.20   11.36   15.56   12.12   12.48   17.76   18.48   27.24   31.32   40.04   47.56   56.08   71.44
+  s7_512                         2.48    2.88    3.64    5.40    9.08   13.96   12.08   12.76   17.60   18.28   21.72   23.84   30.56   35.72   40.68   53.96
+  s7_256b                        3.12    2.96    3.72    7.52    9.16    9.16   12.08   12.48   17.32   18.92   27.56   31.44   39.76   47.64   56.48   71.92
+  v_x7_all_256_span              5.72    5.76    6.32    8.80    9.20   11.20   13.52   15.76   19.60   23.72   27.84   32.36   40.88   48.24   56.44   71.88
+  v_x7_all_1024_span             6.04    6.00    6.60    8.16    9.72   11.56   16.12   23.84   20.04   28.68   26.56   32.40   39.88   41.48   45.80   57.64
+  v_s7_256b_span                 2.80    3.24    3.84    7.84   10.00    9.52   12.68   13.28   18.44   19.36   27.72   31.96   40.60   48.72   56.76   72.16
+
+[1] AMD Radeon(TM) Graphics  (WAVE_SIZE 32)
+  workload       algorithm                         min    median      mean       p95       max  fails
+  mostly_empty   s1_rank512_bitreg2048_radix      3.88     11.68     10.63     14.48     14.48      0
+                 s1_radix                        28.56     46.30     45.27     58.48     58.48      0
+                 x7_all_256                      13.16     25.20     23.98     30.36     30.36      0
+                 x7_all_1024                      8.56     19.34     18.30     25.04     25.04      0
+                 m3_ref                           5.08     21.20     16.59     24.04     24.04      0
+                 m3_ref_32k                       5.48     22.22     17.77     25.80     25.80      0
+                 m3_x256                          4.56     13.94     12.33     16.80     16.80      0
+                 m3_x512                          5.12     13.92     12.78     16.80     16.80      0
+                 m3_b4096_x256                    6.48     13.38     12.98     14.84     14.84      0
+                 m3_mid_b4                        6.40     14.52     12.98     17.36     17.36      0
+                 m2_x513                          5.88     12.58     12.26     14.80     14.80      0
+                 m3_x1025                         6.48     13.20     12.74     16.20     16.20      0
+                 m4_b128                          6.84     13.72     12.88     16.20     16.20      0
+                 m4_b64                           6.48     13.18     12.42     14.92     14.92      0
+                 m4_b256                         10.68     14.10     13.71     17.44     17.44      0
+                 m4_b128e8                       11.16     14.10     14.23     16.80     16.80      0
+                 m3_r2                            6.16     12.54     11.97     15.20     15.20      0
+                 m4_b128_p                        5.64     21.90     16.91     24.76     24.76      0
+                 s7_256                           3.64     10.52     10.11     13.20     13.20      0
+                 s7_512                           2.72      4.50      6.58     13.44     13.44      0
+                 s7_256b                          3.32     10.22      9.35     13.52     13.52      0
+                 v_x7_all_256_span                8.40     18.04     20.08     32.00     32.00      0
+                 v_x7_all_1024_span               9.56     19.50     17.88     22.28     22.28      0
+                 v_s7_256b_span                   4.00     10.46      9.70     13.36     13.36      0
+  mostly_small   s1_rank512_bitreg2048_radix     10.60     17.18     15.40     20.96     20.96      0
+                 s1_radix                       108.20    115.06    114.09    118.20    118.20      0
+                 x7_all_256                      31.20     42.46     39.12     44.96     44.96      0
+                 x7_all_1024                     31.20     38.22     36.57     40.20     40.20      0
+                 m3_ref                           7.92     23.48     20.07     26.32     26.32      0
+                 m3_ref_32k                       9.12     25.02     18.85     28.40     28.40      0
+                 m3_x256                         15.56     16.36     16.50     18.40     18.40      0
+                 m3_x512                          7.28     16.18     13.56     18.92     18.92      0
+                 m3_b4096_x256                   10.32     16.50     16.02     18.44     18.44      0
+                 m3_mid_b4                       13.80     17.24     17.14     19.56     19.56      0
+                 m2_x513                          8.56     14.54     14.31     17.40     17.40      0
+                 m3_x1025                        12.52     14.54     14.86     18.40     18.40      0
+                 m4_b128                         11.76     14.22     14.13     17.16     17.16      0
+                 m4_b64                           9.76     16.68     15.67     19.04     19.04      0
+                 m4_b256                          6.36     15.50     14.25     18.08     18.08      0
+                 m4_b128e8                        8.92     14.76     13.76     17.80     17.80      0
+                 m3_r2                            8.52     14.52     13.97     16.40     16.40      0
+                 m4_b128_p                        7.20     14.02     15.51     25.76     25.76      0
+                 s7_256                           9.00     15.54     14.98     16.60     16.60      0
+                 s7_512                           7.00     14.30     12.61     17.04     17.04      0
+                 s7_256b                          7.92     13.62     13.34     17.60     17.60      0
+                 v_x7_all_256_span               26.68     34.14     35.93     44.56     44.56      0
+                 v_x7_all_1024_span              31.72     40.30     39.38     43.20     43.20      0
+                 v_s7_256b_span                   7.92     14.04     13.29     15.72     15.72      0
+  realistic_mix  s1_rank512_bitreg2048_radix     31.60     49.76     47.83     69.20     69.20      0
+                 s1_radix                        89.96    105.64    103.76    118.96    118.96      0
+                 x7_all_256                      51.80     77.96     79.79    124.32    124.32      0
+                 x7_all_1024                     46.04     59.80     60.13     88.72     88.72      0
+                 m3_ref                          35.60     49.44     48.45     66.28     66.28      0
+                 m3_ref_32k                      29.32     50.76     49.88     71.00     71.00      0
+                 m3_x256                         22.64     40.80     54.49    111.36    111.36      0
+                 m3_x512                         22.68     39.36     45.06     77.08     77.08      0
+                 m3_b4096_x256                   27.92     45.32     54.40    105.84    105.84      0
+                 m3_mid_b4                       22.60     49.08     56.43    110.12    110.12      0
+                 m2_x513                         32.40     68.40     68.19    108.40    108.40      0
+                 m3_x1025                        26.64     64.64     60.88    105.20    105.20      0
+                 m4_b128                         23.12     34.54     46.25     90.92     90.92      0
+                 m4_b64                          22.00     34.58     52.65    107.40    107.40      0
+                 m4_b256                         24.16     40.22     54.48    107.00    107.00      0
+                 m4_b128e8                       22.24     33.66     49.53     92.72     92.72      0
+                 m3_r2                           24.64     40.38     53.66    106.56    106.56      0
+                 m4_b128_p                       24.40     39.00     40.61     64.20     64.20      0
+                 s7_256                          33.60     53.14     62.17    113.48    113.48      0
+                 s7_512                          33.28     52.40     52.35     88.12     88.12      0
+                 s7_256b                         30.88     53.78     64.43    116.68    116.68      0
+                 v_x7_all_256_span               51.88     71.26     76.19    119.80    119.80      0
+                 v_x7_all_1024_span              50.36     68.70     66.77     93.36     93.36      0
+                 v_s7_256b_span                  40.32     58.08     67.95    113.80    113.80      0
+  mostly_large   s1_rank512_bitreg2048_radix    164.96    183.64    183.49    194.84    194.84      0
+                 s1_radix                       160.12    182.12    181.02    190.76    190.76      0
+                 x7_all_256                     240.36    299.88    294.55    311.96    311.96      0
+                 x7_all_1024                    209.28    249.04    246.25    260.80    260.80      0
+                 m3_ref                         161.16    186.36    183.54    192.48    192.48      0
+                 m3_ref_32k                     162.32    189.40    187.42    203.60    203.60      0
+                 m3_x256                        246.48    308.54    301.94    317.28    317.28      0
+                 m3_x512                        194.08    240.28    237.95    259.40    259.40      0
+                 m3_b4096_x256                  247.56    303.08    302.31    330.20    330.20      0
+                 m3_mid_b4                      243.76    311.54    306.25    329.16    329.16      0
+                 m2_x513                        244.80    309.70    303.03    317.96    317.96      0
+                 m3_x1025                       239.72    308.62    302.38    324.20    324.20      0
+                 m4_b128                        247.28    309.84    303.39    322.08    322.08      0
+                 m4_b64                         246.52    311.38    306.39    327.24    327.24      0
+                 m4_b256                        246.16    310.98    308.09    330.16    330.16      0
+                 m4_b128e8                      247.12    312.84    308.99    331.12    331.12      0
+                 m3_r2                          245.80    305.48    300.58    324.08    324.08      0
+                 m4_b128_p                      162.56    193.10    190.78    203.32    203.32      0
+                 s7_256                         237.08    296.78    289.64    306.88    306.88      0
+                 s7_512                         189.60    236.18    232.87    249.08    249.08      0
+                 s7_256b                        232.68    293.84    288.50    305.92    305.92      0
+                 v_x7_all_256_span              244.80    306.24    300.06    318.16    318.16      0
+                 v_x7_all_1024_span             243.52    284.92    282.01    297.16    297.16      0
+                 v_s7_256b_span                 238.28    299.38    293.26    313.08    313.08      0
+  worst_case     s1_rank512_bitreg2048_radix    262.56    269.66    269.13    272.24    272.24      0
+                 s1_radix                       265.64    267.06    267.13    269.56    269.56      0
+                 x7_all_256                     437.80    447.12    446.02    451.64    451.64      0
+                 x7_all_1024                    344.48    351.14    351.21    356.64    356.64      0
+                 m3_ref                         271.32    277.26    276.25    279.40    279.40      0
+                 m3_ref_32k                     268.40    278.20    277.18    281.96    281.96      0
+                 m3_x256                        436.88    456.22    454.75    461.76    461.76      0
+                 m3_x512                        332.96    349.40    347.67    355.52    355.52      0
+                 m3_b4096_x256                  418.52    443.94    443.20    452.08    452.08      0
+                 m3_mid_b4                      444.80    466.10    463.65    470.52    470.52      0
+                 m2_x513                        450.16    456.40    456.17    461.64    461.64      0
+                 m3_x1025                       442.56    455.62    454.72    461.96    461.96      0
+                 m4_b128                        444.04    457.22    456.39    462.76    462.76      0
+                 m4_b64                         442.56    458.78    458.91    473.56    473.56      0
+                 m4_b256                        448.32    463.30    462.90    470.20    470.20      0
+                 m4_b128e8                      443.36    463.98    461.90    469.88    469.88      0
+                 m3_r2                          440.16    455.06    453.07    460.72    460.72      0
+                 m4_b128_p                      277.52    283.10    283.45    291.36    291.36      0
+                 s7_256                         433.84    443.70    442.77    447.56    447.56      0
+                 s7_512                         332.24    337.04    337.50    341.76    341.76      0
+                 s7_256b                        436.24    446.90    445.56    452.32    452.32      0
+                 v_x7_all_256_span              446.56    453.48    453.41    458.92    458.92      0
+                 v_x7_all_1024_span             391.00    404.18    402.15    409.64    409.64      0
+                 v_s7_256b_span                 439.80    446.42    445.41    453.84    453.84      0
+  edges          s1_rank512_bitreg2048_radix     31.56     92.08     74.96    111.20    111.20      0
+                 s1_radix                       109.36    137.68    130.27    141.32    141.32      0
+                 x7_all_256                      55.28    151.44    118.66    163.20    163.20      0
+                 x7_all_1024                     46.96    117.78     99.02    139.20    139.20      0
+                 m3_ref                          34.04     94.16     73.77    100.84    100.84      0
+                 m3_ref_32k                      27.20     92.36     75.37    113.32    113.32      0
+                 m3_x256                         25.56    128.80     92.83    138.64    138.64      0
+                 m3_x512                         20.60     99.94     74.08    108.92    108.92      0
+                 m3_b4096_x256                   22.56    137.68     98.17    144.96    144.96      0
+                 m3_mid_b4                       23.76    131.92     97.10    143.88    143.88      0
+                 m2_x513                         31.04    145.30    108.81    161.24    161.24      0
+                 m3_x1025                        24.92    142.00     98.95    146.48    146.48      0
+                 m4_b128                         21.64    130.30     92.73    140.20    140.20      0
+                 m4_b64                          22.44    130.72     95.50    149.32    149.32      0
+                 m4_b256                         22.44    127.18     94.01    147.64    147.64      0
+                 m4_b128e8                       22.04    127.08     90.74    145.48    145.48      0
+                 m3_r2                           25.76    120.40     90.92    139.60    139.60      0
+                 m4_b128_p                       29.52     97.38     74.74    106.48    106.48      0
+                 s7_256                          32.96    130.86    101.62    153.16    153.16      0
+                 s7_512                          28.68    102.68     84.73    129.16    129.16      0
+                 s7_256b                         35.92    128.38    102.32    155.92    155.92      0
+                 v_x7_all_256_span               51.16    149.50    117.79    165.32    165.32      0
+                 v_x7_all_1024_span              59.44    133.80    114.77    162.80    162.80      0
+                 v_s7_256b_span                  37.72    133.28    103.70    157.80    157.80      0
+  mostly_mid     s1_rank512_bitreg2048_radix    107.64    117.82    117.58    124.56    124.56      0
+                 s1_radix                       115.16    122.20    121.83    125.68    125.68      0
+                 x7_all_256                      97.52    113.82    114.05    126.96    126.96      0
+                 x7_all_1024                    111.52    121.88    121.48    131.68    131.68      0
+                 m3_ref                          62.88     80.20     80.54     88.28     88.28      0
+                 m3_ref_32k                      75.76     87.38     87.20     94.12     94.12      0
+                 m3_x256                         63.04     72.62     73.24     80.32     80.32      0
+                 m3_x512                         65.12     75.34     74.18     82.36     82.36      0
+                 m3_b4096_x256                   75.60     87.10     84.82     91.32     91.32      0
+                 m3_mid_b4                       82.88     96.90     96.92    108.20    108.20      0
+                 m2_x513                        106.64    118.02    118.45    126.24    126.24      0
+                 m3_x1025                        96.04    111.98    110.20    123.48    123.48      0
+                 m4_b128                         62.16     74.86     73.73     81.40     81.40      0
+                 m4_b64                          59.16     74.30     73.51     81.52     81.52      0
+                 m4_b256                         67.80     72.90     73.72     83.00     83.00      0
+                 m4_b128e8                       64.40     73.04     72.72     79.64     79.64      0
+                 m3_r2                           62.48     73.46     73.35     81.36     81.36      0
+                 m4_b128_p                       67.64     81.08     81.11     89.00     89.00      0
+                 s7_256                          97.92    108.12    107.56    113.84    113.84      0
+                 s7_512                          94.68    109.52    107.52    118.64    118.64      0
+                 s7_256b                         95.72    108.36    107.18    116.16    116.16      0
+                 v_x7_all_256_span              102.00    118.04    116.87    125.00    125.00      0
+                 v_x7_all_1024_span             134.56    146.48    147.68    164.12    164.12      0
+                 v_s7_256b_span                 102.08    112.10    111.24    120.04    120.04      0
+  mostly_medium  s1_rank512_bitreg2048_radix     35.68     44.24     43.11     48.56     48.56      0
+                 s1_radix                       110.48    116.48    116.05    118.68    118.68      0
+                 x7_all_256                      53.56     60.34     62.31     73.04     73.04      0
+                 x7_all_1024                     48.00     57.42     55.92     59.68     59.68      0
+                 m3_ref                          29.60     45.68     44.82     53.44     53.44      0
+                 m3_ref_32k                      31.32     49.76     48.58     57.92     57.92      0
+                 m3_x256                         29.68     40.98     39.63     46.16     46.16      0
+                 m3_x512                         24.56     39.60     39.59     45.32     45.32      0
+                 m3_b4096_x256                   32.36     40.90     40.84     47.04     47.04      0
+                 m3_mid_b4                       24.08     41.48     40.03     47.28     47.28      0
+                 m2_x513                         29.72     39.52     39.04     45.40     45.40      0
+                 m3_x1025                        23.80     40.18     39.37     46.76     46.76      0
+                 m4_b128                         21.20     27.64     26.94     30.64     30.64      0
+                 m4_b64                          22.32     29.10     28.25     32.44     32.44      0
+                 m4_b256                         23.36     27.06     27.34     36.88     36.88      0
+                 m4_b128e8                       22.80     28.90     28.20     31.52     31.52      0
+                 m3_r2                           31.08     38.56     36.68     42.00     42.00      0
+                 m4_b128_p                       23.28     36.62     34.83     40.48     40.48      0
+                 s7_256                          37.36     45.60     45.21     49.68     49.68      0
+                 s7_512                          34.56     41.24     41.54     47.04     47.04      0
+                 s7_256b                         47.80     54.12     53.90     57.08     57.08      0
+                 v_x7_all_256_span               49.80     63.56     61.14     65.12     65.12      0
+                 v_x7_all_1024_span              54.68     63.56     63.07     66.88     66.88      0
+                 v_s7_256b_span                  48.20     56.64     55.65     60.76     60.76      0
+  sweep          s1_rank512_bitreg2048_radix     14.72    108.36    109.40    270.40    270.40      0
+                 s1_radix                       109.96    122.74    142.17    266.64    266.64      0
+                 x7_all_256                      34.56    108.66    150.22    448.04    448.04      0
+                 x7_all_1024                     35.20    131.54    145.41    352.76    352.76      0
+                 m3_ref                          24.08     79.54    103.17    272.36    272.36      0
+                 m3_ref_32k                       9.24     91.06    106.52    277.12    277.12      0
+                 m3_x256                          8.28     77.04    134.45    458.92    458.92      0
+                 m3_x512                          7.28     77.94    113.49    344.96    344.96      0
+                 m3_b4096_x256                   14.52     85.22    131.80    441.56    441.56      0
+                 m3_mid_b4                       16.68     92.54    142.71    449.68    449.68      0
+                 m2_x513                         13.44    113.68    146.50    457.24    457.24      0
+                 m3_x1025                        14.56     96.18    140.11    459.20    459.20      0
+                 m4_b128                         10.60     65.24    131.17    461.16    461.16      0
+                 m4_b64                          14.08     64.06    132.66    464.28    464.28      0
+                 m4_b256                         10.12     66.36    133.25    459.08    459.08      0
+                 m4_b128e8                       12.68     64.26    131.62    459.04    459.04      0
+                 m3_r2                           12.92     68.12    133.88    454.64    454.64      0
+                 m4_b128_p                        8.12     69.92    101.75    289.96    289.96      0
+                 s7_256                          13.24     98.14    137.35    445.96    445.96      0
+                 s7_512                           6.36     99.16    120.46    337.60    337.60      0
+                 s7_256b                          6.44     96.34    138.59    444.48    444.48      0
+                 v_x7_all_256_span               30.04    112.44    153.88    455.88    455.88      0
+                 v_x7_all_1024_span              31.32    173.60    174.79    409.36    409.36      0
+                 v_s7_256b_span                   6.52    101.48    141.34    447.88    447.88      0
+  sparse_keys    s1_rank512_bitreg2048_radix    136.92    160.08    160.32    177.28    177.28      0
+                 s1_radix                       152.76    165.80    166.48    179.64    179.64      0
+                 x7_all_256                     227.68    245.96    251.92    282.84    282.84      0
+                 x7_all_1024                    179.28    210.90    213.36    247.44    247.44      0
+                 m3_ref                         128.48    158.72    156.98    177.44    177.44      0
+                 m3_ref_32k                     133.92    161.60    159.41    185.68    185.68      0
+                 m3_x256                        198.76    245.42    249.94    310.96    310.96      0
+                 m3_x512                        163.68    195.02    197.39    236.12    236.12      0
+                 m3_b4096_x256                  212.00    252.00    250.69    292.20    292.20      0
+                 m3_mid_b4                      207.92    248.88    250.12    296.96    296.96      0
+                 m2_x513                        214.44    246.52    252.23    310.96    310.96      0
+                 m3_x1025                       212.00    250.74    253.06    303.44    303.44      0
+                 m4_b128                        199.40    247.94    248.89    311.24    311.24      0
+                 m4_b64                         201.88    246.92    249.48    303.52    303.52      0
+                 m4_b256                        201.76    250.30    249.72    305.52    305.52      0
+                 m4_b128e8                      198.88    247.34    247.75    300.20    300.20      0
+                 m3_r2                          198.60    241.46    244.29    289.92    289.92      0
+                 m4_b128_p                      131.36    160.56    159.91    180.92    180.92      0
+                 s7_256                         204.40    243.78    247.48    290.68    290.68      0
+                 s7_512                         169.24    197.32    201.94    233.00    233.00      0
+                 s7_256b                        213.24    245.64    247.83    289.60    289.60      0
+                 v_x7_all_256_span              228.28    246.52    254.62    305.72    305.72      0
+                 v_x7_all_1024_span             207.92    243.74    245.12    283.24    283.24      0
+                 v_s7_256b_span                 216.48    248.42    252.81    299.16    299.16      0
+
+  sweep: median us per iteration by sort size (all 20 sorts of an iteration have that size)
+  algorithm                        32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  s1_rank512_bitreg2048_radix   14.72   17.72   22.40   26.12   51.40   76.68   79.88   88.36  128.36  135.52  139.36  147.48  166.20  180.96  204.88  270.40
+  s1_radix                     113.92  117.96  115.40  109.96  116.68  118.52  116.48  112.52  126.96  132.40  138.04  143.40  163.44  179.16  203.20  266.64
+  x7_all_256                    41.12   40.80   34.56   65.92   62.28   78.40   86.28   97.16  120.16  143.60  169.64  180.72  236.28  280.84  317.76  448.04
+  x7_all_1024                   36.24   39.44   35.20   49.48   60.60   69.92   99.60  138.76  124.32  176.60  169.48  199.72  231.84  260.12  282.48  352.76
+  m3_ref                        25.44   24.08   25.00   37.44   55.48   81.64   54.92   55.48   77.44   91.92  140.96  149.08  163.28  185.20  211.00  272.36
+  m3_ref_32k                    23.76    9.24   11.60   38.28   57.96   83.36   69.60   68.64   98.76  102.28  146.08  149.72  171.96  185.20  210.68  277.12
+  m3_x256                        9.40   15.52    8.28   26.80   47.64   72.08   43.04   47.52   82.00   84.24  175.64  194.80  244.64  300.72  340.04  458.92
+  m3_x512                       15.28    7.28   10.56   22.32   49.24   73.08   49.68   47.44   82.80   83.16  147.44  164.00  193.12  235.16  290.28  344.96
+  m3_b4096_x256                 15.52   16.84   14.52   28.28   47.24   73.52   60.24   59.32   96.92   99.40  178.84  179.52  182.56  283.52  330.96  441.56
+  m3_mid_b4                     18.96   16.68   16.88   30.52   42.08   73.68   64.12   67.04  111.40  112.00  183.76  200.76  243.76  306.76  345.32  449.68
+  m2_x513                       13.44   13.64   15.96   25.92   49.48   71.32   91.48  103.00  124.36  149.00  173.20  189.80  244.20  287.28  334.60  457.24
+  m3_x1025                      14.56   15.48   15.68   28.40   49.16   72.24   42.60   43.08  120.12  148.00  173.72  195.76  242.36  287.84  333.56  459.20
+  m4_b128                       13.76   14.12   10.60   21.80   31.12   31.32   47.68   48.04   82.44   84.68  174.16  197.24  243.68  295.44  341.48  461.16
+  m4_b64                        14.08   17.16   25.48   27.96   31.76   31.24   39.44   45.88   82.24   83.64  175.60  206.76  239.08  292.44  345.52  464.28
+  m4_b256                       14.84   11.52   10.12   31.40   29.68   34.64   48.92   49.12   83.60   84.24  180.52  206.96  240.28  305.20  341.80  459.08
+  m4_b128e8                     13.84   12.68   16.04   27.80   27.72   29.24   46.12   46.76   81.76   85.24  183.76  207.16  245.48  287.80  335.40  459.04
+  m3_r2                         15.44   12.92   17.64   32.20   42.80   53.12   47.76   46.96   83.12   83.64  176.68  198.12  242.68  301.12  333.20  454.64
+  m4_b128_p                      8.12   23.40   25.48   30.84   39.96   41.36   55.80   40.60   90.84   84.04  147.80  153.84  182.00  193.96  220.00  289.96
+  s7_256                        14.00   13.24   16.12   38.80   55.12   64.36   73.92   76.20  120.08  122.60  160.68  172.44  231.60  270.12  322.40  445.96
+  s7_512                        12.80    6.36   15.56   25.16   48.72   78.28   79.28   79.52  118.80  123.92  142.80  161.04  197.44  231.04  269.04  337.60
+  s7_256b                        6.44   15.48   14.68   46.48   56.36   58.52   74.32   75.92  116.76  122.52  162.28  186.64  233.00  277.40  326.08  444.48
+  v_x7_all_256_span             39.16   31.00   30.04   70.08   64.44   81.28   90.72  101.84  123.04  146.44  173.52  194.96  237.20  289.44  333.00  455.88
+  v_x7_all_1024_span            38.20   31.32   43.28   54.36   66.84   85.40  129.12  188.72  158.48  219.28  211.08  254.08  277.04  297.68  332.44  409.36
+  v_s7_256b_span                 6.52   13.32   15.72   47.24   60.36   63.00   77.60   79.80  123.16  128.08  167.04  189.52  236.48  275.40  330.28  447.88
+
+  sweep: mean us per iteration by sort size (all 20 sorts of an iteration have that size)
+  algorithm                        32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  s1_rank512_bitreg2048_radix   14.72   17.72   22.40   26.12   51.40   76.68   79.88   88.36  128.36  135.52  139.36  147.48  166.20  180.96  204.88  270.40
+  s1_radix                     113.92  117.96  115.40  109.96  116.68  118.52  116.48  112.52  126.96  132.40  138.04  143.40  163.44  179.16  203.20  266.64
+  x7_all_256                    41.12   40.80   34.56   65.92   62.28   78.40   86.28   97.16  120.16  143.60  169.64  180.72  236.28  280.84  317.76  448.04
+  x7_all_1024                   36.24   39.44   35.20   49.48   60.60   69.92   99.60  138.76  124.32  176.60  169.48  199.72  231.84  260.12  282.48  352.76
+  m3_ref                        25.44   24.08   25.00   37.44   55.48   81.64   54.92   55.48   77.44   91.92  140.96  149.08  163.28  185.20  211.00  272.36
+  m3_ref_32k                    23.76    9.24   11.60   38.28   57.96   83.36   69.60   68.64   98.76  102.28  146.08  149.72  171.96  185.20  210.68  277.12
+  m3_x256                        9.40   15.52    8.28   26.80   47.64   72.08   43.04   47.52   82.00   84.24  175.64  194.80  244.64  300.72  340.04  458.92
+  m3_x512                       15.28    7.28   10.56   22.32   49.24   73.08   49.68   47.44   82.80   83.16  147.44  164.00  193.12  235.16  290.28  344.96
+  m3_b4096_x256                 15.52   16.84   14.52   28.28   47.24   73.52   60.24   59.32   96.92   99.40  178.84  179.52  182.56  283.52  330.96  441.56
+  m3_mid_b4                     18.96   16.68   16.88   30.52   42.08   73.68   64.12   67.04  111.40  112.00  183.76  200.76  243.76  306.76  345.32  449.68
+  m2_x513                       13.44   13.64   15.96   25.92   49.48   71.32   91.48  103.00  124.36  149.00  173.20  189.80  244.20  287.28  334.60  457.24
+  m3_x1025                      14.56   15.48   15.68   28.40   49.16   72.24   42.60   43.08  120.12  148.00  173.72  195.76  242.36  287.84  333.56  459.20
+  m4_b128                       13.76   14.12   10.60   21.80   31.12   31.32   47.68   48.04   82.44   84.68  174.16  197.24  243.68  295.44  341.48  461.16
+  m4_b64                        14.08   17.16   25.48   27.96   31.76   31.24   39.44   45.88   82.24   83.64  175.60  206.76  239.08  292.44  345.52  464.28
+  m4_b256                       14.84   11.52   10.12   31.40   29.68   34.64   48.92   49.12   83.60   84.24  180.52  206.96  240.28  305.20  341.80  459.08
+  m4_b128e8                     13.84   12.68   16.04   27.80   27.72   29.24   46.12   46.76   81.76   85.24  183.76  207.16  245.48  287.80  335.40  459.04
+  m3_r2                         15.44   12.92   17.64   32.20   42.80   53.12   47.76   46.96   83.12   83.64  176.68  198.12  242.68  301.12  333.20  454.64
+  m4_b128_p                      8.12   23.40   25.48   30.84   39.96   41.36   55.80   40.60   90.84   84.04  147.80  153.84  182.00  193.96  220.00  289.96
+  s7_256                        14.00   13.24   16.12   38.80   55.12   64.36   73.92   76.20  120.08  122.60  160.68  172.44  231.60  270.12  322.40  445.96
+  s7_512                        12.80    6.36   15.56   25.16   48.72   78.28   79.28   79.52  118.80  123.92  142.80  161.04  197.44  231.04  269.04  337.60
+  s7_256b                        6.44   15.48   14.68   46.48   56.36   58.52   74.32   75.92  116.76  122.52  162.28  186.64  233.00  277.40  326.08  444.48
+  v_x7_all_256_span             39.16   31.00   30.04   70.08   64.44   81.28   90.72  101.84  123.04  146.44  173.52  194.96  237.20  289.44  333.00  455.88
+  v_x7_all_1024_span            38.20   31.32   43.28   54.36   66.84   85.40  129.12  188.72  158.48  219.28  211.08  254.08  277.04  297.68  332.44  409.36
+  v_s7_256b_span                 6.52   13.32   15.72   47.24   60.36   63.00   77.60   79.80  123.16  128.08  167.04  189.52  236.48  275.40  330.28  447.88
+
+  sweep: p95 us per iteration by sort size (all 20 sorts of an iteration have that size)
+  algorithm                        32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  s1_rank512_bitreg2048_radix   14.72   17.72   22.40   26.12   51.40   76.68   79.88   88.36  128.36  135.52  139.36  147.48  166.20  180.96  204.88  270.40
+  s1_radix                     113.92  117.96  115.40  109.96  116.68  118.52  116.48  112.52  126.96  132.40  138.04  143.40  163.44  179.16  203.20  266.64
+  x7_all_256                    41.12   40.80   34.56   65.92   62.28   78.40   86.28   97.16  120.16  143.60  169.64  180.72  236.28  280.84  317.76  448.04
+  x7_all_1024                   36.24   39.44   35.20   49.48   60.60   69.92   99.60  138.76  124.32  176.60  169.48  199.72  231.84  260.12  282.48  352.76
+  m3_ref                        25.44   24.08   25.00   37.44   55.48   81.64   54.92   55.48   77.44   91.92  140.96  149.08  163.28  185.20  211.00  272.36
+  m3_ref_32k                    23.76    9.24   11.60   38.28   57.96   83.36   69.60   68.64   98.76  102.28  146.08  149.72  171.96  185.20  210.68  277.12
+  m3_x256                        9.40   15.52    8.28   26.80   47.64   72.08   43.04   47.52   82.00   84.24  175.64  194.80  244.64  300.72  340.04  458.92
+  m3_x512                       15.28    7.28   10.56   22.32   49.24   73.08   49.68   47.44   82.80   83.16  147.44  164.00  193.12  235.16  290.28  344.96
+  m3_b4096_x256                 15.52   16.84   14.52   28.28   47.24   73.52   60.24   59.32   96.92   99.40  178.84  179.52  182.56  283.52  330.96  441.56
+  m3_mid_b4                     18.96   16.68   16.88   30.52   42.08   73.68   64.12   67.04  111.40  112.00  183.76  200.76  243.76  306.76  345.32  449.68
+  m2_x513                       13.44   13.64   15.96   25.92   49.48   71.32   91.48  103.00  124.36  149.00  173.20  189.80  244.20  287.28  334.60  457.24
+  m3_x1025                      14.56   15.48   15.68   28.40   49.16   72.24   42.60   43.08  120.12  148.00  173.72  195.76  242.36  287.84  333.56  459.20
+  m4_b128                       13.76   14.12   10.60   21.80   31.12   31.32   47.68   48.04   82.44   84.68  174.16  197.24  243.68  295.44  341.48  461.16
+  m4_b64                        14.08   17.16   25.48   27.96   31.76   31.24   39.44   45.88   82.24   83.64  175.60  206.76  239.08  292.44  345.52  464.28
+  m4_b256                       14.84   11.52   10.12   31.40   29.68   34.64   48.92   49.12   83.60   84.24  180.52  206.96  240.28  305.20  341.80  459.08
+  m4_b128e8                     13.84   12.68   16.04   27.80   27.72   29.24   46.12   46.76   81.76   85.24  183.76  207.16  245.48  287.80  335.40  459.04
+  m3_r2                         15.44   12.92   17.64   32.20   42.80   53.12   47.76   46.96   83.12   83.64  176.68  198.12  242.68  301.12  333.20  454.64
+  m4_b128_p                      8.12   23.40   25.48   30.84   39.96   41.36   55.80   40.60   90.84   84.04  147.80  153.84  182.00  193.96  220.00  289.96
+  s7_256                        14.00   13.24   16.12   38.80   55.12   64.36   73.92   76.20  120.08  122.60  160.68  172.44  231.60  270.12  322.40  445.96
+  s7_512                        12.80    6.36   15.56   25.16   48.72   78.28   79.28   79.52  118.80  123.92  142.80  161.04  197.44  231.04  269.04  337.60
+  s7_256b                        6.44   15.48   14.68   46.48   56.36   58.52   74.32   75.92  116.76  122.52  162.28  186.64  233.00  277.40  326.08  444.48
+  v_x7_all_256_span             39.16   31.00   30.04   70.08   64.44   81.28   90.72  101.84  123.04  146.44  173.52  194.96  237.20  289.44  333.00  455.88
+  v_x7_all_1024_span            38.20   31.32   43.28   54.36   66.84   85.40  129.12  188.72  158.48  219.28  211.08  254.08  277.04  297.68  332.44  409.36
+  v_s7_256b_span                 6.52   13.32   15.72   47.24   60.36   63.00   77.60   79.80  123.16  128.08  167.04  189.52  236.48  275.40  330.28  447.88

@@ -1,0 +1,183 @@
+GpuSort benchmark results
+=========================
+Date:         2026-09-29 12:15:46
+Computer:     STIMULATOR
+Label:        2/2: diag flush, --stable-power
+Command line: "C:\Users\jonas\Desktop\GpuSort-portable-627724b\GpuSort-portable-627724b\GpuSort.exe"  --shaders "C:\Users\jonas\Desktop\GpuSort-portable-627724b\GpuSort-portable-627724b\shaders" --algo-file algorithms_diag_flush.txt --iterations 300 --workload mostly_empty,realistic_mix,worst_case --stable-power --no-prompt --label "2/2: diag flush, --stable-power" --out "C:\Users\jonas\Desktop\GpuSort-portable-627724b\GpuSort-portable-627724b\results\STIMULATOR_20260929_1213\diag_flush_stable.txt" --log "C:\Users\jonas\Desktop\GpuSort-portable-627724b\GpuSort-portable-627724b\results\STIMULATOR_20260929_1213\diag_flush_stable.log"
+Shader dir:   C:\Users\jonas\Desktop\GpuSort-portable-627724b\GpuSort-portable-627724b\shaders
+Algo list:    algorithms_diag_flush.txt
+CSV files:    diag_flush_stable.csv (per GPU x algorithm x workload), diag_flush_stable_samples.csv (per iteration), diag_flush_stable_wave_probe.csv (per wave configuration); columns: CSV_FORMAT.md
+Iterations:   300 measured + 5 warmup per GPU x workload x algorithm, 20 sorts per iteration
+Cache flush:  256 MB read+write compute pass before every timed sort, then a DRAIN (pass5): a
+              one-group dispatch on a private 4 KB buffer + UAV barrier right before the start
+              timestamp, so the tail of the flush (barrier wait / cache maintenance a driver defers
+              to the next dispatch) is no longer inside the timed window.
+              NOTE: results before pass5 were measured WITHOUT the drain and are not directly
+              comparable (flush mode full_legacy reproduces the old 'full'; on the RX 7900 XTX it
+              added ~13 us to most iterations, on the RTX 5080 ~0.25 us).
+Flush mode:   'full' for algorithms without their own. full = code + data cold (flush, drain);
+              full_legacy = pre-pass5 full (no drain); full_ro = read-only flush, no drain
+              (diagnostic); code = only code cold (flush before the upload, drain); data = only
+              data cold (untimed warm-up run of the same dispatches, drain); none = no flush (drain)
+              Drain suffixes (pass6 diagnostics): <mode>_d<N> = SPIN drain of about N us instead
+              (an ALU-only dispatch, 4 groups x 64 threads, one 16-byte store per thread to the
+              private 4 KB buffer, loop count from the per-GPU calibration below, + UAV barrier);
+              _d0 = no drain (full_d0 = full_legacy); _dg = the pass5 one-group drain
+Timing:       GPU timestamps around the sort ExecuteIndirect dispatches only, per iteration (all 20 sorts)
+GPUs:
+  [0] AMD Radeon RX 7900 XTX  (driver 32.0.11037.4004, timestamp freq 100000000 Hz, wall time 10.0 s)
+      vendor 1002 device 744C, 24512 MB VRAM
+      wave lanes 32-64, shaders compiled with WAVE_SIZE=32 + [WaveSize]
+      run-time estimate: 0.75 ms per iteration (calibrated up front) -> ~11 s for this GPU, actual 10.0 s
+      stable power: on - SetStablePowerState(TRUE) (Developer Mode is on)
+      drain spin: 34.16 loop iterations per us (calibrated before the first sort: 3422 vs 1
+              iterations, median of 8 each, 100.14 us apart; the 1-iteration dispatch + barrier
+              takes 1.00 us); check: 20 us = 683 iterations measured 20.96 us incl. that overhead
+      Wave probe: compiled WAVE_SIZE=32 [WaveSize(32)], groups 64/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK, shflscan x8 OK, shflscan after if OK, shflscan after select OK
+      Wave probe: compiled without [WaveSize] (driver's choice), groups 64/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK, shflscan x8 OK, shflscan after if OK, shflscan after select OK
+      Wave probe verdict: OK, the sort shaders' configuration (WAVE_SIZE=32 + [WaveSize(32)]) runs with 32 lanes and lane = SV_GroupIndex % 32
+  [1] AMD Radeon(TM) Graphics  (driver 32.0.11037.4004, timestamp freq 100000000 Hz, wall time 260.3 s)
+      vendor 1002 device 164E, 485 MB VRAM
+      wave lanes 32-64, shaders compiled with WAVE_SIZE=32 + [WaveSize]
+      run-time estimate: 21.22 ms per iteration (calibrated up front) -> ~311 s for this GPU, actual 260.3 s
+      stable power: on - SetStablePowerState(TRUE) (Developer Mode is on)
+      drain spin: 18.65 loop iterations per us (calibrated before the first sort: 1024 vs 1
+              iterations, median of 8 each, 54.84 us apart; the 1-iteration dispatch + barrier
+              takes 1.28 us); check: 20 us = 373 iterations measured 21.22 us incl. that overhead
+      Wave probe: compiled WAVE_SIZE=32 [WaveSize(32)], groups 64/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK, shflscan x8 OK, shflscan after if OK, shflscan after select OK
+      Wave probe: compiled without [WaveSize] (driver's choice), groups 64/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK, shflscan x8 OK, shflscan after if OK, shflscan after select OK
+      Wave probe verdict: OK, the sort shaders' configuration (WAVE_SIZE=32 + [WaveSize(32)]) runs with 32 lanes and lane = SV_GroupIndex % 32
+  skipped: Microsoft Basic Render Driver: software adapter
+  skipped: AMD Radeon RX 7900 XTX (LUID 00000000:00059E9B): indirect display / non-render adapter
+Run-time estimate: ~322 s up front (per GPU: 32 calibration iterations of the upload + flush +
+              drain + readback work without a sort, times the iterations of the run)
+Total benchmark time: 271.3 s (after confirmation)
+
+Workload size distribution (300 measured iterations x 20 sorts; counts are sorts per size tier)
+  workload         total elems elems/iter         0      1-64    65-128   129-512  513-2048 2049-8192    max  distribution
+  mostly_empty           59127      197.1      4198      1802         0         0         0         0     64  70% empty, rest 1-64
+  realistic_mix        2835924     9453.1       907       462       546      3290       607       188   8155  15% empty, 72% 16-512, 10% 513-2048, 3% 2049-8192
+  worst_case          49152000   163840.0         0         0         0         0         0      6000   8192  all 8192
+
+Algorithms (flush mode; per dispatch: threads per group t / groupshared bytes B; DXIL container
+bytes per dispatch; compiled for WAVE_SIZE=32)
+  s1_rank512_bitreg2048_radix@full         full         1024t/32768B  30296
+  s1_rank512_bitreg2048_radix@full_legacy  full_legacy  1024t/32768B  30296
+  s1_rank512_bitreg2048_radix@full_d2      full_d2      1024t/32768B  30296
+  s1_rank512_bitreg2048_radix@full_d5      full_d5      1024t/32768B  30296
+  s1_rank512_bitreg2048_radix@full_d10     full_d10     1024t/32768B  30296
+  s1_rank512_bitreg2048_radix@full_d20     full_d20     1024t/32768B  30296
+  s1_rank512_bitreg2048_radix@full_d50     full_d50     1024t/32768B  30296
+  s1_rank512_bitreg2048_radix@full_d100    full_d100    1024t/32768B  30296
+  s1_rank512_bitreg2048_radix@full_ro      full_ro      1024t/32768B  30296
+  s1_rank512_bitreg2048_radix@full_ro_d20  full_ro_d20  1024t/32768B  30296
+  s1_rank512_bitreg2048_radix@data         data         1024t/32768B  30296
+  s1_rank512_bitreg2048_radix@code         code         1024t/32768B  30296
+  s1_rank512_bitreg2048_radix@none         none         1024t/32768B  30296
+  s1_rank512_bitreg2048_radix@none_d20     none_d20     1024t/32768B  30296
+  pass0_bitonic@full                       full         1024t/32768B  5252
+  pass0_bitonic@full_d20                   full_d20     1024t/32768B  5252
+
+Sort timings in microseconds (per iteration = 20 sorts)
+
+[0] AMD Radeon RX 7900 XTX  (WAVE_SIZE 32)
+  workload       algorithm                                     min    median      mean       p95       max  fails
+  mostly_empty   s1_rank512_bitreg2048_radix@full             1.80     13.80     11.26     14.68     15.20      0
+                 s1_rank512_bitreg2048_radix@full_legacy      1.80     15.00     11.91     15.28     15.44      0
+                 s1_rank512_bitreg2048_radix@full_d2          1.76     12.08      9.62     12.28     12.36      0
+                 s1_rank512_bitreg2048_radix@full_d5          1.80      9.04      7.13      9.24      9.40      0
+                 s1_rank512_bitreg2048_radix@full_d10         1.76      4.08      3.63      4.28      4.44      0
+                 s1_rank512_bitreg2048_radix@full_d20         1.68      2.16      2.25      2.52      7.60      0
+                 s1_rank512_bitreg2048_radix@full_d50         1.68      2.20      2.35      2.96      6.68      0
+                 s1_rank512_bitreg2048_radix@full_d100        1.72      6.40      5.82      6.64      7.36      0
+                 s1_rank512_bitreg2048_radix@full_ro          1.72      6.36      5.73      6.64      6.92      0
+                 s1_rank512_bitreg2048_radix@full_ro_d20      1.72      2.16      2.26      2.48      7.92      0
+                 s1_rank512_bitreg2048_radix@data             1.56      2.12      2.10      2.44      2.88      0
+                 s1_rank512_bitreg2048_radix@code             1.40      1.96      1.95      2.28      2.68      0
+                 s1_rank512_bitreg2048_radix@none             1.12      1.88      1.87      2.24      3.12      0
+                 s1_rank512_bitreg2048_radix@none_d20         1.12      1.64      1.67      2.04      2.92      0
+                 pass0_bitonic@full                           2.64     15.88     13.00     16.76     17.28      0
+                 pass0_bitonic@full_d20                       2.68      4.24      4.26      4.48      9.84      0
+  realistic_mix  s1_rank512_bitreg2048_radix@full             9.64     25.96     24.99     35.88     37.60      0
+                 s1_rank512_bitreg2048_radix@full_legacy      9.92     27.20     25.68     37.36     39.00      0
+                 s1_rank512_bitreg2048_radix@full_d2          9.76     24.12     23.17     34.12     35.88      0
+                 s1_rank512_bitreg2048_radix@full_d5          9.96     21.36     21.25     31.32     33.04      0
+                 s1_rank512_bitreg2048_radix@full_d10         9.08     16.58     17.67     26.44     28.20      0
+                 s1_rank512_bitreg2048_radix@full_d20         8.44     14.74     16.27     24.52     26.16      0
+                 s1_rank512_bitreg2048_radix@full_d50         8.32     14.84     16.46     24.64     26.24      0
+                 s1_rank512_bitreg2048_radix@full_d100        8.52     18.96     20.84     28.80    304.68      0
+                 s1_rank512_bitreg2048_radix@full_ro          9.64     18.80     19.80     28.48     30.64      0
+                 s1_rank512_bitreg2048_radix@full_ro_d20      8.20     14.78     16.30     24.56     26.28      0
+                 s1_rank512_bitreg2048_radix@data             8.08     14.70     16.21     24.64     26.00      0
+                 s1_rank512_bitreg2048_radix@code             7.84     14.44     15.95     24.12     25.88      0
+                 s1_rank512_bitreg2048_radix@none             7.92     14.38     15.89     24.12     25.76      0
+                 s1_rank512_bitreg2048_radix@none_d20         8.00     14.30     15.75     23.84     26.92      0
+                 pass0_bitonic@full                           7.72     29.24     41.12     72.48     73.36      0
+                 pass0_bitonic@full_d20                       7.56     17.30     31.99     60.88     61.44      0
+  worst_case     s1_rank512_bitreg2048_radix@full            28.60     40.96     38.61     42.56     44.32      0
+                 s1_rank512_bitreg2048_radix@full_legacy     28.60     42.16     39.63     43.84     44.48      0
+                 s1_rank512_bitreg2048_radix@full_d2         28.76     39.24     37.37     40.72     41.56      0
+                 s1_rank512_bitreg2048_radix@full_d5         28.80     36.40     34.97     37.76     38.44      0
+                 s1_rank512_bitreg2048_radix@full_d10        28.60     31.28     31.29     32.76     33.52      0
+                 s1_rank512_bitreg2048_radix@full_d20        28.40     29.88     29.92     31.08     36.16      0
+                 s1_rank512_bitreg2048_radix@full_d50        27.72     29.86     30.09     33.68     35.44      0
+                 s1_rank512_bitreg2048_radix@full_d100       28.84     33.92     33.67     35.32     35.92      0
+                 s1_rank512_bitreg2048_radix@full_ro         27.68     32.82     32.63     34.16     34.96      0
+                 s1_rank512_bitreg2048_radix@full_ro_d20     27.52     29.20     30.17     34.88     35.44      0
+                 s1_rank512_bitreg2048_radix@data            28.44     29.80     29.86     31.32     34.56      0
+                 s1_rank512_bitreg2048_radix@code            26.28     28.16     28.26     29.32     30.20      0
+                 s1_rank512_bitreg2048_radix@none            26.16     27.92     28.15     29.88     34.32      0
+                 s1_rank512_bitreg2048_radix@none_d20        26.16     27.68     27.92     29.08     35.12      0
+                 pass0_bitonic@full                          61.88     74.42     71.91     75.56     76.48      0
+                 pass0_bitonic@full_d20                      61.48     62.64     62.61     63.08     67.84      0
+
+[1] AMD Radeon(TM) Graphics  (WAVE_SIZE 32)
+  workload       algorithm                                     min    median      mean       p95       max  fails
+  mostly_empty   s1_rank512_bitreg2048_radix@full             7.76     11.72     11.86     14.68     18.04      0
+                 s1_rank512_bitreg2048_radix@full_legacy      7.76     11.76     11.88     14.80     17.72      0
+                 s1_rank512_bitreg2048_radix@full_d2          7.72     11.84     11.97     14.88     17.68      0
+                 s1_rank512_bitreg2048_radix@full_d5          7.76     11.84     11.98     14.88     17.68      0
+                 s1_rank512_bitreg2048_radix@full_d10         7.92     11.80     11.96     14.84     17.76      0
+                 s1_rank512_bitreg2048_radix@full_d20         7.84     11.88     11.98     14.80     17.84      0
+                 s1_rank512_bitreg2048_radix@full_d50         7.92     11.80     11.95     14.88     17.80      0
+                 s1_rank512_bitreg2048_radix@full_d100        7.80     11.84     11.95     14.80     17.92      0
+                 s1_rank512_bitreg2048_radix@full_ro          7.80     11.80     11.95     14.88     17.92      0
+                 s1_rank512_bitreg2048_radix@full_ro_d20      8.00     12.00     12.16     15.12     17.88      0
+                 s1_rank512_bitreg2048_radix@data             7.64     11.64     11.73     14.68     17.68      0
+                 s1_rank512_bitreg2048_radix@code             7.72     11.68     11.80     14.68     17.56      0
+                 s1_rank512_bitreg2048_radix@none             7.56     11.44     11.59     14.48     17.48      0
+                 s1_rank512_bitreg2048_radix@none_d20         7.56     11.48     11.61     14.44     17.36      0
+                 pass0_bitonic@full                          10.64     32.50     32.93     47.24     63.56      0
+                 pass0_bitonic@full_d20                      10.40     32.40     32.75     47.12     64.12      0
+  realistic_mix  s1_rank512_bitreg2048_radix@full            59.96    122.00    122.18    168.80    247.84      0
+                 s1_rank512_bitreg2048_radix@full_legacy     59.84    121.78    122.14    169.52    248.88      0
+                 s1_rank512_bitreg2048_radix@full_d2         59.84    122.08    122.18    168.40    248.12      0
+                 s1_rank512_bitreg2048_radix@full_d5         59.72    122.08    122.17    168.12    248.16      0
+                 s1_rank512_bitreg2048_radix@full_d10        59.88    122.04    122.15    167.92    248.40      0
+                 s1_rank512_bitreg2048_radix@full_d20        60.04    122.02    122.17    168.36    248.12      0
+                 s1_rank512_bitreg2048_radix@full_d50        59.96    122.10    122.13    168.04    248.60      0
+                 s1_rank512_bitreg2048_radix@full_d100       60.04    122.04    122.12    168.08    248.52      0
+                 s1_rank512_bitreg2048_radix@full_ro         60.12    122.04    122.15    169.56    248.12      0
+                 s1_rank512_bitreg2048_radix@full_ro_d20     60.28    121.82    122.29    168.08    248.36      0
+                 s1_rank512_bitreg2048_radix@data            59.76    121.82    121.86    166.68    248.32      0
+                 s1_rank512_bitreg2048_radix@code            59.64    121.94    121.96    168.44    247.76      0
+                 s1_rank512_bitreg2048_radix@none            59.72    121.50    121.75    168.64    247.72      0
+                 s1_rank512_bitreg2048_radix@none_d20        59.32    121.54    121.79    169.64    247.52      0
+                 pass0_bitonic@full                         123.04    223.04    240.54    370.52    501.24      0
+                 pass0_bitonic@full_d20                     123.08    223.50    240.37    369.72    501.16      0
+  worst_case     s1_rank512_bitreg2048_radix@full           781.04    789.90    789.93    793.04    798.00      0
+                 s1_rank512_bitreg2048_radix@full_legacy    782.36    789.80    789.72    792.68    794.68      0
+                 s1_rank512_bitreg2048_radix@full_d2        782.72    789.78    789.69    792.48    794.64      0
+                 s1_rank512_bitreg2048_radix@full_d5        782.48    789.98    789.84    792.32    794.28      0
+                 s1_rank512_bitreg2048_radix@full_d10       782.80    789.88    789.78    792.48    793.60      0
+                 s1_rank512_bitreg2048_radix@full_d20       782.68    790.14    790.07    792.68    795.44      0
+                 s1_rank512_bitreg2048_radix@full_d50       782.04    789.92    789.93    792.52    794.00      0
+                 s1_rank512_bitreg2048_radix@full_d100      779.56    789.80    789.71    792.52    794.12      0
+                 s1_rank512_bitreg2048_radix@full_ro        781.32    789.58    789.45    792.48    793.84      0
+                 s1_rank512_bitreg2048_radix@full_ro_d20    781.16    789.60    789.39    792.16    793.68      0
+                 s1_rank512_bitreg2048_radix@data           780.32    789.10    789.03    791.72    794.20      0
+                 s1_rank512_bitreg2048_radix@code           782.48    788.92    788.82    791.52    794.00      0
+                 s1_rank512_bitreg2048_radix@none           780.68    788.60    788.54    791.80    795.92      0
+                 s1_rank512_bitreg2048_radix@none_d20       780.16    788.66    788.52    791.88    794.12      0
+                 pass0_bitonic@full                        1835.92   1840.56   1840.73   1843.80   1848.08      0
+                 pass0_bitonic@full_d20                    1835.88   1841.16   1841.07   1843.44   1844.56      0

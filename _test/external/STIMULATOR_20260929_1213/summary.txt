@@ -1,0 +1,10 @@
+GpuSort portable run on STIMULATOR, started 29/09/2026 12.13.32,02
+Mode: diag
+Qualifying GPUs: 2 (details in adapters.txt)
+Plan: 2 GPU run(s): shaders\algorithms_diag_flush.txt, 300 iterations, mostly_empty / realistic_mix / worst_case, default wave size
+  run 2: --stable-power, no prompt of its own (Windows Developer Mode is on)
+[1/2: diag flush, normal clocks (then 2/2 with --stable-power, no further prompt)] exit code 0 (ok) -> diag_flush.txt / diag_flush.log
+[2/2: diag flush, --stable-power] exit code 0 (ok) -> diag_flush_stable.txt / diag_flush_stable.log
+      stable power: on - SetStablePowerState(TRUE) (Developer Mode is on)
+      stable power: on - SetStablePowerState(TRUE) (Developer Mode is on)
+Finished 29/09/2026 12.20.20,43, overall exit code 0

@@ -34,9 +34,9 @@ import zipfile
 from collections import OrderedDict, defaultdict
 from pathlib import Path
 
-SUPPORTED_SCHEMA_VERSIONS = {"1", "2", "3"}
+SUPPORTED_SCHEMA_VERSIONS = {"1", "2", "3", "4"}
 
-# Required in every results CSV (schema_version 1 to 3).
+# Required in every results CSV (schema_version 1 to 4).
 RESULTS_COLUMNS = [
     "schema_version", "run_id", "run_timestamp", "computer", "label", "package_commit", "shader_set",
     "gpu_index", "gpu_name", "vendor_id", "device_id", "driver_version", "is_integrated", "dedicated_vram_mb",
@@ -50,6 +50,9 @@ RESULTS_COLUMNS = [
 RESULTS_COLUMNS_V2 = ["stable_power", "drain_spin_iters_per_us"]
 # Added in schema_version 3 (results CSV); empty in the output for version 1 / 2 rows.
 RESULTS_COLUMNS_V3 = ["dispatch_info"]
+# Added in schema_version 4 (results CSV, the final set); empty in the output for version 1 to 3 rows.
+# (Also since 4: iterations_requested is per GPU, and the default flush_mode is full_d50.)
+RESULTS_COLUMNS_V4 = ["pass", "description", "tags"]
 SAMPLES_COLUMNS = [
     "run_id", "gpu_index", "wave_size", "algorithm", "flush_mode", "workload", "iteration", "time_us",
     "largest_sort", "total_elements", "sweep_size",
@@ -223,7 +226,8 @@ def main():
 
     results = OrderedDict()   # run_id -> rows
     probes = OrderedDict()
-    results_columns = list(RESULTS_COLUMNS) + list(RESULTS_COLUMNS_V2) + list(RESULTS_COLUMNS_V3)
+    results_columns = (list(RESULTS_COLUMNS) + list(RESULTS_COLUMNS_V2) + list(RESULTS_COLUMNS_V3) +
+                       list(RESULTS_COLUMNS_V4))
     probe_columns = []
     sample_sources = []
     for src in sources:

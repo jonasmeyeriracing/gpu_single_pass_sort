@@ -2,6 +2,7 @@
 
 #include "Common.h"
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -96,6 +97,8 @@ std::vector<AlgorithmDesc> LoadAlgorithms(const std::filesystem::path& shaderDir
     while (std::getline(in, line))
     {
         ++lineNo;
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
         const size_t hash = line.find('#');
         if (hash != std::string::npos)
             line.resize(hash);
@@ -115,7 +118,9 @@ std::vector<AlgorithmDesc> LoadAlgorithms(const std::filesystem::path& shaderDir
                 if (a.name == tokens[1])
                     fail("duplicate algorithm '" + tokens[1] + "'");
             }
-            algorithms.push_back({tokens[1], {}});
+            AlgorithmDesc a;
+            a.name = tokens[1];
+            algorithms.push_back(std::move(a));
         }
         else if (tokens[0] == "flush")
         {
@@ -126,6 +131,48 @@ std::vector<AlgorithmDesc> LoadAlgorithms(const std::filesystem::path& shaderDir
             if (algorithms.back().flushGiven)
                 fail("duplicate 'flush' for algorithm '" + algorithms.back().name + "'");
             algorithms.back().flushGiven = true;
+        }
+        else if (tokens[0] == "pass")
+        {
+            if (algorithms.empty())
+                fail("'pass' before any 'algorithm'");
+            AlgorithmDesc& a = algorithms.back();
+            if (a.pass >= 0)
+                fail("duplicate 'pass' for algorithm '" + a.name + "'");
+            if (tokens.size() != 2 || tokens[1].size() > 2 ||
+                tokens[1].find_first_not_of("0123456789") != std::string::npos)
+                fail("expected: pass <0..99>");
+            a.pass = std::stoi(tokens[1]);
+        }
+        else if (tokens[0] == "desc")
+        {
+            if (algorithms.empty())
+                fail("'desc' before any 'algorithm'");
+            AlgorithmDesc& a = algorithms.back();
+            if (!a.description.empty())
+                fail("duplicate 'desc' for algorithm '" + a.name + "'");
+            // The rest of the line after the keyword (the comment is already cut off).
+            std::string text = line.substr(line.find("desc") + 4);
+            const size_t first = text.find_first_not_of(" \t");
+            const size_t last = text.find_last_not_of(" \t");
+            a.description = first == std::string::npos ? std::string() : text.substr(first, last - first + 1);
+            if (a.description.empty())
+                fail("expected: desc <text>");
+        }
+        else if (tokens[0] == "tag")
+        {
+            if (algorithms.empty())
+                fail("'tag' before any 'algorithm'");
+            if (tokens.size() < 2)
+                fail("expected: tag <word> [<word> ...]");
+            AlgorithmDesc& a = algorithms.back();
+            for (size_t i = 1; i < tokens.size(); ++i)
+            {
+                if (tokens[i].find(';') != std::string::npos)
+                    fail("a tag must not contain ';'");
+                if (std::find(a.tags.begin(), a.tags.end(), tokens[i]) == a.tags.end())
+                    a.tags.push_back(tokens[i]);
+            }
         }
         else if (tokens[0] == "dispatch")
         {
