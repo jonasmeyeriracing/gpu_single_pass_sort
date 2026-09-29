@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Benchmark.h"
+#include "WaveProbe.h"
 
 #include <string>
 #include <vector>
@@ -8,6 +9,8 @@
 struct Stats
 {
     double min = 0, median = 0, mean = 0, p95 = 0, max = 0;
+    double p99 = 0;    // nearest rank, like p95 (results CSV only)
+    double stddev = 0; // sample standard deviation (n - 1; 0 for n < 2) (results CSV only)
 };
 
 Stats ComputeStats(std::vector<double> values);
@@ -17,6 +20,7 @@ struct ComboRecord
     uint32_t workloadId = 0;
     std::string algorithm;
     ComboResult result;
+    FlushMode flush = FlushMode::Full; // the algorithm's flush mode in this run
 };
 
 // --smoke: an algorithm that failed verification (its remaining workloads were skipped).
@@ -34,6 +38,7 @@ struct GpuRecord
     uint32_t vendorId = 0;
     uint32_t deviceId = 0;
     uint64_t dedicatedVideoMemory = 0;
+    bool uma = false; // integrated GPU (D3D12_FEATURE_DATA_ARCHITECTURE::UMA)
     uint64_t timestampFrequency = 0;
     uint32_t waveLaneCountMin = 0;  // D3D12_FEATURE_DATA_D3D12_OPTIONS1
     uint32_t waveLaneCountMax = 0;
@@ -42,6 +47,7 @@ struct GpuRecord
     std::vector<std::string> waveProbe; // wave probe report lines (WaveProbeReport::lines)
     std::vector<std::string> waveProbeSummary; // one verdict per wave configuration (WaveProbeReport::summary)
     bool waveProbeWarning = false;      // the probe found the wrong lane count / a broken lane mapping
+    std::vector<WaveProbeRow> waveProbeRows; // per probed wave configuration (WaveProbeReport::rows)
     double wallSeconds = 0;
     // Run-time estimate made up front (main.cpp): wall seconds per iteration from the calibration
     // (or a rough guess if !calibrated) and the estimate for this GPU's whole run.
@@ -63,6 +69,12 @@ struct AlgorithmInfo
 struct RunInfo
 {
     std::string date;
+    std::string runTimestamp; // ISO 8601 local time with UTC offset, e.g. 2026-09-29T14:30:12.345+02:00
+    std::string runId;        // <yyyymmdd>T<hhmmss>.<ms>_<computer>: unique per GpuSort run (CSV key)
+    std::string runKind;      // "benchmark", "smoke" or "wave_probe" (CSV column run_kind)
+    std::string packageCommit; // git commit the exe was built from (BuildInfo.h), or "unknown"
+    std::string shaderSet;    // name of the shader directory, e.g. "shaders" or "pass4"
+    std::string csvFiles;     // the CSV file names, for the results .txt header (empty: none)
     std::string computerName;
     std::string label; // --label
     std::string shaderDir;

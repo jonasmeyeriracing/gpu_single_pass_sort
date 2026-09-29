@@ -64,8 +64,26 @@ WaveProbeSet CompileWaveProbeSurvey(ShaderCompiler& compiler, uint32_t laneMin, 
 // What a set probes, e.g. "without [WaveSize], [WaveSize(32)], [WaveSize(64)]; groups 64/512/1024".
 std::string DescribeWaveProbe(const WaveProbeSet& set);
 
+// One probed wave configuration (variant attribute size), for the wave probe CSV.
+struct WaveProbeRow
+{
+    uint32_t attributeSize = 0; // compiled with [WaveSize(attributeSize)]; 0 = without [WaveSize]
+    std::string variant;        // "without [WaveSize]" / "[WaveSize(64)]"
+    std::string groupSizes;     // group sizes that ran, e.g. "64/512/1024" (empty: did not run)
+    std::string observedLanes;  // e.g. "32", or "32 (group 64), 64 (groups 512/1024)"; "none"
+    bool sortConfig = false;    // the configuration the sort shaders use
+    std::string verdict;        // "OK" / "WARNING"; empty if not judged (outside a survey, only the
+                                // sort shaders' configuration gets a verdict)
+    std::string problem;        // reason for a WARNING; cross-lane mismatches of an OK verdict
+    std::vector<std::string> tests; // per WaveProbeTestColumns(): "OK", "FAIL" or "n/a"
+};
+
+// CSV column names of WaveProbeRow::tests, in order.
+const std::vector<std::string>& WaveProbeTestColumns();
+
 struct WaveProbeReport
 {
+    std::vector<WaveProbeRow> rows; // one per variant attribute size, in variant order
     // "Wave probe: ..." lines (one per variant, indented detail lines for mismatches) and verdict
     // lines ("Wave probe verdict...: OK ..." or "WAVE PROBE WARNING...: ..."): one for the sort
     // shaders' configuration, or in a survey one per variant.

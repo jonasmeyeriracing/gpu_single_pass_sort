@@ -26,6 +26,9 @@ rem Every GPU run first runs GpuSort's wave probe (the lane count the driver rea
 rem mapping and a few cross-lane ops, for the run's wave configuration and without [WaveSize]); the
 rem script collects those lines in wave_probe.txt, and WAVE PROBE WARNING lines in summary.txt. There
 rem is no separate --wave-probe step, so it adds no extra prompt.
+rem Every GpuSort run also writes CSV files next to its --out .txt, i.e. into the results folder (and
+rem so into the zip): <file>.csv, <file>_samples.csv, <file>_wave_probe.csv (probe mode:
+rem wave_probe.csv). Columns: CSV_FORMAT.md; tools\aggregate_results.py merges them.
 rem
 rem Dry run (prints the GpuSort commands instead of running them; for testing this script):
 rem   set DRYRUN=1                       required

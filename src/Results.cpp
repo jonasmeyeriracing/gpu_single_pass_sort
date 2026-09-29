@@ -1,6 +1,7 @@
 #include "Results.h"
 
 #include <algorithm>
+#include <cmath>
 #include <numeric>
 
 Stats ComputeStats(std::vector<double> v)
@@ -18,6 +19,16 @@ Stats ComputeStats(std::vector<double> v)
     size_t rank = static_cast<size_t>(0.95 * static_cast<double>(n) + 0.999999);
     rank = std::clamp<size_t>(rank, 1, n);
     s.p95 = v[rank - 1];
+    rank = static_cast<size_t>(0.99 * static_cast<double>(n) + 0.999999);
+    rank = std::clamp<size_t>(rank, 1, n);
+    s.p99 = v[rank - 1];
+    if (n > 1)
+    {
+        double sq = 0.0;
+        for (double x : v)
+            sq += (x - s.mean) * (x - s.mean);
+        s.stddev = std::sqrt(sq / static_cast<double>(n - 1));
+    }
     return s;
 }
 
@@ -67,6 +78,8 @@ std::string FormatResults(const RunInfo& info)
         out += Format("Label:        %s\n", info.label.c_str());
     out += Format("Command line: %s\n", info.commandLine.c_str());
     out += Format("Shader dir:   %s\n", info.shaderDir.c_str());
+    if (!info.csvFiles.empty())
+        out += Format("CSV files:    %s\n", info.csvFiles.c_str());
     out += Format("Iterations:   %u measured + %u warmup per GPU x workload x algorithm, %u sorts per iteration\n",
                   info.iterations, info.warmup, kSortsPerIteration);
     out += Format("Cache flush:  %llu MB read+write compute pass before every timed sort, then a DRAIN (pass5): a\n"

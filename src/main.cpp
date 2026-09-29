@@ -2,6 +2,7 @@
 #include "Algorithms.h"
 #include "Benchmark.h"
 #include "Common.h"
+#include "CsvOutput.h"
 #include "Device.h"
 #include "Options.h"
 #include "ProgressWindow.h"
@@ -81,14 +82,74 @@ fs::path FindShaderDir()
     throw std::runtime_error("could not find a shaders/ directory with algorithms.txt; use --shaders <dir>");
 }
 
-std::string Now()
+// Start time of the run: the results header date, the ISO 8601 timestamp and run id of the CSVs.
+struct RunTime
 {
-    const std::time_t t = std::time(nullptr);
+    std::string date;    // 2026-09-29 14:30:12 (local)
+    std::string iso;     // 2026-09-29T14:30:12.345+02:00
+    std::string compact; // 20260929T143012.345
+};
+
+RunTime Now()
+{
+    const auto now = std::chrono::system_clock::now();
+    const long long ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000;
+    const std::time_t t = std::chrono::system_clock::to_time_t(now);
     std::tm tm{};
     localtime_s(&tm, &t);
+    std::tm local = tm;
+    const long long offsetMinutes = static_cast<long long>(_mkgmtime(&local) - t) / 60; // local - UTC
+    const long long absOffset = offsetMinutes < 0 ? -offsetMinutes : offsetMinutes;
     char buf[64];
+    RunTime r;
     std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
-    return buf;
+    r.date = buf;
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &tm);
+    r.iso = Format("%s.%03lld%c%02lld:%02lld", buf, ms, offsetMinutes < 0 ? '-' : '+', absOffset / 60,
+                   absOffset % 60);
+    std::strftime(buf, sizeof(buf), "%Y%m%dT%H%M%S", &tm);
+    r.compact = Format("%s.%03lld", buf, ms);
+    return r;
+}
+
+// Default CSV path for a results / report file: the same path with the extension .csv (or
+// <stem>_<suffix>.csv if it already is a .csv file).
+fs::path CsvPathFor(const fs::path& out, const wchar_t* suffix)
+{
+    fs::path p = out;
+    if (_wcsicmp(out.extension().c_str(), L".csv") == 0)
+        p.replace_filename(out.stem().wstring() + L"_" + suffix + L".csv");
+    else
+        p.replace_extension(L".csv");
+    return p;
+}
+
+// <csv stem><suffix>.csv next to 'csv', e.g. results_samples.csv.
+fs::path CsvSibling(const fs::path& csv, const wchar_t* suffix)
+{
+    fs::path p = csv;
+    p.replace_filename(csv.stem().wstring() + suffix + L".csv");
+    return p;
+}
+
+// Name of 'file' for the results header: just the file name if it is in the folder of 'report',
+// else the full path.
+std::string CsvDisplayName(const fs::path& file, const fs::path& report)
+{
+    const fs::path abs = fs::absolute(file);
+    return WideToUtf8(abs.parent_path() == fs::absolute(report).parent_path() ? abs.filename().wstring()
+                                                                                : abs.wstring());
+}
+
+// Writes one CSV and logs where (or the error).
+void WriteCsv(bool (*write)(const RunInfo&, const fs::path&, std::string&), const RunInfo& info, const fs::path& path)
+{
+    std::string error;
+    if (write(info, path, error))
+        Log("CSV written to %s\n", WideToUtf8(fs::absolute(path).wstring()).c_str());
+    else
+        Log("error: %s\n", error.c_str());
 }
 
 std::string CommandLineUtf8()
@@ -215,8 +276,15 @@ int RunMain(int argc, wchar_t** argv)
     }
 
     RunInfo info;
-    info.date = Now();
+    const RunTime runTime = Now();
+    info.date = runTime.date;
+    info.runTimestamp = runTime.iso;
     info.computerName = ComputerName();
+    info.runId = runTime.compact + "_" + info.computerName;
+    info.runKind = opt.waveProbe ? "wave_probe" : opt.smoke ? "smoke" : "benchmark";
+    info.packageCommit = PackageCommit();
+    info.shaderSet = WideToUtf8(
+        (shaderDir.has_filename() ? shaderDir.filename() : shaderDir.parent_path().filename()).wstring());
     info.label = opt.label;
     info.shaderDir = shaderDir.string();
     info.commandLine = CommandLineUtf8();
@@ -447,6 +515,7 @@ int RunMain(int argc, wchar_t** argv)
         record.vendorId = gpu.vendorId;
         record.deviceId = gpu.deviceId;
         record.dedicatedVideoMemory = gpu.dedicatedVideoMemory;
+        record.uma = gpu.uma;
         record.waveLaneCountMin = gpu.waveLaneCountMin;
         record.waveLaneCountMax = gpu.waveLaneCountMax;
         record.waveSize = gpuWave[gi].size;
@@ -547,6 +616,7 @@ int RunMain(int argc, wchar_t** argv)
             record.waveProbe = probe.lines;
             record.waveProbeSummary = probe.summary;
             record.waveProbeWarning = !probe.configOk;
+            record.waveProbeRows = probe.rows;
             for (const auto& line : probe.lines)
                 Log("  %s\n", line.c_str());
             for (const auto& m : DrainDebugMessages(gpu.device.Get()))
@@ -640,7 +710,7 @@ int RunMain(int argc, wchar_t** argv)
                     };
                     progress(0, opt.iterations + opt.warmup, 0);
                     // Recorded before running, so a device loss leaves the partial result in place.
-                    record.combos.push_back({workloadId, aname, {}});
+                    record.combos.push_back({workloadId, aname, {}, compiled[ai].flush});
                     ComboResult& result = record.combos.back().result;
                     const std::string label = gpu.name + "/" + aname + "/" + wname;
                     Log("  starting %s\n", label.c_str());
@@ -728,6 +798,13 @@ int RunMain(int argc, wchar_t** argv)
         if (!info.label.empty())
             text += Format("Label:        %s\n", info.label.c_str());
         text += Format("Command line: %s\n", info.commandLine.c_str());
+        const fs::path probeCsv = !opt.csvPath.empty()  ? fs::path(opt.csvPath)
+                                  : !opt.outPath.empty() ? CsvPathFor(fs::path(opt.outPath), L"wave_probe")
+                                                         : ExeDir() / "wave_probe.csv";
+        text += Format("CSV file:     %s\n",
+                       CsvDisplayName(probeCsv, opt.outPath.empty() ? ExeDir() / "wave_probe.txt"
+                                                                    : fs::path(opt.outPath))
+                           .c_str());
         for (size_t g = 0; g < info.gpus.size(); ++g)
         {
             const GpuRecord& gpu = info.gpus[g];
@@ -788,16 +865,25 @@ int RunMain(int argc, wchar_t** argv)
                 Log("\nerror: could not write %s\n", outPath.string().c_str());
             }
         }
+        WriteCsv(WriteWaveProbeCsv, info, probeCsv);
         if (deviceLost)
             return 3;
         return (anyError || anyProbeWarning) ? 1 : 0;
     }
 
     // --- results --------------------------------------------------------------------------
+    const fs::path outPath = opt.outPath.empty() ? ExeDir() / "results.txt" : fs::path(opt.outPath);
+    const fs::path resultsCsv = opt.csvPath.empty() ? CsvPathFor(outPath, L"results") : fs::path(opt.csvPath);
+    const fs::path samplesCsv = CsvSibling(resultsCsv, L"_samples");
+    const fs::path probeCsv = CsvSibling(resultsCsv, L"_wave_probe");
+    // (No "wave probe" in this line: run_all.bat collects the lines containing it.)
+    info.csvFiles = CsvDisplayName(resultsCsv, outPath) + " (per GPU x algorithm x workload), " +
+                    (opt.noSamples ? std::string() : CsvDisplayName(samplesCsv, outPath) + " (per iteration), ") +
+                    CsvDisplayName(probeCsv, outPath) + " (per wave configuration); columns: CSV_FORMAT.md";
+
     const std::string text = FormatResults(info);
     Log("\n%s", text.c_str());
 
-    const fs::path outPath = opt.outPath.empty() ? ExeDir() / "results.txt" : fs::path(opt.outPath);
     if (outPath.has_parent_path())
     {
         std::error_code ec;
@@ -813,6 +899,10 @@ int RunMain(int argc, wchar_t** argv)
     {
         Log("\nerror: could not write %s\n", outPath.string().c_str());
     }
+    WriteCsv(WriteResultsCsv, info, resultsCsv);
+    if (!opt.noSamples)
+        WriteCsv(WriteSamplesCsv, info, samplesCsv);
+    WriteCsv(WriteWaveProbeCsv, info, probeCsv);
 
     if (anyProbeWarning)
         Log("\nWARNING: the wave probe found a wrong lane count or lane mapping (see \"WAVE PROBE WARNING\" above).\n");

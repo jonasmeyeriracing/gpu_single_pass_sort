@@ -542,6 +542,17 @@ WaveProbeReport RunWaveProbe(GpuBenchmark& bench, const WaveProbeSet& set)
     {
         if (r.attributeSize == configSize)
             config = &r;
+        WaveProbeRow row;
+        row.attributeSize = r.attributeSize;
+        row.variant = ShortName(r.attributeSize);
+        row.groupSizes = JoinSizes(r.groupSizes);
+        row.observedLanes = LanesText(r);
+        row.sortConfig = r.attributeSize == configSize;
+        for (int t = 0; t < kTestCount; ++t)
+            row.tests.push_back(r.groupSizes.empty() || r.tests[t].checked == 0 ? "n/a"
+                                : r.tests[t].wrong == 0                         ? "OK"
+                                                                                : "FAIL");
+        report.rows.push_back(std::move(row));
         std::string line = Format("Wave probe: %s, groups %s: ", VariantName(r.attributeSize).c_str(),
                                   JoinSizes(r.groupSizes).c_str());
         if (r.groupSizes.empty())
@@ -577,8 +588,10 @@ WaveProbeReport RunWaveProbe(GpuBenchmark& bench, const WaveProbeSet& set)
     if (set.survey)
     {
         // One verdict per variant.
-        for (const auto& r : results)
+        for (size_t ri = 0; ri < results.size(); ++ri)
         {
+            const VariantResult& r = results[ri];
+            WaveProbeRow& row = report.rows[ri];
             const std::string name = ShortName(r.attributeSize);
             const std::vector<std::string> problems = Problems(&r, r.attributeSize, set.laneMin, set.laneMax);
             const std::string configNote =
@@ -601,6 +614,9 @@ WaveProbeReport RunWaveProbe(GpuBenchmark& bench, const WaveProbeSet& set)
                 if (!crossLane.empty())
                     report.lines.push_back(
                         Format("Wave probe note, %s: cross-lane mismatches: %s", name.c_str(), crossLane.c_str()));
+                row.verdict = "OK";
+                if (!crossLane.empty())
+                    row.problem = "cross-lane mismatches: " + crossLane;
                 report.summary.push_back(Format("%s: OK, lanes %s%s%s", name.c_str(), lanes.c_str(),
                                                 r.attributeSize ? "" : " (driver's choice)",
                                                 crossLane.empty() ? "" : ", cross-lane mismatches"));
@@ -613,6 +629,8 @@ WaveProbeReport RunWaveProbe(GpuBenchmark& bench, const WaveProbeSet& set)
                 report.lines.push_back(
                     Format("WAVE PROBE WARNING, %s: %s%s", name.c_str(), problem.c_str(), configNote.c_str()));
                 report.summary.push_back(Format("%s: WARNING, %s", name.c_str(), problem.c_str()));
+                row.verdict = "WARNING";
+                row.problem = problem;
             }
         }
         return report;
@@ -622,6 +640,12 @@ WaveProbeReport RunWaveProbe(GpuBenchmark& bench, const WaveProbeSet& set)
     const std::string configName =
         Format("WAVE_SIZE=%u%s", set.waveSize, set.attribute ? Format(" + [WaveSize(%u)]", set.waveSize).c_str() : "");
     const std::vector<std::string> problems = Problems(config, set.waveSize, set.laneMin, set.laneMax);
+    WaveProbeRow* configRow = nullptr;
+    for (auto& row : report.rows)
+    {
+        if (row.sortConfig)
+            configRow = &row;
+    }
     if (problems.empty())
     {
         report.lines.push_back(Format("Wave probe verdict: OK, the sort shaders' configuration (%s) runs with %u "
@@ -633,6 +657,12 @@ WaveProbeReport RunWaveProbe(GpuBenchmark& bench, const WaveProbeSet& set)
                                           crossLane.c_str()));
         report.summary.push_back(Format("%s: OK, lanes %u%s", configName.c_str(), set.waveSize,
                                         crossLane.empty() ? "" : ", cross-lane mismatches"));
+        if (configRow)
+        {
+            configRow->verdict = "OK";
+            if (!crossLane.empty())
+                configRow->problem = "cross-lane mismatches: " + crossLane;
+        }
     }
     else
     {
@@ -641,6 +671,22 @@ WaveProbeReport RunWaveProbe(GpuBenchmark& bench, const WaveProbeSet& set)
         report.lines.push_back(Format("WAVE PROBE WARNING: the sort shaders are compiled for %s, but %s",
                                       configName.c_str(), report.problem.c_str()));
         report.summary.push_back(Format("%s: WARNING, %s", configName.c_str(), report.problem.c_str()));
+        if (configRow)
+        {
+            configRow->verdict = "WARNING";
+            configRow->problem = report.problem;
+        }
     }
     return report;
+}
+
+const std::vector<std::string>& WaveProbeTestColumns()
+{
+    // One per Test (kTestNames), in order.
+    static const std::vector<std::string> columns = {
+        "all_threads_wrote", "lane_mapping", "waves",      "readlane_xor32", "readlane_xor1",
+        "readlane_plus16",   "readlane_last", "prefixsum", "activesum",      "countbits",
+        "ballot",            "shflscan_x8",  "shflscan_after_if", "shflscan_after_select"};
+    static_assert(kTestCount == 14, "update the wave probe CSV columns");
+    return columns;
 }

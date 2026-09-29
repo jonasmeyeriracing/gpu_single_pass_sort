@@ -41,8 +41,8 @@ every power of two N in the GPU's wave lane range (AMD RDNA 32-64: 32 and 64; In
 really uses, lane = SV_GroupIndex % lane count and a few cross-lane operations, and prints one
 verdict per GPU x wave configuration ("OK" or "WAVE PROBE WARNING"). No dxdiag, smoke or full runs.
 The results folder then has adapters.txt, wave_probe.txt (the report, with a Summary section at the
-end), wave_probe.log (console output) and summary.txt (plan, exit code, the probe's Summary), and
-is zipped as usual. Exit code 0 = every configuration OK, 1 = a warning or error, 3 = device lost.
+end), wave_probe.csv (the same per GPU x wave configuration, machine-readable), wave_probe.log
+(console output) and summary.txt (plan, exit code, the probe's Summary), and is zipped as usual. Exit code 0 = every configuration OK, 1 = a warning or error, 3 = device lost.
 
 What it runs (default, all, current)
 ------------------------------------
@@ -82,7 +82,16 @@ Results folder contents
     smoke_<set>[_waveNN].txt    smoke test results; .log = full console output
     <set>[_waveNN].txt          benchmark results (timings per GPU x workload x algorithm);
                                 .log = full console output
+    <run>.csv                   next to every <run>.txt above (smoke and full): the same results
+                                machine-readable, one row per GPU x algorithm x workload (x sort
+                                size for the sweep workload)
+    <run>_samples.csv           every measured iteration's time (the largest file, ~20 MB per
+                                full run and GPU; compresses well in the zip)
+    <run>_wave_probe.csv        the run's wave probe, one row per GPU x wave configuration
+    wave_probe.csv              probe mode only: the --wave-probe report as CSV
 <set> is "current" (shaders\) or "passN" (_test\passN\). No _waveNN = default wave size.
+The CSV columns are described in CSV_FORMAT.md; tools\aggregate_results.py (in the repository)
+merges the CSVs of the zips from all machines.
 Each results .txt header lists the computer name, every GPU with driver version, vendor/device id,
 VRAM, wave lane range and the WAVE_SIZE the shaders were compiled with.
 
@@ -111,6 +120,9 @@ Running GpuSort.exe directly
 ----------------------------
     GpuSort.exe --help
     GpuSort.exe --shaders _test\pass2 --wave-size 64 --out my_results.txt
+                                                 (also writes my_results.csv, my_results_samples.csv
+                                                  and my_results_wave_probe.csv; --no-samples skips
+                                                  the samples file)
     GpuSort.exe --wave-probe                     (only the wave probe, every wave configuration of
                                                   every GPU; one prompt; what "run_all.bat probe" runs)
     GpuSort.exe --wave-probe --wave-size 64      (only the wave probe of that configuration; still asks)

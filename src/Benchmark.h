@@ -25,6 +25,8 @@ struct ComboResult
     std::vector<double> timesUs;        // measured iterations only (warmup excluded)
     uint32_t iterationsRun = 0;         // including warmup
     uint32_t failures = 0;              // verification failures (including warmup)
+    std::vector<uint32_t> failedIterations; // their iteration indices as generated (measured: 0..,
+                                            // warmup: kWarmupIterationBase + i), for the results CSV
     std::vector<std::string> failureMessages; // first few
     double wallSeconds = 0.0;
 };

@@ -10,6 +10,8 @@ struct Options
 {
     std::wstring shaderDir;              // --shaders <dir>; empty = auto-detect
     std::wstring outPath;                // --out <file>; empty = results.txt next to the exe
+    std::wstring csvPath;                // --csv <file>; empty = the --out file with the extension .csv
+    bool noSamples = false;              // --no-samples: do not write <csv stem>_samples.csv
     std::wstring logPath;                // --log <file>: also write the console output to this file
     std::string label;                   // --label <text>: shown in the prompt, window and results header
     uint32_t iterations = 1000;          // --iterations N (measured iterations per gpu/workload/algorithm)

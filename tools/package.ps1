@@ -12,7 +12,7 @@
                                 algorithm lists: run_all.bat only uses algorithms.txt);
                                 SAME_AS_SHADERS.txt marks a snapshot identical to shaders\ so
                                 run_all.bat skips it
-      run_all.bat, README_PORTABLE.txt, package_info.txt
+      run_all.bat, README_PORTABLE.txt, CSV_FORMAT.md (the results CSV columns), package_info.txt
 
 .PARAMETER NoBuild
     Package the existing bin\Release build instead of building first.
@@ -110,6 +110,7 @@ function Copy-WithCrlf([string]$src, [string]$dst)
 }
 Copy-WithCrlf (Join-Path $PSScriptRoot 'run_all.bat') (Join-Path $stage 'run_all.bat')
 Copy-WithCrlf (Join-Path $PSScriptRoot 'README_PORTABLE.txt') (Join-Path $stage 'README_PORTABLE.txt')
+Copy-WithCrlf (Join-Path $PSScriptRoot 'CSV_FORMAT.md') (Join-Path $stage 'CSV_FORMAT.md')
 
 $shaderPatterns = @('*.hlsl', '*.hlsli', 'algorithms.txt')
 function Test-NameLike([string]$name, [string[]]$patterns)

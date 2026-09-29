@@ -78,6 +78,13 @@ bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
             if (!next(o.outPath))
                 return false;
         }
+        else if (arg == L"--no-samples")
+            o.noSamples = true;
+        else if (arg == L"--csv")
+        {
+            if (!next(o.csvPath))
+                return false;
+        }
         else if (arg == L"--log")
         {
             if (!next(o.logPath))
@@ -162,6 +169,12 @@ void PrintUsage()
         "  --shaders <dir>      Shader directory containing algorithms.txt (default: shaders/ found\n"
         "                       next to or above the exe, then ./shaders)\n"
         "  --out <file>         Results file (default: results.txt next to the exe)\n"
+        "  --csv <file>         Results CSV (default: the --out file with the extension .csv). Next to it:\n"
+        "                       <stem>_samples.csv (every measured iteration) and <stem>_wave_probe.csv\n"
+        "                       (the wave probe per GPU x wave configuration). With --wave-probe only the\n"
+        "                       wave probe CSV, as <file> (default: the --out file with .csv, or\n"
+        "                       wave_probe.csv next to the exe). Columns: CSV_FORMAT.md\n"
+        "  --no-samples         Do not write <stem>_samples.csv\n"
         "  --log <file>         Also write all console output to <file>\n"
         "  --label <text>       Run label, shown in the prompt / progress window and in the results header\n"
         "  --iterations <N>     Measured iterations per GPU x workload x algorithm (default 1000)\n"

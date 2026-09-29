@@ -773,6 +773,7 @@ void GpuBenchmark::Process(Frame& f, uint32_t warmup, ComboResult& result)
         if (!ok[s])
         {
             ++result.failures;
+            result.failedIterations.push_back(global < warmup ? kWarmupIterationBase + global : global - warmup);
             if (result.failureMessages.size() < kMaxFailureMessages)
             {
                 const std::string where = global < warmup ? Format("warmup iteration %u", global)
