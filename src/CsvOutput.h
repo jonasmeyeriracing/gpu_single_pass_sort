@@ -17,8 +17,9 @@
 
 // Bump when a column is renamed, removed or changes meaning (adding columns at the end is fine;
 // tools/aggregate_results.py checks it). 2: the results CSV has the columns stable_power and
-// drain_spin_iters_per_us, and flush_mode can carry a drain suffix (full_d20, ...).
-constexpr int kCsvSchemaVersion = 2;
+// drain_spin_iters_per_us, and flush_mode can carry a drain suffix (full_d20, ...). 3: the results
+// CSV has the column dispatch_info (threads per group / groupshared bytes per dispatch).
+constexpr int kCsvSchemaVersion = 3;
 
 // Git commit of this build ("<short sha>", "<short sha>-dirty" or "unknown").
 const char* PackageCommit();

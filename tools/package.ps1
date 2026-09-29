@@ -8,9 +8,11 @@
       GpuSort.exe (static CRT), dxcompiler.dll, dxil.dll
       shaders\                  the current shaders (the whole folder, incl. algorithms_diag_flush.txt
                                 for run_all.bat diag)
-      _test\passN\              every snapshot's shader files + algorithms.txt + notes.md
-                                (no results.txt / smoke_results.txt / algorithms_diag.txt or other
-                                algorithm lists: run_all.bat only uses algorithms.txt);
+      _test\passN\              every snapshot's shader files + algorithms.txt + notes.md, and its
+                                other algorithm lists algorithms_*.txt (for --algo-file, e.g.
+                                _test\pass7\algorithms_smoke.txt for run_all.bat pass7; the other
+                                modes only use algorithms.txt, and the "identical to shaders\"
+                                check below ignores them); no results.* / smoke_results.* files;
                                 SAME_AS_SHADERS.txt marks a snapshot identical to shaders\ so
                                 run_all.bat skips it
       run_all.bat, README_PORTABLE.txt, CSV_FORMAT.md (the results CSV columns), package_info.txt
@@ -151,7 +153,8 @@ foreach ($p in $passes)
     if (-not (Test-Path (Join-Path $p.FullName 'algorithms.txt'))) { continue }
     $dst = Join-Path $stage "_test\$($p.Name)"
     New-Item -ItemType Directory -Force $dst | Out-Null
-    Get-ChildItem -Path $p.FullName -File | Where-Object { Test-NameLike $_.Name ($shaderPatterns + 'notes.md') } |
+    # algorithms_*.txt: extra lists for --algo-file (not part of the Get-ShaderHashes comparison).
+    Get-ChildItem -Path $p.FullName -File | Where-Object { Test-NameLike $_.Name ($shaderPatterns + 'notes.md' + 'algorithms_*.txt') } |
         Copy-Item -Destination $dst
     $same = Test-SameHashes $currentHashes (Get-ShaderHashes $p.FullName)
     if ($same)

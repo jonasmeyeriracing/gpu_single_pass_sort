@@ -18,6 +18,7 @@ struct CompiledAlgorithm
     std::vector<ComPtr<IDxcBlob>> shaders; // one per dispatch, in order
     FlushMode flush = kDefaultFlushMode;   // see FlushMode (Algorithms.h)
     bool usesWaveOps = false;              // some dispatch uses wave intrinsics (depends on the wave size)
+    std::string dispatchInfo;              // threads / groupshared bytes per dispatch (FormatDispatchStats)
 };
 
 struct ComboResult

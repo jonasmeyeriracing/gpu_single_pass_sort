@@ -3,6 +3,7 @@
 #include "Benchmark.h"
 #include "WaveProbe.h"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -63,6 +64,9 @@ struct GpuRecord
     GpuBenchmark::SpinCalibration drainSpin;
     std::vector<ComboRecord> combos;
     std::vector<SmokeFailure> smokeFailed; // --smoke only
+    // Algorithm id -> threads per group / groupshared bytes per dispatch, for this GPU's wave
+    // configuration (FormatDispatchStats, e.g. "1024t/32768B;256t/8192B"; CSV column dispatch_info).
+    std::map<std::string, std::string> dispatchInfo;
     std::string error; // non-empty if the GPU run aborted
 };
 
@@ -71,6 +75,7 @@ struct AlgorithmInfo
     std::string name;
     FlushMode flush = kDefaultFlushMode;
     std::vector<size_t> dxilBytes; // per dispatch (DXIL container size, for the first wave configuration)
+    std::string dispatchInfo;      // threads / groupshared bytes per dispatch (FormatDispatchStats), same configuration
 };
 
 struct RunInfo

@@ -336,7 +336,10 @@ void PrintAdapterList()
         const GpuInfo& g = gpus[i];
         Log("  [%zu] %s  vendor %04X device %04X  driver %s  vram %llu MB\n", i, g.name.c_str(), g.vendorId,
             g.deviceId, g.driver.c_str(), static_cast<unsigned long long>(g.dedicatedVideoMemory >> 20));
-        Log("      wave lane range: min %u max %u\n", g.waveLaneCountMin, g.waveLaneCountMax);
+        // "integrated yes" = D3D12 UMA (--integrated-only). run_all.bat reads tokens 5, 7, 9 and 11 of
+        // this line (min, max, integrated, vendor); keep their positions.
+        Log("      wave lane range: min %u max %u  integrated %s  vendor %04X\n", g.waveLaneCountMin,
+            g.waveLaneCountMax, g.uma ? "yes" : "no", g.vendorId);
     }
     for (const auto& s : skipped)
         Log("  skipped: %s\n", s.c_str());

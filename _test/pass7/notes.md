@@ -14,7 +14,8 @@ shaders (unchanged copies) for the anchors.
 
 - `algorithms.txt`: the 21-algorithm set to run on the other machines (the full-run set).
 - `algorithms_smoke.txt`: what the hardware smoke ran: the 21 + 3 validation variants
-  (`SHUFFLE_SPAN_TEST=1`, see Safety). The framework only reads `algorithms.txt`.
+  (`SHUFFLE_SPAN_TEST=1`, see Safety). Used with `--algo-file algorithms_smoke.txt` (main after
+  the merge; `run_all.bat pass7` does that for its smoke runs).
 - `results.txt` / `results.csv`: RTX 5080 full run, 300 iterations. `smoke_results.txt`: RTX 5080
   serial smoke (16 iterations, `--dred`).
 - Shaders: `p7_sort.hlsl` (entry point), `p7_lds.hlsli`, `p7_rank.hlsli`, `p7_bitonic.hlsli`,
@@ -255,6 +256,10 @@ What the 5080 says (a latency-bound GPU: 84 SMs, every sort has its own SM):
 
 ## What to run on the other machines
 
+Simplest (main after the merge): `run_all.bat pass7` from the portable package runs all of the
+below (the smoke with algorithms_smoke.txt, the full run, and on the AMD machine the iGPU at
+wave64 with `--integrated-only`), see tools/README_PORTABLE.txt. By hand:
+
 Use a build of this branch (or of main after the merge); the shader set must be next to the exe
 or passed with `--shaders`. Each run shows the prompt and the progress window as usual. First
 the smoke (safety: new shaders on new hardware; ~1 min), then the full run:
@@ -296,6 +301,10 @@ wave size / CU count): e.g. `s7_512`-like single dispatches on discrete GPUs, an
 multi-dispatch configuration on the iGPUs if H1/H7 hold.
 
 ## Framework changes I would want (not made; src/ and tools/ belong to the other agent)
+
+(After the merge into main: 1 and 2 are done: `run_all.bat pass7`, `--integrated-only`, the
+package ships `_test\pass7` incl. algorithms_smoke.txt, and results.txt / results.csv list the
+threads per group and groupshared bytes of every dispatch, CSV column `dispatch_info`.)
 
 1. `tools/run_all.bat`: a `pass7` mode that runs the smoke + the 300-iteration full run of
    `_test\pass7` on every GPU (default wave size), and optionally the iGPU at `--wave-size 64`;

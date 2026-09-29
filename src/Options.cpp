@@ -71,6 +71,8 @@ bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
             o.waveProbe = true;
         else if (arg == L"--stable-power")
             o.stablePower = true;
+        else if (arg == L"--integrated-only")
+            o.integratedOnly = true;
         else if (arg == L"--shaders")
         {
             if (!next(o.shaderDir))
@@ -194,6 +196,8 @@ void PrintUsage()
         "  --algo <a[,b]>       Algorithms to run (default: all in algorithms.txt); repeatable\n"
         "  --workload <w[,x]>   Workloads to run (default: all); repeatable\n"
         "  --gpu <substring>    Only run on GPUs whose name contains <substring> (case-insensitive)\n"
+        "  --integrated-only    Only run on integrated GPUs (D3D12 architecture UMA; --list-adapters shows\n"
+        "                       \"integrated yes\" for them), e.g. the Ryzen iGPU next to a discrete GPU\n"
         "  --wave-size <N>      Compile the shaders for wave size N with [WaveSize(N)]; GPUs whose\n"
         "                       WaveLaneCountMin..Max does not contain N are skipped. Default: WAVE_SIZE =\n"
         "                       WaveLaneCountMin, plus [WaveSize] only if the device reports a range (Min != Max)\n"

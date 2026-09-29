@@ -147,15 +147,19 @@ std::string FormatResults(const RunInfo& info)
         size_t w = 9;
         for (const auto& a : info.algorithmInfos)
             w = std::max(w, a.name.size());
-        out += Format("Algorithms (flush mode; DXIL container bytes per dispatch, compiled for WAVE_SIZE=%u)\n",
+        size_t dw = 10;
+        for (const auto& a : info.algorithmInfos)
+            dw = std::max(dw, a.dispatchInfo.size());
+        out += Format("Algorithms (flush mode; per dispatch: threads per group t / groupshared bytes B; DXIL container\n"
+                      "bytes per dispatch; compiled for WAVE_SIZE=%u)\n",
                       info.dxilWaveSize);
         for (const auto& a : info.algorithmInfos)
         {
             std::string sizes;
             for (size_t b : a.dxilBytes)
                 sizes += Format("%s%zu", sizes.empty() ? "" : " + ", b);
-            out += Format("  %-*s  %-11s  %s\n", static_cast<int>(w), a.name.c_str(),
-                          FlushModeName(a.flush).c_str(), sizes.c_str());
+            out += Format("  %-*s  %-11s  %-*s  %s\n", static_cast<int>(w), a.name.c_str(),
+                          FlushModeName(a.flush).c_str(), static_cast<int>(dw), a.dispatchInfo.c_str(), sizes.c_str());
         }
         out += "\n";
     }

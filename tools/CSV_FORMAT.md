@@ -1,4 +1,4 @@
-# GpuSort CSV output (schema_version 2)
+# GpuSort CSV output (schema_version 3)
 
 Every GpuSort.exe benchmark / smoke run writes, next to its results `.txt` (`--out`, default
 `results.txt` next to the exe):
@@ -21,11 +21,12 @@ Windows locale, times in microseconds with 3 decimals. Empty field = not applica
 Columns are identified by their header name; new columns are only ever appended, and
 `schema_version` changes if a column is renamed, removed or changes meaning.
 
-Schema versions: **1** (packages up to 60814ed); **2** (pass6): the results CSV appends
-`stable_power` and `drain_spin_iters_per_us`, and `flush_mode` can carry a drain suffix
-(`full_d20`, ...; see below). The samples and wave probe columns are unchanged (the wave probe
-file's `schema_version` is 2 as well). `tools/aggregate_results.py` reads both and leaves the new
-columns empty for version 1 rows.
+Schema versions: **1** (packages up to 60814ed); **2** (pass6, package 6a12132): the results CSV
+appends `stable_power` and `drain_spin_iters_per_us`, and `flush_mode` can carry a drain suffix
+(`full_d20`, ...; see below); **3** (the pass7 merge): the results CSV appends `dispatch_info`.
+The samples and wave probe columns are unchanged (the wave probe file's `schema_version` is that of
+the package as well). `tools/aggregate_results.py` reads all three and leaves the columns a row's
+version does not have empty.
 
 `tools/aggregate_results.py` merges these files from many results folders / zips into
 `all_results.csv`, `all_samples.csv` and `all_wave_probe.csv` (see its `--help`).
@@ -42,7 +43,7 @@ columns empty for version 1 rows.
 
 | column | meaning |
 |---|---|
-| schema_version | 2 (1: packages up to 60814ed, without the last two columns) |
+| schema_version | 3 (2: without `dispatch_info`; 1: packages up to 60814ed, also without `stable_power` and `drain_spin_iters_per_us`) |
 | run_id | see Keys |
 | run_timestamp | run start, ISO 8601 local time with UTC offset, e.g. `2026-09-29T14:30:12.345+02:00` |
 | computer | Windows computer name |
@@ -77,6 +78,7 @@ columns empty for version 1 rows.
 | gpu_error | non-empty if the GPU's run aborted (e.g. `DEVICE LOST: ...`); the rows hold the partial results |
 | stable_power | (v2) `off` (not requested), `on` (`--stable-power`: `ID3D12Device::SetStablePowerState(TRUE)` succeeded, fixed clocks), `unavailable` (requested, but Windows Developer Mode is off: not called, normal clocks), `failed` (the call returned an error, normal clocks) |
 | drain_spin_iters_per_us | (v2) the GPU's calibrated spin drain rate (loop iterations per microsecond; a `_d<N>` drain runs round(N x this) iterations); empty if the run has no spin drain |
+| dispatch_info | (v3) the occupancy inputs of the algorithm's dispatches, for this GPU's wave configuration, in dispatch order, separated by `;`: `<threads per group>t/<groupshared bytes>B`, e.g. `1024t/32768B;256t/8192B;512t/2048B` (threads from the shader reflection, groupshared bytes = the sum of the DXIL's groupshared variables; `?` if unknown) |
 
 ### Flush modes
 

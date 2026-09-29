@@ -318,6 +318,23 @@ int RunMain(int argc, wchar_t** argv)
         info.algorithms.push_back(a.name);
 
     std::vector<GpuInfo> gpus = EnumerateGpus(opt.warp, opt.gpuFilter, info.skippedAdapters);
+    if (opt.integratedOnly && !opt.warp)
+    {
+        // --integrated-only: e.g. the Ryzen iGPU next to a discrete GPU (run_all.bat pass7, wave64).
+        const size_t qualifying = gpus.size();
+        std::erase_if(gpus, [&](const GpuInfo& g) {
+            if (g.uma)
+                return false;
+            info.skippedAdapters.push_back(g.name + ": not an integrated (UMA) GPU (--integrated-only)");
+            return true;
+        });
+        if (gpus.empty() && qualifying > 0)
+        {
+            for (const auto& s : info.skippedAdapters)
+                Log("Skipping adapter %s\n", s.c_str());
+            throw std::runtime_error("no integrated GPU found (--integrated-only)");
+        }
+    }
     if (opt.waveSize)
     {
         // --wave-size N only runs on the GPUs that support it (e.g. wave64 on AMD next to an NVIDIA GPU).
@@ -385,6 +402,7 @@ int RunMain(int argc, wchar_t** argv)
             CompiledAlgorithm ca;
             ca.name = algorithm.name;
             ca.flush = algorithm.flush;
+            std::vector<DispatchStats> stats;
             for (const auto& d : algorithm.dispatches)
             {
                 ShaderDefines defines = d.defines;
@@ -400,13 +418,15 @@ int RunMain(int argc, wchar_t** argv)
                     throw std::runtime_error("failed to compile " + d.file + " for algorithm " + algorithm.name);
                 ca.usesWaveOps |= compiler.UsesWaveOps(blob.Get());
                 ca.shaders.push_back(blob);
+                stats.push_back(compiler.GetDispatchStats(blob.Get()));
             }
+            ca.dispatchInfo = FormatDispatchStats(stats);
             std::string sizes;
             for (const auto& s : ca.shaders)
                 sizes += Format("%s%zu", sizes.empty() ? "" : " + ", static_cast<size_t>(s->GetBufferSize()));
-            Log("Compiled algorithm %s (%zu dispatch%s, DXIL %s bytes, flush mode %s%s)\n", ca.name.c_str(),
-                ca.shaders.size(), ca.shaders.size() == 1 ? "" : "es", sizes.c_str(), FlushModeName(ca.flush).c_str(),
-                ca.usesWaveOps ? ", wave ops" : ", no wave ops");
+            Log("Compiled algorithm %s (%zu dispatch%s, DXIL %s bytes, threads/groupshared %s, flush mode %s%s)\n",
+                ca.name.c_str(), ca.shaders.size(), ca.shaders.size() == 1 ? "" : "es", sizes.c_str(),
+                ca.dispatchInfo.c_str(), FlushModeName(ca.flush).c_str(), ca.usesWaveOps ? ", wave ops" : ", no wave ops");
             compiled.push_back(std::move(ca));
         }
         compiledByWave.push_back({{wc.size, wc.attribute}, std::move(compiled)});
@@ -424,6 +444,7 @@ int RunMain(int argc, wchar_t** argv)
             ai.flush = ca.flush;
             for (const auto& s : ca.shaders)
                 ai.dxilBytes.push_back(static_cast<size_t>(s->GetBufferSize()));
+            ai.dispatchInfo = ca.dispatchInfo;
             info.algorithmInfos.push_back(std::move(ai));
         }
         info.dxilWaveSize = compiledByWave.front().first.first;
@@ -667,6 +688,8 @@ int RunMain(int argc, wchar_t** argv)
         record.secondsPerIterationEstimate = gpuSecondsPerIteration[gi];
         record.estimatedSeconds = gpuEstimateSeconds[gi];
         const std::vector<CompiledAlgorithm>& compiled = compileFor(gpuWave[gi]);
+        for (const auto& ca : compiled)
+            record.dispatchInfo[ca.name] = ca.dispatchInfo;
         const auto gpuStart = std::chrono::steady_clock::now();
         Log("\n=== GPU %zu/%zu: %s (WAVE_SIZE %u%s) ===\n", gi + 1, gpus.size(), gpu.name.c_str(),
             gpuWave[gi].size, gpuWave[gi].attribute ? " + [WaveSize]" : "");

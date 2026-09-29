@@ -173,7 +173,7 @@ bool WriteResultsCsv(const RunInfo& info, const std::filesystem::path& path, std
            "flush_mode", "workload", "sweep_size", "sorts_per_iteration", "iterations", "warmup", "min_us",
            "median_us", "mean_us", "p95_us", "p99_us", "max_us", "stddev_us", "verify_failures",
            "total_elements_per_iter_mean", "algorithm_id", "run_kind", "iterations_requested", "wave_probe_ok",
-           "gpu_error", "stable_power", "drain_spin_iters_per_us"});
+           "gpu_error", "stable_power", "drain_spin_iters_per_us", "dispatch_info"});
 
     SizeCache sizeCache;
     for (size_t g = 0; g < info.gpus.size(); ++g)
@@ -243,6 +243,8 @@ bool WriteResultsCsv(const RunInfo& info, const std::filesystem::path& path, std
                 fields.push_back(gpu.error);
                 fields.push_back(gpu.stablePower);
                 fields.push_back(spinRate);
+                const auto di = gpu.dispatchInfo.find(c.algorithm);
+                fields.push_back(di == gpu.dispatchInfo.end() ? std::string() : di->second);
                 f.Row(fields);
             };
 

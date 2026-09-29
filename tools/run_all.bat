@@ -20,6 +20,15 @@ rem                          ONE prompt in total; no dxdiag and no smoke run (th
 rem                          already validated pass5 ones; the new spin drain was validated on WARP
 rem                          with GPU-based validation and on an RTX 5080). A few minutes on a discrete
 rem                          + integrated GPU machine.
+rem   run_all.bat pass7      the low-end / iGPU shader set _test\pass7 (see its notes.md): a smoke run
+rem                          (--smoke --dred, algorithm list algorithms_smoke.txt, 16 iterations), then
+rem                          the full run (algorithms.txt, 300 iterations), default wave size, every
+rem                          GPU; results pass7_smoke.txt / pass7.txt (+ .csv, .log). If an integrated
+rem                          GPU reports a wave size range (AMD Ryzen iGPU: 32-64), also a smoke + full
+rem                          run at --wave-size <its max> on the integrated GPU(s) only
+rem                          (--integrated-only): pass7_smoke_igpu_wave64.txt / pass7_igpu_wave64.txt.
+rem                          All smoke runs come first; the same stop rules as the default modes
+rem                          (below). Prints the plan with an estimated run time. No other shader set.
 rem   extra argument noprompt: no OK/Cancel popups: passes --no-prompt to every GpuSort.exe run, after
 rem                          a 10 s countdown (Ctrl+C aborts). For manual runs at the machine.
 rem   extra argument nopause: do not wait for a key at the end
@@ -63,7 +72,7 @@ set "NPARG="
 if defined DRYRUN set "NOPAUSE=1"
 :parse_args
 if "%~1"=="" goto :args_done
-if /i "%~1"=="all" (set "MODE=all") else if /i "%~1"=="latest" (set "MODE=latest") else if /i "%~1"=="current" (set "MODE=current") else if /i "%~1"=="probe" (set "MODE=probe") else if /i "%~1"=="diag" (set "MODE=diag") else if /i "%~1"=="nopause" (set "NOPAUSE=1") else if /i "%~1"=="noprompt" (set "NOPROMPT=1") else (
+if /i "%~1"=="all" (set "MODE=all") else if /i "%~1"=="latest" (set "MODE=latest") else if /i "%~1"=="current" (set "MODE=current") else if /i "%~1"=="probe" (set "MODE=probe") else if /i "%~1"=="diag" (set "MODE=diag") else if /i "%~1"=="pass7" (set "MODE=pass7") else if /i "%~1"=="nopause" (set "NOPAUSE=1") else if /i "%~1"=="noprompt" (set "NOPROMPT=1") else (
     echo Unknown argument "%~1".
     call :usage
     set "NOPAUSE="
@@ -73,7 +82,7 @@ if /i "%~1"=="all" (set "MODE=all") else if /i "%~1"=="latest" (set "MODE=latest
 shift
 goto :parse_args
 :args_done
-echo Modes: run_all.bat [latest^|all^|current^|probe^|diag] [noprompt] [nopause]   ^(default latest; probe = wave probe only, seconds; diag = flush diagnostic, minutes^)
+echo Modes: run_all.bat [latest^|all^|current^|probe^|diag^|pass7] [noprompt] [nopause]   ^(default latest; probe = wave probe only, seconds; diag = flush diagnostic, minutes; pass7 = low-end shader set^)
 if defined NOPROMPT (
     set "NPARG=--no-prompt"
     echo Running mode: %MODE%, NO POPUPS ^(noprompt^)
@@ -156,6 +165,7 @@ if not defined DRYRUN (
     echo Writing dxdiag.txt ^(driver details^) ...
     start "" /wait dxdiag /whql:off /t "%OUT%\dxdiag.txt"
 )
+if /i "%MODE%"=="pass7" goto :pass7_mode
 
 rem --- plan: shader sets x wave configurations ----------------------------------------------------
 set "SET_COUNT=1"
@@ -372,6 +382,146 @@ if not "!RC!"=="0" set "FINAL_RC=1"
 if exist "%OUT%\!FILE!.txt" findstr /c:"stable power:" "%OUT%\!FILE!.txt" >> "%SUMMARY%"
 goto :finish
 
+rem --- pass7 mode: the low-end / iGPU shader set _test\pass7 ------------------------------------------
+rem Smoke runs first (every one of them; a verification failure stops the script before the full
+rem runs, a device loss or Cancel at once), then the full runs. Default wave size on every GPU; if an
+rem integrated GPU reports a wave size range (AMD Ryzen iGPU: 32-64), also --wave-size <its max> with
+rem --integrated-only (the discrete GPU's wave64 is not part of this pass).
+:pass7_mode
+set "P7DIR=%ROOT%_test\pass7"
+for %%f in (algorithms.txt algorithms_smoke.txt) do if not exist "%P7DIR%\%%f" (
+    echo ERROR: _test\pass7\%%f is missing. Unzip the whole package first.
+    >> "%SUMMARY%" echo _test\pass7\%%f is missing
+    set "FINAL_RC=1"
+    goto :finish
+)
+rem Iterations per GPU: algorithms x 10 workloads x (300 + 5 warmup), smoke: x 16 (no warmup).
+set "P7_NALG=0"
+for /f "usebackq" %%x in (`findstr /b /c:"algorithm " "%P7DIR%\algorithms.txt"`) do set /a P7_NALG+=1
+set "P7_NALG_SMOKE=0"
+for /f "usebackq" %%x in (`findstr /b /c:"algorithm " "%P7DIR%\algorithms_smoke.txt"`) do set /a P7_NALG_SMOKE+=1
+set /a P7_IT_FULL=P7_NALG*10*305
+set /a P7_IT_SMOKE=P7_NALG_SMOKE*10*SMOKE_ITERS
+rem Estimate: wall ms per iteration x 10, measured on earlier runs (the 256 MB flush dominates):
+rem discrete (RTX 5080 / RX 7900 XTX) 0.8 full / 3.3 serial smoke, Ryzen iGPU 9.7 / 12.5, Intel UHD
+rem 770 7.6 / 12.0; plus ~20 s per run for shader compilation, calibration and the wave probe.
+rem The adapter lines are "wave lane range: min <a> max <b>  integrated <yes|no>  vendor <id>".
+set "IGPUWAVE=0"
+set "P7_NIGPU=0"
+set "EST_S=0"
+set "EST_F=0"
+set "GPUNO=0"
+echo.
+echo ==== pass7: GPUs ====
+for /f "usebackq tokens=5,7,9,11" %%a in (`findstr /c:"wave lane range:" "%OUT%\adapters.txt"`) do (
+    set "GKIND=discrete"
+    if "%%c"=="" set "GKIND=unknown (adapter list of an older GpuSort.exe), counted as discrete"
+    set "FMS=8"
+    set "SMS=33"
+    if /i "%%c"=="yes" (
+        set "GKIND=integrated"
+        set /a P7_NIGPU+=1
+        set "FMS=97"
+        set "SMS=125"
+        if /i "%%d"=="8086" (
+            set "FMS=76"
+            set "SMS=120"
+        )
+        if %%b GTR %%a if %%b GTR !IGPUWAVE! set "IGPUWAVE=%%b"
+    )
+    set /a GS=P7_IT_SMOKE*SMS/10000, GF=P7_IT_FULL*FMS/10000
+    set /a EST_S+=GS, EST_F+=GF
+    call :fmt_secs !GF! GFT
+    echo   GPU [!GPUNO!] !GKIND!, vendor %%d, wave lanes %%a-%%b: smoke ~!GS! s, full ~!GFT!
+    >> "%SUMMARY%" echo   GPU [!GPUNO!] !GKIND!, vendor %%d, wave lanes %%a-%%b
+    set /a GPUNO+=1
+)
+rem The integrated-only runs: every integrated GPU whose range contains IGPUWAVE.
+set "EST_WS=0"
+set "EST_WF=0"
+set "P7_WAVES=0"
+if not "%IGPUWAVE%"=="0" (
+    set "P7_WAVES=0 %IGPUWAVE%"
+    for /f "usebackq tokens=5,7,9,11" %%a in (`findstr /c:"wave lane range:" "%OUT%\adapters.txt"`) do (
+        if /i "%%c"=="yes" if %IGPUWAVE% GEQ %%a if %IGPUWAVE% LEQ %%b (
+            set "FMS=97"
+            set "SMS=125"
+            if /i "%%d"=="8086" (
+                set "FMS=76"
+                set "SMS=120"
+            )
+            set /a EST_WS+=P7_IT_SMOKE*SMS/10000, EST_WF+=P7_IT_FULL*FMS/10000
+        )
+    )
+)
+if "%IGPUWAVE%"=="0" (set "NRUNS=2") else (set "NRUNS=4")
+set /a EST_S+=20, EST_F+=20
+if not "%IGPUWAVE%"=="0" set /a EST_WS+=20, EST_WF+=20
+set /a EST_TOTAL=EST_S+EST_F+EST_WS+EST_WF
+call :fmt_secs %EST_S% T_S
+call :fmt_secs %EST_F% T_F
+call :fmt_secs %EST_WS% T_WS
+call :fmt_secs %EST_WF% T_WF
+call :fmt_secs %EST_TOTAL% T_TOTAL
+set "RUNNO=0"
+echo.
+if defined NOPROMPT (
+    echo ==== Plan: %NRUNS% GPU runs of _test\pass7, no popups ^(noprompt: one 10 s countdown now^) ====
+) else (
+    echo ==== Plan: %NRUNS% GPU runs of _test\pass7, each asks for confirmation first ^(%NRUNS% popups^) ====
+)
+>> "%SUMMARY%" echo Plan: %NRUNS% GPU runs of _test\pass7 (%P7_NALG% algorithms, smoke %P7_NALG_SMOKE%), estimated ~%T_TOTAL%
+if "%IGPUWAVE%"=="0" (
+    echo   1/2 smoke, default wave size, every GPU: algorithms_smoke.txt ^(%P7_NALG_SMOKE% algorithms^), %SMOKE_ITERS% iterations, --dred  ~%T_S%
+    echo   2/2 full,  default wave size, every GPU: algorithms.txt ^(%P7_NALG% algorithms^), 300 iterations  ~%T_F%
+    if "%P7_NIGPU%"=="0" (
+        echo   no integrated GPU: no integrated-only wave run
+    ) else (
+        echo   no integrated GPU with a wave size range: no integrated-only wave run
+    )
+) else (
+    echo   1/4 smoke, default wave size, every GPU: algorithms_smoke.txt ^(%P7_NALG_SMOKE% algorithms^), %SMOKE_ITERS% iterations, --dred  ~%T_S%
+    echo   2/4 smoke, --wave-size %IGPUWAVE%, integrated GPU^(s^) only ^(--integrated-only^), same list  ~%T_WS%
+    echo   3/4 full,  default wave size, every GPU: algorithms.txt ^(%P7_NALG% algorithms^), 300 iterations  ~%T_F%
+    echo   4/4 full,  --wave-size %IGPUWAVE%, integrated GPU^(s^) only, 300 iterations  ~%T_WF%
+)
+echo   The full runs start only if every smoke run passed. Estimated total: ~%T_TOTAL%
+echo   ^(GpuSort prints a calibrated estimate right after each start^)
+if "%IGPUWAVE%"=="0" (
+    >> "%SUMMARY%" echo   smoke, then full: default wave size, every GPU
+) else (
+    >> "%SUMMARY%" echo   smoke, then full: default wave size on every GPU, and --wave-size %IGPUWAVE% on the integrated GPU^(s^) only
+)
+call :countdown
+
+set "FINAL_RC=0"
+set "SMOKE_FAILS=0"
+set "SMOKE_FAILED_RUNS="
+for %%w in (%P7_WAVES%) do (
+    call :p7_run smoke %%w
+    if "!RC!"=="2" (
+        set "FINAL_RC=1"
+        goto :stopped
+    )
+    if "!RC!"=="3" (
+        set "FINAL_RC=1"
+        goto :smoke_lost
+    )
+    if not "!RC!"=="0" (
+        set /a SMOKE_FAILS+=1
+        set "SMOKE_FAILED_RUNS=!SMOKE_FAILED_RUNS! [!LAST_LABEL!]"
+        if exist "%OUT%\!FILE!.txt" findstr /c:"SMOKE FAILED:" "%OUT%\!FILE!.txt" >> "%SUMMARY%"
+    )
+)
+if not "!SMOKE_FAILS!"=="0" goto :smoke_failed
+for %%w in (%P7_WAVES%) do (
+    call :p7_run full %%w
+    if not "!RC!"=="0" set "FINAL_RC=1"
+    if "!RC!"=="2" goto :stopped
+    if "!RC!"=="3" goto :stopped
+)
+goto :finish
+
 :smoke_failed
 set "FINAL_RC=1"
 echo.
@@ -421,13 +571,15 @@ goto :end
 rem --- subroutines -------------------------------------------------------------------------------
 
 :usage
-echo Usage: run_all.bat [latest^|all^|current^|probe^|diag] [noprompt] [nopause]
+echo Usage: run_all.bat [latest^|all^|current^|probe^|diag^|pass7] [noprompt] [nopause]
 echo   ^(none^) or latest  current shaders\ + the latest _test\passN snapshot that differs from shaders\
 echo   all               current shaders\ + every _test\passN snapshot
 echo   current           current shaders\ only
 echo   probe             only the wave probe: one GpuSort.exe --wave-probe run ^(one prompt, seconds^)
 echo   diag              flush-tail diagnostic: shaders\algorithms_diag_flush.txt, normal clocks + ^(with
 echo                     Developer Mode^) --stable-power, one prompt, a few minutes
+echo   pass7             low-end shader set _test\pass7: smoke + full run, default wave size, plus
+echo                     --wave-size ^<max^> on an integrated GPU with a wave size range ^(AMD iGPU^)
 echo   noprompt          no popups ^(--no-prompt for every run^), after a 10 s countdown ^(Ctrl+C aborts^)
 echo   nopause           do not wait for a key at the end
 exit /b 0
@@ -458,6 +610,41 @@ if exist "%ROOT%_test\%~1\SAME_AS_SHADERS.txt" (
 set /a SET_COUNT+=1
 set "SET_%SET_COUNT%_NAME=%~1"
 set "SET_%SET_COUNT%_DIR=%ROOT%_test\%~1"
+exit /b 0
+
+rem :fmt_secs <seconds> <variable>: "<n> s" below 100 s, else "<m.t> min".
+:fmt_secs
+set /a FS_S=%~1
+if %FS_S% LSS 100 (
+    set "%~2=%FS_S% s"
+    exit /b 0
+)
+set /a FS_M=FS_S/60, FS_T=(FS_S%%60)*10/60
+set "%~2=%FS_M%.%FS_T% min"
+exit /b 0
+
+rem :p7_run <smoke|full> <wave size, 0 = default>: one GpuSort run of _test\pass7 (pass7 mode); a
+rem wave size means --wave-size <n> --integrated-only. Sets RC, RC_TEXT, LAST_LABEL, FILE.
+:p7_run
+set /a RUNNO+=1
+set "FILE=pass7"
+set "WDESC=default wave size, every GPU"
+set "XARGS="
+if not "%~2"=="0" (
+    set "FILE=pass7_igpu_wave%~2"
+    set "WDESC=wave%~2, integrated GPU only"
+    set "XARGS=--wave-size %~2 --integrated-only"
+)
+if "%~1"=="smoke" (
+    set "FILE=pass7_smoke"
+    if not "%~2"=="0" set "FILE=pass7_smoke_igpu_wave%~2"
+    set "KARGS=--smoke --dred --algo-file algorithms_smoke.txt --iterations %SMOKE_ITERS%"
+) else (
+    set "KARGS=--iterations 300"
+)
+set "LAST_LABEL=!RUNNO!/!NRUNS!: %~1 pass7 !WDESC!"
+set CMD="%EXE%" --shaders "%P7DIR%" !KARGS! !XARGS! !NPARG! --label "!LAST_LABEL!" --out "%OUT%\!FILE!.txt" --log "%OUT%\!FILE!.log"
+call :exec
 exit /b 0
 
 rem :run <smoke|full> <set index> <wave index>: one GpuSort run; sets RC, RC_TEXT, LAST_LABEL.
