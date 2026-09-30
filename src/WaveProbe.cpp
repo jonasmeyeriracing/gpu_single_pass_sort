@@ -500,8 +500,11 @@ WaveProbeReport RunWaveProbe(GpuBenchmark& bench, const WaveProbeSet& set)
     for (const auto& v : set.variants)
         maxGroup = std::max(maxGroup, v.groupSize);
     const uint32_t wordsPerDispatch = maxGroup * kProbeWords;
-    // As many dispatches per submission as the output buffer holds.
-    const size_t perBatch = std::max<size_t>(1, kMaxElementsPerIteration / std::max(wordsPerDispatch, 1u));
+    // As many dispatches per submission as the output buffer holds (at most that of 20 sorts, as in
+    // the fixed-20 builds; the probe runs before the first SetSortCount, at the buffer capacity).
+    const size_t outputWords =
+        std::min<size_t>(MaxElementsPerIteration(kDefaultSortsPerIteration), bench.ElementViewCount());
+    const size_t perBatch = std::max<size_t>(1, outputWords / std::max(wordsPerDispatch, 1u));
     std::vector<GpuBenchmark::ProbeOutput> outputs;
     for (size_t first = 0; first < set.variants.size(); first += perBatch)
     {

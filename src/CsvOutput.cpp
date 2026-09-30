@@ -58,22 +58,24 @@ struct IterationSizes
     uint32_t total = 0;
 };
 
-// Sizes of measured iterations 0..n-1 per workload (deterministic, see GenerateSizes).
+// Sizes of measured iterations 0..n-1 per workload x sorts per iteration (deterministic, see
+// GenerateSizes).
 class SizeCache
 {
 public:
-    const std::vector<IterationSizes>& Get(uint32_t workloadId, size_t n)
+    const std::vector<IterationSizes>& Get(uint32_t workloadId, uint32_t numSorts, size_t n)
     {
-        std::vector<IterationSizes>& v = m_cache[workloadId];
+        std::vector<IterationSizes>& v = m_cache[{workloadId, numSorts}];
         for (size_t i = v.size(); i < n; ++i)
-            v.push_back(Compute(workloadId, static_cast<uint32_t>(i)));
+            v.push_back(Compute(workloadId, static_cast<uint32_t>(i), numSorts));
         return v;
     }
 
-    static IterationSizes Compute(uint32_t workloadId, uint32_t iteration)
+    static IterationSizes Compute(uint32_t workloadId, uint32_t iteration, uint32_t numSorts)
     {
-        uint32_t sizes[kSortsPerIteration];
-        GenerateSizes(workloadId, iteration, sizes);
+        thread_local std::vector<uint32_t> sizes;
+        sizes.resize(numSorts);
+        GenerateSizes(workloadId, iteration, numSorts, sizes.data());
         IterationSizes r;
         for (uint32_t s : sizes)
         {
@@ -84,7 +86,7 @@ public:
     }
 
 private:
-    std::map<uint32_t, std::vector<IterationSizes>> m_cache;
+    std::map<std::pair<uint32_t, uint32_t>, std::vector<IterationSizes>> m_cache;
 };
 
 class CsvFile
@@ -210,7 +212,8 @@ bool WriteResultsCsv(const RunInfo& info, const std::filesystem::path& path, std
 
         for (const auto& c : gpu.combos)
         {
-            const std::vector<IterationSizes>& sizes = sizeCache.Get(c.workloadId, c.result.timesUs.size());
+            const std::vector<IterationSizes>& sizes =
+                sizeCache.Get(c.workloadId, c.sortsPerIteration, c.result.timesUs.size());
             // One row over the given measured iterations (indices into timesUs).
             auto row = [&](const std::string& sweepSize, const std::vector<size_t>& indices, uint32_t failures) {
                 std::vector<double> v;
@@ -225,7 +228,7 @@ bool WriteResultsCsv(const RunInfo& info, const std::filesystem::path& path, std
                 fields.push_back(FlushModeName(c.flush));
                 fields.push_back(Workloads()[c.workloadId].name);
                 fields.push_back(sweepSize);
-                fields.push_back(std::to_string(kSortsPerIteration));
+                fields.push_back(std::to_string(c.sortsPerIteration));
                 fields.push_back(std::to_string(v.size()));
                 fields.push_back(std::to_string(info.warmup));
                 if (v.empty())
@@ -243,7 +246,9 @@ bool WriteResultsCsv(const RunInfo& info, const std::filesystem::path& path, std
                 fields.push_back(v.empty() ? std::string() : Fixed(elements / static_cast<double>(v.size()), 1));
                 fields.push_back(c.algorithm);
                 fields.push_back(info.runKind);
-                fields.push_back(std::to_string(gpu.iterations ? gpu.iterations : info.iterations));
+                fields.push_back(std::to_string(c.iterationsRequested ? c.iterationsRequested
+                                                : gpu.iterations           ? gpu.iterations
+                                                                           : info.iterations));
                 fields.push_back(probeOk);
                 fields.push_back(gpu.error);
                 fields.push_back(gpu.stablePower);
@@ -279,7 +284,7 @@ bool WriteResultsCsv(const RunInfo& info, const std::filesystem::path& path, std
                 bySize[sizes[i].largest].push_back(i);
             std::map<uint32_t, uint32_t> failuresBySize;
             for (uint32_t it : c.result.failedIterations)
-                ++failuresBySize[SizeCache::Compute(c.workloadId, it).largest];
+                ++failuresBySize[SizeCache::Compute(c.workloadId, it, c.sortsPerIteration).largest];
             if (bySize.empty())
             {
                 row("", {}, c.result.failures);
@@ -298,7 +303,7 @@ bool WriteSamplesCsv(const RunInfo& info, const std::filesystem::path& path, std
     if (OpenFailed(f, path, error))
         return false;
     f.Row({"run_id", "gpu_index", "wave_size", "algorithm", "flush_mode", "workload", "iteration", "time_us",
-           "largest_sort", "total_elements", "sweep_size"});
+           "largest_sort", "total_elements", "sweep_size", "sorts_per_iteration"});
     SizeCache sizeCache;
     for (size_t g = 0; g < info.gpus.size(); ++g)
     {
@@ -306,7 +311,9 @@ bool WriteSamplesCsv(const RunInfo& info, const std::filesystem::path& path, std
         for (const auto& c : gpu.combos)
         {
             const bool sweep = IsSweepWorkload(c.workloadId);
-            const std::vector<IterationSizes>& sizes = sizeCache.Get(c.workloadId, c.result.timesUs.size());
+            const std::vector<IterationSizes>& sizes =
+                sizeCache.Get(c.workloadId, c.sortsPerIteration, c.result.timesUs.size());
+            const std::string sorts = std::to_string(c.sortsPerIteration);
             // Key fields, escaped once per combo.
             const std::string key = Esc(info.runId) + "," + std::to_string(g) + "," + std::to_string(gpu.waveSize) +
                                     "," + Esc(BaseName(c.algorithm)) + "," + FlushModeName(c.flush) + "," +
@@ -324,6 +331,8 @@ bool WriteSamplesCsv(const RunInfo& info, const std::filesystem::path& path, std
                 line += ',';
                 if (sweep)
                     line += std::to_string(sizes[i].largest);
+                line += ',';
+                line += sorts;
                 f.RawRow(line);
             }
         }

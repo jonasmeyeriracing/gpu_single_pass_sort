@@ -481,7 +481,8 @@ algorithm list on every hardware GPU in the machine.
   time. During the run a small progress window stays open.
 - **Wave probe.** Before the first sort on each GPU, a tiny shader reports the real lane count and
   lane mapping and checks the cross-lane ops.
-- **Per iteration** (one iteration = one batch of 20 sorts):
+- **Per iteration** (one iteration = one batch of N sorts, one thread group each; `--sorts`,
+  default 20):
   1. Generate the data deterministically.
   2. Upload the data and poison the whole output buffer.
   3. Flush the caches (256 MB read+write), then drain.
@@ -490,15 +491,20 @@ algorithm list on every hardware GPU in the machine.
   5. Read back and verify: key order, permutation of the input, and no writes outside the sorts.
 - **Iterations.** 1000 per GPU x algorithm x workload by default, after 5 warmup iterations.
   `--iterations-integrated` sets a separate count for UMA GPUs.
+- **Sorts per batch.** `--sorts 20,128,256,512` runs every GPU x algorithm x workload once per
+  count (up to 512); `--iterations` / `--iterations-integrated` then take one value per count, e.g.
+  `1000,300,200,150`. Iterations are recorded into command lists of up to 32, fewer for large N
+  (at most 256 MB of upload + readback slots per list).
 - **Determinism.** Data comes from PCG32 with a seed built from the workload id and the iteration.
-  Every machine sorts the same data.
+  Every machine sorts the same data. A batch of N sorts draws N sizes from the same distribution;
+  its first 20 are those of the 20-sort batch.
 - **Output.** A `results.txt` with median / p95 / min / mean / max per combination and per sweep
   size. CSV files are written next to it: results, per-iteration samples, and wave probe
   ([tools/CSV_FORMAT.md](tools/CSV_FORMAT.md)).
 
 ### Workloads
 
-| workload | sizes of the 20 sorts |
+| workload | sizes of the sorts in a batch |
 |---|---|
 | mostly_empty | 70 % empty, rest 1-64 |
 | mostly_small | uniform 0-128 |
@@ -508,7 +514,7 @@ algorithm list on every hardware GPU in the machine.
 | edges | tier boundaries 0-8192 (30 fixed sizes, cycled) |
 | mostly_mid | uniform 513-2048 |
 | mostly_medium | uniform 129-512 |
-| sweep | all 20 sorts the same size; 16 sizes from 32 to 8192, cycled per iteration (results per size) |
+| sweep | all sorts of a batch the same size; 16 sizes from 32 to 8192, cycled per iteration (results per size) |
 | sparse_keys | uniform 1-8192; each 4-bit key digit is constant within a sort with p = 1/2 |
 
 ### Measurement method
@@ -561,12 +567,13 @@ with `--shaders`.
 GpuSort.exe                                   # shaders\algorithms.txt, every GPU, 1000 iterations
 GpuSort.exe --algo-file algorithms_final.txt  # the final set
 GpuSort.exe --algo s1_rank512_bitreg2048_radix --workload realistic_mix,worst_case --gpu 5080
+GpuSort.exe --algo-file algorithms_scale.txt --sorts 20,128,256,512 --iterations 1000,300,200,150
 GpuSort.exe --smoke --dred                    # safety run
 GpuSort.exe --warp --debug --gbv --iterations 5   # correctness on WARP with GPU-based validation
 GpuSort.exe --list-adapters | --wave-probe | --help
 ```
 
-Other options: `--iterations`, `--iterations-integrated`, `--warmup`, `--wave-size N`,
+Other options: `--sorts`, `--iterations`, `--iterations-integrated`, `--warmup`, `--wave-size N`,
 `--flush-mode`, `--integrated-only`, `--discrete-only`, `--out`, `--csv`, `--label`,
 `--no-prompt`, `--stable-power`. `--help` lists them all.
 
@@ -577,6 +584,7 @@ smoke run passed, and a device loss stops the script at once.
 | mode | runs |
 |---|---|
 | `run_all.bat final` | the final set (`algorithms_final.txt`): smoke + full run; also wave64 on discrete GPUs with a wave range |
+| `run_all.bat scale` | the scale set (`algorithms_scale.txt`, 19 algorithms) at 20, 128, 256 and 512 sorts per batch: smoke + full run, default wave size |
 | `run_all.bat current` | `shaders\algorithms.txt` only |
 | `run_all.bat` / `all` | current shaders + the latest / every differing `_test\passN` snapshot |
 | `run_all.bat pass7` | the pass7 low-end shader set |
@@ -619,7 +627,8 @@ Each `_test/passN/` folder has that pass's shaders, algorithm list, `results.txt
 ```
 GpuSort.sln, GpuSort.vcxproj   Visual Studio 2022 project
 src/                           benchmark framework (C++ / DX12)
-shaders/                       current shaders and algorithm lists (algorithms_final.txt = the final set)
+shaders/                       current shaders and algorithm lists (algorithms_final.txt = the final set,
+                               algorithms_scale.txt = the many-sorts-per-batch subset)
 _test/pass0 .. pass7/          per-pass shader snapshots, results and notes
 _test/external/                results from other machines
 _test/final/                   final run data (all_results.csv, all_samples.csv.gz) and notes

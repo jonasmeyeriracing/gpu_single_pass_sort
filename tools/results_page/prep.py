@@ -1,19 +1,26 @@
 """Build the compact data file for the GPU sort results page from the aggregated CSVs.
 
-Usage: python tools/results_page/prep.py <agg dir> <out data.js>
+Usage: python tools/results_page/prep.py <agg dir> <out data.js> [--sorts N]
 
 <agg dir> is an output folder of tools/aggregate_results.py (all_results.csv; all_samples.csv or
 all_samples.csv.gz for the p25 / p75 quartiles). Without a samples file the quartiles are null
-(the page shows them as "-").
+(the page shows them as "-"). --sorts: the sorts per iteration to use (default 20; the page shows
+one batch size, and rows of other sizes, e.g. of a scale run, are left out).
 """
-import csv, gzip, json, os, sys
+import argparse, csv, gzip, json, os, sys
 from collections import defaultdict
 
-AGG = sys.argv[1]
-OUT = sys.argv[2]
+ap = argparse.ArgumentParser(description="Build data.js for the results page")
+ap.add_argument("agg")
+ap.add_argument("out")
+ap.add_argument("--sorts", default="20", help="sorts per iteration of the rows to use (default 20)")
+args = ap.parse_args()
+AGG = args.agg
+OUT = args.out
+SORTS = args.sorts
 
 rows = [r for r in csv.DictReader(open(f"{AGG}/all_results.csv", encoding="utf-8"))
-        if r["run_kind"] == "benchmark"]
+        if r["run_kind"] == "benchmark" and (r.get("sorts_per_iteration") or "20") == SORTS]
 
 def cfg_key(r):
     return (r["gpu_name"], r["wave_size"])
@@ -62,11 +69,12 @@ col_index = {c: i for i, c in enumerate(cols)}
 def col_of(r):
     return f"sweep:{r['sweep_size']}" if r["sweep_size"] else r["workload"]
 
-# Quartiles from the per-iteration samples.
+# Quartiles from the per-iteration samples (keyed like the results rows, incl. sorts_per_iteration:
+# 20 for samples without the column, schema 1-4).
 key_of_row = {}
 for r in rows:
     key_of_row[(r["run_id"], r["gpu_index"], r["wave_size"], r["algorithm"], r["flush_mode"],
-                r["workload"], r["sweep_size"])] = r
+                r["workload"], r["sweep_size"], r.get("sorts_per_iteration") or "20")] = r
 samples = defaultdict(list)
 samples_path = next((p for p in (f"{AGG}/all_samples.csv", f"{AGG}/all_samples.csv.gz")
                      if os.path.exists(p)), None)
@@ -78,9 +86,11 @@ else:
         rd = csv.reader(f)
         hdr = next(rd)
         ix = {h: i for i, h in enumerate(hdr)}
+        si = ix.get("sorts_per_iteration")
         for s in rd:
             k = (s[ix["run_id"]], s[ix["gpu_index"]], s[ix["wave_size"]], s[ix["algorithm"]],
-                 s[ix["flush_mode"]], s[ix["workload"]], s[ix["sweep_size"]])
+                 s[ix["flush_mode"]], s[ix["workload"]], s[ix["sweep_size"]],
+                 s[si] if si is not None else "20")
             if k in key_of_row:
                 samples[k].append(float(s[ix["time_us"]]))
 

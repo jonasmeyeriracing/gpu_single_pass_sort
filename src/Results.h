@@ -22,6 +22,8 @@ struct ComboRecord
     std::string algorithm;
     ComboResult result;
     FlushMode flush = kDefaultFlushMode; // the algorithm's flush mode in this run
+    uint32_t sortsPerIteration = kDefaultSortsPerIteration;
+    uint32_t iterationsRequested = 0; // measured iterations requested for this combo (this GPU, sort count)
 };
 
 // --smoke: an algorithm that failed verification (its remaining workloads were skipped).
@@ -46,7 +48,8 @@ struct GpuRecord
     uint32_t waveSize = 0;          // WAVE_SIZE the shaders were compiled with
     bool waveSizeAttribute = false; // compiled with [WaveSize(WAVE_SIZE)]
     uint32_t iterations = 0;        // measured iterations requested on this GPU (--iterations, or
-                                    // --iterations-integrated on an integrated GPU)
+                                    // --iterations-integrated on an integrated GPU) at the first sort count
+    std::vector<uint32_t> iterationsPerCount; // the same per RunInfo::sortCounts entry
     std::vector<std::string> waveProbe; // wave probe report lines (WaveProbeReport::lines)
     std::vector<std::string> waveProbeSummary; // one verdict per wave configuration (WaveProbeReport::summary)
     bool waveProbeWarning = false;      // the probe found the wrong lane count / a broken lane mapping
@@ -55,8 +58,9 @@ struct GpuRecord
     // Run-time estimate made up front (main.cpp): wall seconds per iteration from the calibration
     // (or a rough guess if !calibrated) and the estimate for this GPU's whole run.
     bool calibrated = false;
-    double secondsPerIterationEstimate = 0;
+    double secondsPerIterationEstimate = 0; // at the first sort count
     double estimatedSeconds = 0;
+    std::vector<double> secondsPerIterationPerCount; // per RunInfo::sortCounts entry
     // --stable-power (main.cpp): "off" (not requested), "on" (SetStablePowerState(TRUE) succeeded),
     // "unavailable" (Developer Mode is off: not called), "failed" (the call returned an error).
     std::string stablePower = "off";
@@ -96,8 +100,11 @@ struct RunInfo
     std::string label; // --label
     std::string shaderDir;
     std::string commandLine;
-    uint32_t iterations = 0;           // --iterations
-    uint32_t iterationsIntegrated = 0; // --iterations-integrated (0 = not given)
+    uint32_t iterations = 0;           // --iterations (at the first sort count)
+    uint32_t iterationsIntegrated = 0; // --iterations-integrated (at the first sort count; 0 = not given)
+    std::vector<uint32_t> sortCounts = {kDefaultSortsPerIteration}; // --sorts, in run order
+    std::vector<uint32_t> iterationsPerCount;           // --iterations per sortCounts entry
+    std::vector<uint32_t> iterationsIntegratedPerCount; // --iterations-integrated per entry (empty: not given)
     uint32_t warmup = 0;
     std::vector<uint32_t> workloadIds;
     std::vector<std::string> algorithms;
@@ -112,7 +119,7 @@ struct RunInfo
     uint32_t calibrationIterations = 0; // iterations per GPU of the calibration behind it
 };
 
-// Workload size distribution table (over the measured iterations).
-std::string FormatSizeDistribution(const std::vector<uint32_t>& workloadIds, uint32_t iterations);
+// Workload size distribution table (over the measured iterations of numSorts sorts).
+std::string FormatSizeDistribution(const std::vector<uint32_t>& workloadIds, uint32_t iterations, uint32_t numSorts);
 
 std::string FormatResults(const RunInfo& info);

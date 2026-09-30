@@ -21,7 +21,10 @@
 // CSV has the column dispatch_info (threads per group / groupshared bytes per dispatch). 4 (the
 // final set): the results CSV has the columns pass, description and tags (algorithms.txt metadata),
 // iterations_requested is per GPU (--iterations-integrated), and the default flush_mode is full_d50.
-constexpr int kCsvSchemaVersion = 4;
+// 5 (the scale run): sorts_per_iteration is the run's --sorts value of the row (was always 20) and
+// part of the row key; iterations_requested is per row (GPU x sort count); the samples CSV appends
+// the column sorts_per_iteration.
+constexpr int kCsvSchemaVersion = 5;
 
 // Git commit of this build ("<short sha>", "<short sha>-dirty" or "unknown").
 const char* PackageCommit();

@@ -1,0 +1,144 @@
+# SCALE algorithm set: what wins when a frame has many sorts (GpuSort.exe --algo-file
+# algorithms_scale.txt --sorts 20,128,256,512; run_all.bat scale). Every entry is copied unchanged
+# from algorithms_final.txt (same name, dispatches, pass, desc and tags), so the rows join with the
+# final run's data (algorithm_id + sorts_per_iteration).
+#
+# All earlier results used 20 sorts per iteration (one batch), where a mostly idle GPU hides that the
+# single-dispatch configurations launch a 1024-thread group per sort (even m4_b128_p's large tier).
+# With 128-512 sorts per batch the groups compete for the GPU, and configurations that size the
+# group to the sort may win. The set: the large-group references (pass0_bitonic baseline, the
+# rec_discrete s1_rank512_bitreg2048_radix and its closest single-dispatch rivals), every tier-sized
+# multi-dispatch family with small groups for small sorts (pass1 t2 / t3 rank tiers, pass7 m3 / m4),
+# and the pass7 single dispatches with 256 / 512-thread groups for every size.
+#
+# Two additions to the 17 of the scale-run brief: m4_b128 (m4_b128_p with the 256-thread ballot radix
+# instead of the 1024-thread LDS radix for 2049+: every dispatch <= 256 threads, the direct test of
+# the large tier's group size) and m4_b64 (64-thread rank groups for sorts <= 64, the
+# smallest groups of the final set; mostly_empty is almost only such sorts).
+#
+# See algorithms_final.txt for the file format and the short names used in the descriptions.
+
+# === one 1024-thread group per sort, every size ===================================================
+
+algorithm pass0_bitonic
+pass 0
+desc LDS bitonic sort for every size, one 1024-thread dispatch (the pass0 baseline)
+dispatch pass0_bitonic.hlsl main 1024 MIN_COUNT=1 MAX_COUNT=8192
+
+algorithm s1_radix
+pass 2
+desc 1 dispatch @1024: P for every size (the radix fixed-cost anchor)
+dispatch single_pass.hlsl main 1024 RANK_MAX=0 LARGE_RADIX=1
+
+algorithm s1_rank512_bitreg2048_radix
+pass 2
+desc 1 dispatch @1024 (32 KB): R <=512, B8 <=2048, P above. The portable reference; RECOMMENDED for discrete GPUs
+tag rec_discrete reference
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
+
+algorithm s1_rank512_bitreg4096_radix
+pass 2
+desc 1 dispatch @1024: R <=512, B8 <=4096, P above
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=4096 LARGE_RADIX=1
+
+algorithm s3_rank512_bitreg2048_radix2
+pass 3
+desc 1 dispatch @1024: R <=512, B8 <=2048, radix2 above
+dispatch single_pass3.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 RADIX=2 RS2_MIN_KPT=8
+
+algorithm s4_3tier_rx3r
+pass 4
+desc 1 dispatch @1024: R <=512, B8 <=2048, radix3 (rolled pass loop) above
+dispatch single_pass4.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=3 RS3_ROLLED=1
+
+# === tier-sized dispatches: smaller groups for small sorts (the hypothesis) =======================
+
+algorithm t2_rank512_bitonic
+pass 1
+desc 2 dispatches: R <=512 @512, LDS bitonic 513+ @1024
+dispatch rank_sort.hlsl main 512 MIN_COUNT=1 MAX_COUNT=512
+dispatch pass0_bitonic.hlsl main 1024 MIN_COUNT=513 MAX_COUNT=8192
+
+algorithm t3_rank128_rank512_bitonic
+pass 1
+desc 3 dispatches: R <=128 @128, R 129-512 @512, LDS bitonic 513+ @1024
+dispatch rank_sort.hlsl main 128 MIN_COUNT=1 MAX_COUNT=128
+dispatch rank_sort.hlsl main 512 MIN_COUNT=129 MAX_COUNT=512
+dispatch pass0_bitonic.hlsl main 1024 MIN_COUNT=513 MAX_COUNT=8192
+
+algorithm m3_ref
+pass 7
+desc 3 dispatches: P 2049+ @1024 (32 KB), B8 513-2048 @256 (8 KB), R <=512 @512 (2 KB)
+dispatch radix_sort.hlsl main 1024 MIN_COUNT=2049
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512
+
+algorithm m3_x512
+pass 7
+desc 3 dispatches: X 2049+ @512, B8 513-2048 @256, R <=512 @512
+dispatch p7_sort.hlsl main 512 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 512 MAX_COUNT=512 P7_RANK_MAX=512
+
+algorithm m4_b128_p
+pass 7
+desc 4 dispatches: P 2049+ @1024, B8 513-2048 @256, B4 129-512 @128, R <=128 @128. RECOMMENDED for integrated GPUs
+tag rec_integrated
+dispatch radix_sort.hlsl main 1024 MIN_COUNT=2049
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MIN_COUNT=129 MAX_COUNT=512 P7_BIT_MAX=512 P7_BIT_E=4
+dispatch p7_sort.hlsl main 128 MAX_COUNT=128 P7_RANK_MAX=128
+
+algorithm m4_b128
+pass 7
+desc 4 dispatches: X 2049+ @256, B8 513-2048 @256, B4 129-512 @128, R <=128 @128
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MIN_COUNT=129 MAX_COUNT=512 P7_BIT_MAX=512 P7_BIT_E=4
+dispatch p7_sort.hlsl main 128 MAX_COUNT=128 P7_RANK_MAX=128
+
+algorithm m4_b128e8
+pass 7
+desc 4 dispatches: X 2049+ @256, B8 513-2048 @256, B8 129-512 @128, R <=128 @128
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MIN_COUNT=129 MAX_COUNT=512 P7_BIT_MAX=512 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MAX_COUNT=128 P7_RANK_MAX=128
+
+algorithm m4_b64
+pass 7
+desc 4 dispatches: X 2049+ @256, B8 513-2048 @256, B4 65-512 @128, R <=64 @64
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MIN_COUNT=65 MAX_COUNT=512 P7_BIT_MAX=512 P7_BIT_E=4
+dispatch p7_sort.hlsl main 64 MAX_COUNT=64 P7_RANK_MAX=64
+
+algorithm m4_b256
+pass 7
+desc 4 dispatches: X 2049+ @256, B8 513-2048 @256, B4 257-512 @128, R <=256 @256
+dispatch p7_sort.hlsl main 256 MIN_COUNT=2049 P7_LARGE=2
+dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
+dispatch p7_sort.hlsl main 128 MIN_COUNT=257 MAX_COUNT=512 P7_BIT_MAX=512 P7_BIT_E=4
+dispatch p7_sort.hlsl main 256 MAX_COUNT=256 P7_RANK_MAX=256
+
+# === one dispatch, a smaller group for every size =================================================
+
+algorithm s7_256
+pass 7
+desc 1 dispatch @256 (32 KB): R x2 <=512, B8 <=2048, X above
+dispatch p7_sort.hlsl main 256 P7_RANK_MAX=512 P7_RANK_EPT=2 P7_BIT_MAX=2048 P7_BIT_E=8 P7_LARGE=2
+
+algorithm s7_512
+pass 7
+desc 1 dispatch @512 (32 KB): R <=512, B8 <=2048, X above
+dispatch p7_sort.hlsl main 512 P7_RANK_MAX=512 P7_BIT_MAX=2048 P7_BIT_E=8 P7_LARGE=2
+
+algorithm s7_256b
+pass 7
+desc 1 dispatch @256 (32 KB): R <=128, B4 <=512, B8 <=2048, X above
+dispatch p7_sort.hlsl main 256 P7_RANK_MAX=128 P7_BIT_MAX=512 P7_BIT_E=4 P7_BIT2_MAX=2048 P7_BIT2_E=8 P7_LARGE=2
+
+algorithm x7_all_256
+pass 7
+desc 1 dispatch @256: X for every size
+dispatch p7_sort.hlsl main 256 P7_LARGE=2

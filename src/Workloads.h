@@ -4,10 +4,19 @@
 #include <string>
 #include <vector>
 
-constexpr uint32_t kSortsPerIteration = 20;
+// Sorts per iteration (one batch = one ExecuteIndirect per dispatch with {numSorts, 1, 1} groups): a
+// run parameter (--sorts); 20 is the default and the average case every result up to the scale run
+// used. kMaxSortsPerIteration bounds it (buffer sizes, the batching of iterations per command list).
+constexpr uint32_t kDefaultSortsPerIteration = 20;
+constexpr uint32_t kMaxSortsPerIteration = 512;
 constexpr uint32_t kMaxSortSize = 8192;
 constexpr uint32_t kOffsetAlignment = 64; // elements; each sort starts at a multiple of this
-constexpr uint32_t kMaxElementsPerIteration = kSortsPerIteration * kMaxSortSize; // 8192 is 64-aligned
+
+// Element capacity of an iteration of 'numSorts' sorts (8192 is 64-aligned, so every sort fits).
+constexpr uint32_t MaxElementsPerIteration(uint32_t numSorts)
+{
+    return numSorts * kMaxSortSize;
+}
 
 // Warmup iterations use their own seed space so they never alias measured iterations.
 constexpr uint32_t kWarmupIterationBase = 0x80000000u;
@@ -59,7 +68,7 @@ struct SortDesc
 
 struct IterationData
 {
-    SortDesc sorts[kSortsPerIteration];
+    std::vector<SortDesc> sorts;    // numSorts entries
     std::vector<uint32_t> elements; // packed input; size = end of the last sort rounded up to kOffsetAlignment
 };
 
@@ -76,16 +85,21 @@ const std::vector<WorkloadDesc>& Workloads();
 int FindWorkload(const std::string& name);
 
 // Workload "sweep": all sorts of an iteration have the same size, SweepSizes()[iteration % n], so the
-// per-iteration time is the latency of one sort of that size (20 in parallel). Results are grouped
-// by size (measured iteration i has size SweepSizes()[i % n]).
+// per-iteration time is the latency of one sort of that size (numSorts in parallel). Results are
+// grouped by size (measured iteration i has size SweepSizes()[i % n]).
 const std::vector<uint32_t>& SweepSizes();
 bool IsSweepWorkload(uint32_t workloadId);
 
-// Sort sizes for one iteration (only the size RNG stream; cheap).
-void GenerateSizes(uint32_t workloadId, uint32_t iteration, uint32_t sizes[kSortsPerIteration]);
+// Sort sizes for one iteration of numSorts sorts (only the size RNG stream; cheap). The seed depends
+// on (workload, iteration) only and the sizes are drawn in sort order, so the first k sizes are the
+// same for every numSorts >= k: the 20-sort iterations are exactly those of the fixed-20 builds, and
+// an iteration of N sorts draws N sizes from the same distribution.
+void GenerateSizes(uint32_t workloadId, uint32_t iteration, uint32_t numSorts, uint32_t* sizes);
 
-// Full iteration: sizes, packed offsets and random elements ((key16 << 16) | payload16).
-void GenerateIteration(uint32_t workloadId, uint32_t iteration, IterationData& out);
+// Full iteration of numSorts sorts: sizes, packed offsets and random elements ((key16 << 16) |
+// payload16). Deterministic per (workload, iteration, numSorts); for numSorts = 20 bit-identical to
+// the fixed-20 builds.
+void GenerateIteration(uint32_t workloadId, uint32_t iteration, uint32_t numSorts, IterationData& out);
 
 // Size tiers used for the distribution summary.
 constexpr uint32_t kNumSizeTiers = 6;

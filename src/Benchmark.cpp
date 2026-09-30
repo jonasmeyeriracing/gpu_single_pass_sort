@@ -71,8 +71,11 @@ void spin(uint3 id : SV_DispatchThreadID)
 
 namespace
 {
-constexpr uint32_t kBatchSize = 32; // iterations per command list
 constexpr uint32_t kMaxFailureMessages = 5;
+// Verification tasks (Process): up to this many sorts, or this many elements of the tail after the
+// last sort, per task, so a large iteration is checked by several threads.
+constexpr uint32_t kVerifySortsPerTask = 32;
+constexpr uint32_t kVerifyTailElementsPerTask = 1u << 18;
 
 constexpr uint32_t kFlushGroupSize = 256;
 constexpr uint32_t kFlushElementsPerThread = 4;
@@ -80,13 +83,36 @@ constexpr uint32_t kFlushElements = static_cast<uint32_t>(GpuBenchmark::kFlushBy
 constexpr uint32_t kFlushThreads = kFlushElements / kFlushElementsPerThread;
 constexpr uint32_t kFlushGroups = kFlushThreads / kFlushGroupSize;
 
-constexpr uint64_t kDescBytes = sizeof(SortDesc) * kSortsPerIteration;
-constexpr uint64_t kDescRegionBytes = 256;
-constexpr uint64_t kElementBytes = uint64_t(kMaxElementsPerIteration) * sizeof(uint32_t);
-constexpr uint64_t kUploadSlotBytes = kDescRegionBytes + kElementBytes;
+// Per-iteration sizes for 'numSorts' sorts. An upload slot holds the sort descriptors (in a region
+// rounded up to 256 bytes) and then the elements; a readback slot the whole output.
+constexpr uint64_t DescBytes(uint32_t numSorts)
+{
+    return sizeof(SortDesc) * uint64_t(numSorts);
+}
+constexpr uint64_t DescRegionBytes(uint32_t numSorts)
+{
+    return (DescBytes(numSorts) + 255) / 256 * 256;
+}
+constexpr uint64_t ElementBytes(uint32_t numSorts)
+{
+    return uint64_t(MaxElementsPerIteration(numSorts)) * sizeof(uint32_t);
+}
+constexpr uint64_t UploadSlotBytes(uint32_t numSorts)
+{
+    return DescRegionBytes(numSorts) + ElementBytes(numSorts);
+}
+uint32_t BatchIterations(uint32_t numSorts, bool serial)
+{
+    if (serial)
+        return 1;
+    const uint64_t perIteration = UploadSlotBytes(numSorts) + ElementBytes(numSorts);
+    return static_cast<uint32_t>(
+        std::clamp<uint64_t>(GpuBenchmark::kMaxBatchBytes / perIteration, 1, GpuBenchmark::kMaxBatchIterations));
+}
 
-static_assert(kDescBytes <= kDescRegionBytes);
+static_assert(DescRegionBytes(kDefaultSortsPerIteration) == 256, "the 20-sort layout of the fixed-20 builds");
 static_assert(kFlushGroups <= 65535);
+static_assert(kMaxSortsPerIteration <= 65535, "one dispatch of numSorts groups");
 
 // Drain (see Record): the flush shader, one group, on the 4 KB drain buffer (one uint4 per thread).
 constexpr uint32_t kDrainElements = static_cast<uint32_t>(GpuBenchmark::kDrainBytes / 16);
@@ -95,7 +121,8 @@ static_assert(GpuBenchmark::kSpinGroups * GpuBenchmark::kSpinGroupSize == kDrain
               "the spin drain writes one drain element per thread");
 static_assert(GpuBenchmark::kSpinGroupSize == 64, "must match numthreads of the spin entry point");
 static_assert(GpuBenchmark::kMaxSpinIterations == 524288, "must match the clamp in the spin entry point");
-static_assert(4 * GpuBenchmark::kSpinReps <= 2 * kBatchSize, "spin calibration timestamps fit in a frame's query heap");
+static_assert(4 * GpuBenchmark::kSpinReps <= 2 * GpuBenchmark::kMaxBatchIterations,
+              "spin calibration timestamps fit in a frame's query heap");
 
 // Root signature layout (shared by the flush and all sort shaders).
 enum RootParam : UINT
@@ -229,10 +256,29 @@ constexpr D3D12_RESOURCE_STATES kSrvState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADE
 
 GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader, IDxcBlob* flushReadOnlyShader,
                            IDxcBlob* spinShader, const std::vector<CompiledAlgorithm>& algorithms,
-                           const BenchmarkOptions& options)
+                           const std::vector<uint32_t>& sortCounts, const BenchmarkOptions& options)
     : m_options(options), m_device(device)
 {
-    m_batchSize = m_options.serial ? 1 : kBatchSize;
+    // Buffer capacity: the largest sort count (at least the default 20: the wave probe's output).
+    m_capacitySorts = kDefaultSortsPerIteration;
+    for (uint32_t n : sortCounts)
+    {
+        if (n == 0 || n > kMaxSortsPerIteration)
+            throw std::invalid_argument(Format("sorts per iteration %u is outside 1..%u", n, kMaxSortsPerIteration));
+        m_capacitySorts = std::max(m_capacitySorts, n);
+    }
+    // Upload / readback heaps per frame: room for a full batch at every count this benchmark runs,
+    // and for one iteration at the capacity (the wave probe reads back into the readback heap).
+    for (uint32_t n : sortCounts)
+    {
+        const uint32_t batch = BatchIterations(n, m_options.serial);
+        m_uploadFrameBytes = std::max(m_uploadFrameBytes, batch * UploadSlotBytes(n));
+        m_readbackFrameBytes = std::max(m_readbackFrameBytes, batch * ElementBytes(n));
+    }
+    m_uploadFrameBytes = std::max(m_uploadFrameBytes, UploadSlotBytes(m_capacitySorts));
+    m_readbackFrameBytes = std::max(m_readbackFrameBytes, ElementBytes(m_capacitySorts));
+    const uint64_t descRegionBytes = DescRegionBytes(m_capacitySorts);
+    const uint64_t elementBytes = ElementBytes(m_capacitySorts);
 
     D3D12_COMMAND_QUEUE_DESC queueDesc{};
     queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -302,19 +348,20 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader, IDxcBlob
         m_algorithmFlush.push_back(algorithm.flush);
     }
 
-    m_descBuffer = CreateBuffer(m_device.Get(), kDescRegionBytes, D3D12_HEAP_TYPE_DEFAULT);
-    m_inputBuffer = CreateBuffer(m_device.Get(), kElementBytes, D3D12_HEAP_TYPE_DEFAULT);
-    m_outputBuffer = CreateBuffer(m_device.Get(), kElementBytes, D3D12_HEAP_TYPE_DEFAULT,
+    m_descBuffer = CreateBuffer(m_device.Get(), descRegionBytes, D3D12_HEAP_TYPE_DEFAULT);
+    m_inputBuffer = CreateBuffer(m_device.Get(), elementBytes, D3D12_HEAP_TYPE_DEFAULT);
+    m_outputBuffer = CreateBuffer(m_device.Get(), elementBytes, D3D12_HEAP_TYPE_DEFAULT,
                                   D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    m_poisonBuffer = CreateBuffer(m_device.Get(), kElementBytes, D3D12_HEAP_TYPE_DEFAULT);
+    m_poisonBuffer = CreateBuffer(m_device.Get(), elementBytes, D3D12_HEAP_TYPE_DEFAULT);
     m_flushBuffer = CreateBuffer(m_device.Get(), kFlushBytes, D3D12_HEAP_TYPE_DEFAULT,
                                  D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     m_drainBuffer = CreateBuffer(m_device.Get(), kDrainBytes, D3D12_HEAP_TYPE_DEFAULT,
                                  D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     m_argsBuffer = CreateBuffer(m_device.Get(), sizeof(D3D12_DISPATCH_ARGUMENTS), D3D12_HEAP_TYPE_DEFAULT);
-    m_warmDescBuffer = CreateBuffer(m_device.Get(), kDescRegionBytes, D3D12_HEAP_TYPE_DEFAULT);
-    m_warmInputBuffer = CreateBuffer(m_device.Get(), kElementBytes, D3D12_HEAP_TYPE_DEFAULT);
-    m_warmOutputBuffer = CreateBuffer(m_device.Get(), kElementBytes, D3D12_HEAP_TYPE_DEFAULT,
+    m_argsUpload = CreateBuffer(m_device.Get(), 256, D3D12_HEAP_TYPE_UPLOAD);
+    m_warmDescBuffer = CreateBuffer(m_device.Get(), descRegionBytes, D3D12_HEAP_TYPE_DEFAULT);
+    m_warmInputBuffer = CreateBuffer(m_device.Get(), elementBytes, D3D12_HEAP_TYPE_DEFAULT);
+    m_warmOutputBuffer = CreateBuffer(m_device.Get(), elementBytes, D3D12_HEAP_TYPE_DEFAULT,
                                       D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     SetName(m_descBuffer.Get(), "buffer sortDescs (t0)");
     SetName(m_inputBuffer.Get(), "buffer sortInput (t1)");
@@ -323,12 +370,18 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader, IDxcBlob
     SetName(m_flushBuffer.Get(), "buffer flush256MB (flush u0)");
     SetName(m_drainBuffer.Get(), "buffer drain4KB (drain u0)");
     SetName(m_argsBuffer.Get(), "buffer indirectArgs");
+    SetName(m_argsUpload.Get(), "buffer indirectArgs staging");
+    {
+        const D3D12_RANGE noRead{0, 0};
+        CHECK_HR(m_argsUpload->Map(0, &noRead, reinterpret_cast<void**>(&m_argsUploadPtr)));
+    }
     SetName(m_warmDescBuffer.Get(), "buffer warmSortDescs (flush mode data, t0)");
     SetName(m_warmInputBuffer.Get(), "buffer warmSortInput (flush mode data, t1)");
     SetName(m_warmOutputBuffer.Get(), "buffer warmSortOutput (flush mode data, u0)");
 
-    // Structured buffer views with exact sizes: 20 sort descriptors, the full element buffers and
-    // the full flush buffer. Accesses past NumElements read 0 / are dropped.
+    // Structured buffer views with exact sizes: numSorts sort descriptors and numSorts x 8192
+    // elements (written by SetSortCount), the full flush buffer and the drain buffer. Accesses past
+    // NumElements read 0 / are dropped.
     {
         D3D12_DESCRIPTOR_HEAP_DESC hd{};
         hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -341,17 +394,7 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader, IDxcBlob
         const D3D12_GPU_DESCRIPTOR_HANDLE gpu0 = m_descriptorHeap->GetGPUDescriptorHandleForHeapStart();
         auto cpu = [&](UINT slot) { return D3D12_CPU_DESCRIPTOR_HANDLE{cpu0.ptr + SIZE_T(slot) * inc}; };
         ID3D12Device* d = m_device.Get();
-        static_assert(sizeof(SortDesc) == 8, "must match StructuredBuffer<uint2>");
-        constexpr uint32_t kDescStride = sizeof(SortDesc);
-        CreateStructuredSrv(d, m_descBuffer.Get(), kSortsPerIteration, kDescStride, cpu(kSlotSortDescs));
-        CreateStructuredSrv(d, m_inputBuffer.Get(), kMaxElementsPerIteration, 4, cpu(kSlotSortInput));
-        CreateStructuredUav(d, m_outputBuffer.Get(), kMaxElementsPerIteration, 4, cpu(kSlotSortOutput));
-        CreateStructuredSrv(d, m_descBuffer.Get(), kSortsPerIteration, kDescStride, cpu(kSlotFlushDescs));
-        CreateStructuredSrv(d, m_inputBuffer.Get(), kMaxElementsPerIteration, 4, cpu(kSlotFlushInput));
         CreateStructuredUav(d, m_flushBuffer.Get(), kFlushElements, 16, cpu(kSlotFlushBuffer));
-        CreateStructuredSrv(d, m_warmDescBuffer.Get(), kSortsPerIteration, kDescStride, cpu(kSlotWarmDescs));
-        CreateStructuredSrv(d, m_warmInputBuffer.Get(), kMaxElementsPerIteration, 4, cpu(kSlotWarmInput));
-        CreateStructuredUav(d, m_warmOutputBuffer.Get(), kMaxElementsPerIteration, 4, cpu(kSlotWarmOutput));
         for (UINT slot : {kSlotDrainDescs, kSlotDrainInput})
         {
             // Null descriptors (the flush shader does not read t0 / t1).
@@ -377,13 +420,13 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader, IDxcBlob
         CHECK_HR(m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, f.allocator.Get(), nullptr,
                                              IID_PPV_ARGS(&f.list)));
         CHECK_HR(f.list->Close());
-        f.upload = CreateBuffer(m_device.Get(), kUploadSlotBytes * kBatchSize, D3D12_HEAP_TYPE_UPLOAD);
-        f.readback = CreateBuffer(m_device.Get(), kElementBytes * kBatchSize, D3D12_HEAP_TYPE_READBACK);
+        f.upload = CreateBuffer(m_device.Get(), m_uploadFrameBytes, D3D12_HEAP_TYPE_UPLOAD);
+        f.readback = CreateBuffer(m_device.Get(), m_readbackFrameBytes, D3D12_HEAP_TYPE_READBACK);
         f.timestampReadback =
-            CreateBuffer(m_device.Get(), sizeof(uint64_t) * 2 * kBatchSize, D3D12_HEAP_TYPE_READBACK);
+            CreateBuffer(m_device.Get(), sizeof(uint64_t) * 2 * kMaxBatchIterations, D3D12_HEAP_TYPE_READBACK);
         D3D12_QUERY_HEAP_DESC qh{};
         qh.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
-        qh.Count = 2 * kBatchSize;
+        qh.Count = 2 * kMaxBatchIterations;
         CHECK_HR(m_device->CreateQueryHeap(&qh, IID_PPV_ARGS(&f.queryHeap)));
         SetName(f.allocator.Get(), Format("frame%u allocator", fi));
         SetName(f.list.Get(), Format("frame%u list", fi));
@@ -393,31 +436,25 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader, IDxcBlob
         SetName(f.queryHeap.Get(), Format("frame%u timestamp queries", fi));
         const D3D12_RANGE noRead{0, 0};
         CHECK_HR(f.upload->Map(0, &noRead, reinterpret_cast<void**>(&f.uploadPtr)));
-        f.data.resize(kBatchSize);
+        f.data.resize(kMaxBatchIterations);
     }
 
-    // One-time init: poison pattern and the static indirect args {numSorts, 1, 1}.
+    // One-time init: the poison pattern (the indirect args follow in SetSortCount).
     {
-        ComPtr<ID3D12Resource> staging =
-            CreateBuffer(m_device.Get(), kElementBytes + 256, D3D12_HEAP_TYPE_UPLOAD);
+        ComPtr<ID3D12Resource> staging = CreateBuffer(m_device.Get(), elementBytes, D3D12_HEAP_TYPE_UPLOAD);
         uint8_t* ptr = nullptr;
         CHECK_HR(staging->Map(0, nullptr, reinterpret_cast<void**>(&ptr)));
-        std::fill_n(reinterpret_cast<uint32_t*>(ptr), kMaxElementsPerIteration, kPoisonValue);
-        const D3D12_DISPATCH_ARGUMENTS args{kSortsPerIteration, 1, 1};
-        memcpy(ptr + kElementBytes, &args, sizeof(args));
+        std::fill_n(reinterpret_cast<uint32_t*>(ptr), MaxElementsPerIteration(m_capacitySorts), kPoisonValue);
         staging->Unmap(0, nullptr);
 
         Frame& f = m_frames[0];
         CHECK_HR(f.allocator->Reset());
         CHECK_HR(f.list->Reset(f.allocator.Get(), nullptr));
-        f.list->CopyBufferRegion(m_poisonBuffer.Get(), 0, staging.Get(), 0, kElementBytes);
-        f.list->CopyBufferRegion(m_argsBuffer.Get(), 0, staging.Get(), kElementBytes, sizeof(args));
+        f.list->CopyBufferRegion(m_poisonBuffer.Get(), 0, staging.Get(), 0, elementBytes);
         CHECK_HR(f.list->Close());
-        ID3D12CommandList* lists[] = {f.list.Get()};
-        m_queue->ExecuteCommandLists(1, lists);
-        CHECK_HR(m_queue->Signal(m_fence.Get(), ++m_fenceValue));
-        WaitForFence(m_fenceValue);
+        SubmitAndWait(f);
     }
+    SetSortCount(m_capacitySorts);
 
     if (m_options.logAddresses)
     {
@@ -429,6 +466,7 @@ GpuBenchmark::GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader, IDxcBlob
             {"flush256MB", m_flushBuffer.Get()},
             {"drain4KB", m_drainBuffer.Get()},
             {"indirectArgs", m_argsBuffer.Get()},
+            {"indirectArgs staging", m_argsUpload.Get()},
             {"warmSortDescs", m_warmDescBuffer.Get()},
             {"warmSortInput", m_warmInputBuffer.Get()},
             {"warmSortOutput", m_warmOutputBuffer.Get()},
@@ -476,6 +514,71 @@ void GpuBenchmark::CheckDevice(const char* where)
         throw DeviceLostError(Format("GPU device removed (detected %s): GetDeviceRemovedReason = 0x%08X (%s)", where,
                                      static_cast<unsigned>(reason), RemovedReasonName(reason)));
     }
+}
+
+void GpuBenchmark::SubmitAndWait(Frame& f)
+{
+    if (m_deviceLost)
+        throw DeviceLostError("GPU device already lost");
+    CheckDevice("before submitting");
+    ID3D12CommandList* lists[] = {f.list.Get()};
+    m_queue->ExecuteCommandLists(1, lists);
+    CHECK_HR(m_queue->Signal(m_fence.Get(), ++m_fenceValue));
+    WaitForFence(m_fenceValue);
+}
+
+void GpuBenchmark::SetSortCount(uint32_t numSorts)
+{
+    if (numSorts == 0 || numSorts > m_capacitySorts)
+        throw std::invalid_argument(
+            Format("SetSortCount(%u): the buffers hold 1..%u sorts per iteration", numSorts, m_capacitySorts));
+    if (m_frames[0].pending || m_frames[1].pending)
+        throw std::runtime_error("SetSortCount: called while iterations are in flight");
+    // Iterations per command list: as BatchIterations, and never more than the frame heaps hold
+    // (they are sized for the constructor's sort counts).
+    uint32_t batch = BatchIterations(numSorts, m_options.serial);
+    batch = static_cast<uint32_t>(std::min<uint64_t>(
+        {batch, m_uploadFrameBytes / UploadSlotBytes(numSorts), m_readbackFrameBytes / ElementBytes(numSorts)}));
+    if (batch == 0)
+        throw std::invalid_argument(Format("SetSortCount(%u): not one of the counts the benchmark was created for",
+                                           numSorts));
+    m_numSorts = numSorts;
+    m_batchSize = batch;
+    // Release the data of slots the smaller batch no longer uses (large counts: 16 MB each).
+    for (Frame& fr : m_frames)
+    {
+        for (size_t i = batch; i < fr.data.size(); ++i)
+            fr.data[i] = IterationData{};
+    }
+
+    // Views with exactly numSorts descriptors and numSorts x 8192 elements (no command list that
+    // uses the heap is in flight).
+    const UINT inc = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    const D3D12_CPU_DESCRIPTOR_HANDLE cpu0 = m_descriptorHeap->GetCPUDescriptorHandleForHeapStart();
+    auto cpu = [&](UINT slot) { return D3D12_CPU_DESCRIPTOR_HANDLE{cpu0.ptr + SIZE_T(slot) * inc}; };
+    ID3D12Device* d = m_device.Get();
+    static_assert(sizeof(SortDesc) == 8, "must match StructuredBuffer<uint2>");
+    constexpr uint32_t kDescStride = sizeof(SortDesc);
+    const uint32_t elements = MaxElementsPerIteration(numSorts);
+    CreateStructuredSrv(d, m_descBuffer.Get(), numSorts, kDescStride, cpu(kSlotSortDescs));
+    CreateStructuredSrv(d, m_inputBuffer.Get(), elements, 4, cpu(kSlotSortInput));
+    CreateStructuredUav(d, m_outputBuffer.Get(), elements, 4, cpu(kSlotSortOutput));
+    CreateStructuredSrv(d, m_descBuffer.Get(), numSorts, kDescStride, cpu(kSlotFlushDescs));
+    CreateStructuredSrv(d, m_inputBuffer.Get(), elements, 4, cpu(kSlotFlushInput));
+    CreateStructuredSrv(d, m_warmDescBuffer.Get(), numSorts, kDescStride, cpu(kSlotWarmDescs));
+    CreateStructuredSrv(d, m_warmInputBuffer.Get(), elements, 4, cpu(kSlotWarmInput));
+    CreateStructuredUav(d, m_warmOutputBuffer.Get(), elements, 4, cpu(kSlotWarmOutput));
+
+    // Indirect args {numSorts, 1, 1}.
+    const D3D12_DISPATCH_ARGUMENTS args{numSorts, 1, 1};
+    memcpy(m_argsUploadPtr, &args, sizeof(args));
+    Frame& f = m_frames[0];
+    CHECK_HR(f.allocator->Reset());
+    CHECK_HR(f.list->Reset(f.allocator.Get(), nullptr));
+    SetName(f.list.Get(), Format("set sort count %u", numSorts));
+    f.list->CopyBufferRegion(m_argsBuffer.Get(), 0, m_argsUpload.Get(), 0, sizeof(args));
+    CHECK_HR(f.list->Close());
+    SubmitAndWait(f);
 }
 
 void GpuBenchmark::WaitForFence(uint64_t value)
@@ -540,6 +643,24 @@ void GpuBenchmark::Record(Frame& f, const std::vector<ComPtr<ID3D12PipelineState
     const FlushKind kind = flushMode.kind;
     const bool warmRun = kind == FlushKind::Data; // the warm buffers are only touched in this mode
     const uint32_t spinIterations = flushMode.drain == DrainKind::Spin ? SpinIterations(flushMode.drainUs) : 0;
+    const uint64_t descBytes = DescBytes(m_numSorts);
+    const uint64_t descRegionBytes = DescRegionBytes(m_numSorts);
+    const uint64_t uploadSlotBytes = UploadSlotBytes(m_numSorts);
+    const uint64_t elementBytes = ElementBytes(m_numSorts);
+
+    // The iterations' descriptors + elements into their upload slots (in parallel: up to 16 MB each
+    // at 512 sorts, into write-combined memory).
+    {
+        std::vector<uint32_t> slots(f.count);
+        std::iota(slots.begin(), slots.end(), 0u);
+        std::for_each(std::execution::par, slots.begin(), slots.end(), [&](uint32_t s) {
+            const IterationData& d = f.data[s];
+            uint8_t* dst = f.uploadPtr + s * uploadSlotBytes;
+            memcpy(dst, d.sorts.data(), descBytes);
+            if (!d.elements.empty())
+                memcpy(dst + descRegionBytes, d.elements.data(), d.elements.size() * sizeof(uint32_t));
+        });
+    }
 
     // Buffers decay to COMMON after every ExecuteCommandLists; start each list from there.
     {
@@ -561,7 +682,7 @@ void GpuBenchmark::Record(Frame& f, const std::vector<ComPtr<ID3D12PipelineState
         cl->ResourceBarrier(static_cast<UINT>(b.size()), b.data());
     }
 
-    const uint32_t sortConstants[4] = {kSortsPerIteration, 0, 0, 0};
+    const uint32_t sortConstants[4] = {m_numSorts, 0, 0, 0};
     const D3D12_RESOURCE_BARRIER uavBarrier = UavBarrier(nullptr);
     auto flush = [&](uint32_t s, bool readOnly) {
         const uint32_t flushConstants[4] = {kFlushElements, kFlushThreads, 0, 0};
@@ -599,10 +720,7 @@ void GpuBenchmark::Record(Frame& f, const std::vector<ComPtr<ID3D12PipelineState
     {
         const IterationData& d = f.data[s];
         const uint64_t bytes = d.elements.size() * sizeof(uint32_t);
-        const uint64_t uploadOffset = s * kUploadSlotBytes;
-        memcpy(f.uploadPtr + uploadOffset, d.sorts, kDescBytes);
-        if (bytes)
-            memcpy(f.uploadPtr + uploadOffset + kDescRegionBytes, d.elements.data(), bytes);
+        const uint64_t uploadOffset = s * uploadSlotBytes;
 
         // FlushKind::Code: flush first, so the uploaded data is the most recent write (warm in L2).
         if (kind == FlushKind::Code)
@@ -610,15 +728,15 @@ void GpuBenchmark::Record(Frame& f, const std::vector<ComPtr<ID3D12PipelineState
 
         // 1) upload + poison the whole output (stray writes anywhere in it are detected)
         marker("upload", s);
-        cl->CopyBufferRegion(desc, 0, f.upload.Get(), uploadOffset, kDescBytes);
+        cl->CopyBufferRegion(desc, 0, f.upload.Get(), uploadOffset, descBytes);
         if (bytes)
-            cl->CopyBufferRegion(input, 0, f.upload.Get(), uploadOffset + kDescRegionBytes, bytes);
-        cl->CopyBufferRegion(output, 0, m_poisonBuffer.Get(), 0, kElementBytes);
+            cl->CopyBufferRegion(input, 0, f.upload.Get(), uploadOffset + descRegionBytes, bytes);
+        cl->CopyBufferRegion(output, 0, m_poisonBuffer.Get(), 0, elementBytes);
         if (warmRun)
         {
-            cl->CopyBufferRegion(warmDesc, 0, f.upload.Get(), uploadOffset, kDescBytes);
+            cl->CopyBufferRegion(warmDesc, 0, f.upload.Get(), uploadOffset, descBytes);
             if (bytes)
-                cl->CopyBufferRegion(warmInput, 0, f.upload.Get(), uploadOffset + kDescRegionBytes, bytes);
+                cl->CopyBufferRegion(warmInput, 0, f.upload.Get(), uploadOffset + descRegionBytes, bytes);
         }
         {
             std::vector<D3D12_RESOURCE_BARRIER> b = {
@@ -689,7 +807,7 @@ void GpuBenchmark::Record(Frame& f, const std::vector<ComPtr<ID3D12PipelineState
             cl->ResourceBarrier(static_cast<UINT>(b.size()), b.data());
         }
         marker("readback", s);
-        cl->CopyBufferRegion(f.readback.Get(), s * kElementBytes, output, 0, kElementBytes);
+        cl->CopyBufferRegion(f.readback.Get(), s * elementBytes, output, 0, elementBytes);
         {
             const D3D12_RESOURCE_BARRIER b =
                 Transition(output, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -759,7 +877,7 @@ double GpuBenchmark::Calibrate(uint32_t workloadId, uint32_t iterations)
         std::vector<uint32_t> slots(count);
         std::iota(slots.begin(), slots.end(), 0u);
         std::for_each(std::execution::par, slots.begin(), slots.end(), [&](uint32_t s) {
-            GenerateIteration(workloadId, kWarmupIterationBase + first + s, f.data[s]);
+            GenerateIteration(workloadId, kWarmupIterationBase + first + s, m_numSorts, f.data[s]);
         });
         const auto start = std::chrono::steady_clock::now();
         Record(f, noSort, FlushMode{FlushKind::Full, DrainKind::Group, 0}, "calibration");
@@ -894,20 +1012,49 @@ void GpuBenchmark::Process(Frame& f, uint32_t warmup, ComboResult& result)
     const D3D12_RANGE tsRange{0, sizeof(uint64_t) * 2 * f.count};
     uint64_t* timestamps = nullptr;
     CHECK_HR(f.timestampReadback->Map(0, &tsRange, reinterpret_cast<void**>(&timestamps)));
-    const D3D12_RANGE outRange{0, kElementBytes * f.count};
+    const uint64_t elementBytes = ElementBytes(m_numSorts);
+    const D3D12_RANGE outRange{0, static_cast<SIZE_T>(elementBytes * f.count)};
     uint8_t* outputs = nullptr;
     CHECK_HR(f.readback->Map(0, &outRange, reinterpret_cast<void**>(&outputs)));
 
-    std::vector<uint32_t> slots(f.count);
-    std::iota(slots.begin(), slots.end(), 0u);
-    std::vector<std::string> messages(f.count);
-    std::vector<char> ok(f.count, 0);
-    std::for_each(std::execution::par, slots.begin(), slots.end(), [&](uint32_t s) {
-        ok[s] = VerifyIteration(f.data[s], reinterpret_cast<const uint32_t*>(outputs + s * kElementBytes),
-                                &messages[s])
-                    ? 1
-                    : 0;
+    // Verification in tasks of up to kVerifySortsPerTask sorts or kVerifyTailElementsPerTask tail
+    // elements, all iterations of the batch at once; per iteration the first failing task (in the
+    // order VerifyIteration checks) gives the message.
+    const auto verifyStart = std::chrono::steady_clock::now();
+    struct VerifyTask
+    {
+        uint32_t slot = 0;
+        bool tail = false;
+        uint32_t begin = 0, end = 0; // sorts, or tail elements
+        bool ok = true;
+        std::string message;
+    };
+    std::vector<VerifyTask> tasks;
+    const uint32_t bufferElements = MaxElementsPerIteration(m_numSorts);
+    for (uint32_t s = 0; s < f.count; ++s)
+    {
+        for (uint32_t b = 0; b < m_numSorts; b += kVerifySortsPerTask)
+            tasks.push_back({s, false, b, std::min(m_numSorts, b + kVerifySortsPerTask)});
+        const uint32_t tailBegin = static_cast<uint32_t>(f.data[s].elements.size());
+        for (uint32_t b = tailBegin; b < bufferElements; b += kVerifyTailElementsPerTask)
+            tasks.push_back({s, true, b, std::min(bufferElements, b + kVerifyTailElementsPerTask)});
+    }
+    std::for_each(std::execution::par, tasks.begin(), tasks.end(), [&](VerifyTask& t) {
+        const uint32_t* out = reinterpret_cast<const uint32_t*>(outputs + t.slot * elementBytes);
+        t.ok = t.tail ? VerifyTail(f.data[t.slot], out, t.begin, t.end, &t.message)
+                      : VerifySorts(f.data[t.slot], out, t.begin, t.end, &t.message);
     });
+    std::vector<std::string> messages(f.count);
+    std::vector<char> ok(f.count, 1);
+    for (const VerifyTask& t : tasks) // per slot: the sorts in order, then the tail in order
+    {
+        if (!t.ok && ok[t.slot])
+        {
+            ok[t.slot] = 0;
+            messages[t.slot] = t.message;
+        }
+    }
+    result.verifySeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - verifyStart).count();
 
     for (uint32_t s = 0; s < f.count; ++s)
     {
@@ -939,7 +1086,7 @@ void GpuBenchmark::Process(Frame& f, uint32_t warmup, ComboResult& result)
 std::vector<GpuBenchmark::ProbeOutput> GpuBenchmark::RunProbe(const std::vector<IDxcBlob*>& shaders,
                                                               uint32_t wordsPerDispatch)
 {
-    if (uint64_t(wordsPerDispatch) * shaders.size() > kMaxElementsPerIteration)
+    if (uint64_t(wordsPerDispatch) * shaders.size() > ElementViewCount())
         throw std::runtime_error("wave probe: too many probe dispatches for the output buffer");
     Frame& f = m_frames[0];
     if (f.pending || m_frames[1].pending)
@@ -980,7 +1127,7 @@ std::vector<GpuBenchmark::ProbeOutput> GpuBenchmark::RunProbe(const std::vector<
         };
         cl->ResourceBarrier(_countof(b), b);
     }
-    cl->CopyBufferRegion(output, 0, m_poisonBuffer.Get(), 0, kElementBytes);
+    cl->CopyBufferRegion(output, 0, m_poisonBuffer.Get(), 0, ElementBytes(m_numSorts));
     {
         const D3D12_RESOURCE_BARRIER b =
             Transition(output, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -1065,14 +1212,19 @@ void GpuBenchmark::Run(uint32_t workloadId, size_t algorithmIndex, uint32_t iter
         {
             f.firstIteration = next;
             f.count = std::min(m_batchSize, total - next);
+            const auto generateStart = std::chrono::steady_clock::now();
             std::vector<uint32_t> slots(f.count);
             std::iota(slots.begin(), slots.end(), 0u);
             std::for_each(std::execution::par, slots.begin(), slots.end(), [&](uint32_t s) {
                 const uint32_t global = f.firstIteration + s;
                 const uint32_t iteration = global < warmup ? kWarmupIterationBase + global : global - warmup;
-                GenerateIteration(workloadId, iteration, f.data[s]);
+                GenerateIteration(workloadId, iteration, m_numSorts, f.data[s]);
             });
+            const auto recordStart = std::chrono::steady_clock::now();
             Record(f, m_algorithmPsos[algorithmIndex], m_algorithmFlush[algorithmIndex], label);
+            result.generateSeconds += std::chrono::duration<double>(recordStart - generateStart).count();
+            result.recordSeconds +=
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - recordStart).count();
             Submit(f);
             next += f.count;
             if (m_options.serial)

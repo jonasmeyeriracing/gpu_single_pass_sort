@@ -30,6 +30,12 @@ struct ComboResult
                                             // warmup: kWarmupIterationBase + i), for the results CSV
     std::vector<std::string> failureMessages; // first few
     double wallSeconds = 0.0;
+    // CPU time of the per-batch work (wall seconds of the multithreaded phases; it overlaps the other
+    // batch in flight on the GPU): data generation, command recording incl. the upload copy, and the
+    // readback verification.
+    double generateSeconds = 0.0;
+    double recordSeconds = 0.0;
+    double verifySeconds = 0.0;
 };
 
 // done / total iterations (including warmup), failures so far
@@ -54,6 +60,12 @@ struct BenchmarkOptions
 
 // Owns the queue, pipelines and buffers for one device and runs (workload, algorithm) combos.
 //
+// An iteration is one batch of SortCount() sorts (SetSortCount; the constructor's sortCounts are the
+// counts the buffers are sized for): one ExecuteIndirect per dispatch with {numSorts, 1, 1} groups,
+// root constant 0 = numSorts. The descriptor / element views have exactly numSorts descriptors and
+// numSorts x 8192 elements. Iterations are batched into command lists of up to kMaxBatchIterations,
+// fewer for large sort counts so a batch's upload + readback slots stay within kMaxBatchBytes.
+//
 // Per iteration, recorded into batched command lists (two batches in flight):
 //   1) copy the iteration's descriptors + elements from the upload heap, poison the whole output
 //   2) cache flush: a compute pass reading + writing a 256 MB buffer, UAV barrier
@@ -76,12 +88,25 @@ class GpuBenchmark
 {
 public:
     // flushShader / flushReadOnlyShader / spinShader: kFlushShaderSource entry points "main" /
-    // "main_ro" / "spin".
+    // "main_ro" / "spin". sortCounts: the sorts per iteration SetSortCount will be called with (each
+    // 1..kMaxSortsPerIteration); the buffers are sized for the largest (at least
+    // kDefaultSortsPerIteration, which the wave probe needs), and the benchmark starts at that count.
     GpuBenchmark(ID3D12Device* device, IDxcBlob* flushShader, IDxcBlob* flushReadOnlyShader, IDxcBlob* spinShader,
-                 const std::vector<CompiledAlgorithm>& algorithms, const BenchmarkOptions& options);
+                 const std::vector<CompiledAlgorithm>& algorithms, const std::vector<uint32_t>& sortCounts,
+                 const BenchmarkOptions& options);
     ~GpuBenchmark();
     GpuBenchmark(const GpuBenchmark&) = delete;
     GpuBenchmark& operator=(const GpuBenchmark&) = delete;
+
+    // Sorts per iteration of the following Run / Calibrate calls: rewrites the sort / flush / warm
+    // descriptor views (numSorts descriptors, numSorts x 8192 elements) and the indirect dispatch
+    // arguments {numSorts, 1, 1} (a small copy, waited for), and sets the iterations per command list.
+    // Must be called between (not during) runs. Throws std::invalid_argument if numSorts is 0 or more
+    // than the buffers hold, DeviceLostError on a device loss.
+    void SetSortCount(uint32_t numSorts);
+    uint32_t SortCount() const { return m_numSorts; }
+    uint32_t BatchSize() const { return m_batchSize; } // iterations per command list at SortCount()
+    uint32_t ElementViewCount() const { return MaxElementsPerIteration(m_numSorts); } // elements of the views
 
     // Fills 'result' as it goes, so it holds the partial result if this throws. 'label'
     // ("gpu/algorithm/workload") names command lists and markers for DRED.
@@ -133,6 +158,11 @@ public:
     uint64_t TimestampFrequency() const { return m_timestampFrequency; }
 
     static constexpr uint64_t kFlushBytes = 256ull << 20;
+    // Iterations per command list: up to kMaxBatchIterations, and at most as many as fit in
+    // kMaxBatchBytes of upload + readback slots (a slot holds numSorts x 8192 elements each way, so
+    // 20 sorts: 32 iterations, 128: 31, 256: 15, 512: 7).
+    static constexpr uint32_t kMaxBatchIterations = 32;
+    static constexpr uint64_t kMaxBatchBytes = 256ull << 20;
     static constexpr uint64_t kDrainBytes = 4096;
     // Spin drain dispatch: kSpinGroups x kSpinGroupSize threads, one uint4 store each (= the drain
     // buffer). Loop iterations are clamped to kMaxSpinIterations on the CPU and in the shader (a
@@ -169,6 +199,7 @@ private:
     void WaitForFence(uint64_t value);
     void CheckDevice(const char* where);
     void Process(Frame& frame, uint32_t warmup, ComboResult& result);
+    void SubmitAndWait(Frame& frame); // a one-off list (init, SetSortCount): submit, wait
 
     BenchmarkOptions m_options;
     bool m_deviceLost = false;
@@ -202,6 +233,8 @@ private:
     ComPtr<ID3D12Resource> m_flushBuffer;
     ComPtr<ID3D12Resource> m_drainBuffer; // 4 KB, only touched by the drain dispatch
     ComPtr<ID3D12Resource> m_argsBuffer;
+    ComPtr<ID3D12Resource> m_argsUpload; // persistently mapped staging for {numSorts, 1, 1} (SetSortCount)
+    uint8_t* m_argsUploadPtr = nullptr;
     ComPtr<ID3D12Resource> m_warmDescBuffer;   // FlushKind::Data: private copy of the iteration for the
     ComPtr<ID3D12Resource> m_warmInputBuffer;  // untimed code warm-up run
     ComPtr<ID3D12Resource> m_warmOutputBuffer;
@@ -209,7 +242,11 @@ private:
 
     static constexpr uint32_t kFrames = 2;
     Frame m_frames[kFrames];
-    uint32_t m_batchSize = 0; // iterations per command list (1 in serial mode)
+    uint32_t m_numSorts = 0;         // SetSortCount
+    uint32_t m_batchSize = 0;        // iterations per command list at m_numSorts (1 in serial mode)
+    uint32_t m_capacitySorts = 0;    // the element buffers hold MaxElementsPerIteration(this)
+    uint64_t m_uploadFrameBytes = 0; // per frame: upload / readback heap sizes
+    uint64_t m_readbackFrameBytes = 0;
 };
 
 // HLSL source of the cache flush shader (compiled at runtime together with the sort shaders).

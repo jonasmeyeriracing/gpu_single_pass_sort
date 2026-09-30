@@ -44,6 +44,16 @@ rem                          the extra argument igpu64 includes them. Prints the
 rem                          run time per GPU. Stop rules: a device loss or Cancel stops at once; a
 rem                          verification failure in the default-wave smoke stops before every full
 rem                          run, one in the wave<N> smoke only skips the wave<N> full run.
+rem   run_all.bat scale      THE SCALE RUN: current shaders\ with the algorithm list
+rem                          shaders\algorithms_scale.txt (19 algorithms of the final set: the large-group
+rem                          references and every configuration with smaller groups for small sorts) at
+rem                          20, 128, 256 and 512 sorts per iteration (--sorts 20,128,256,512), default
+rem                          wave size only, every GPU. A smoke run first (--smoke --dred, 8 iterations
+rem                          per combo and sort count), then the full run (1000 / 300 / 200 / 150
+rem                          iterations at the four counts on discrete GPUs, 300 / 90 / 60 / 45 on
+rem                          integrated ones): scale_smoke.txt / scale.txt. Prints the plan with an
+rem                          estimated run time per GPU. Stop rules: a device loss or Cancel stops at
+rem                          once; a verification failure in the smoke run stops before the full run.
 rem   extra argument igpu64: final mode: also run integrated GPUs with a wave size range at its max
 rem   extra argument noprompt: no OK/Cancel popups: passes --no-prompt to every GpuSort.exe run, after
 rem                          a 10 s countdown (Ctrl+C aborts). For manual runs at the machine.
@@ -89,7 +99,7 @@ set "IGPU64="
 if defined DRYRUN set "NOPAUSE=1"
 :parse_args
 if "%~1"=="" goto :args_done
-if /i "%~1"=="all" (set "MODE=all") else if /i "%~1"=="latest" (set "MODE=latest") else if /i "%~1"=="current" (set "MODE=current") else if /i "%~1"=="probe" (set "MODE=probe") else if /i "%~1"=="diag" (set "MODE=diag") else if /i "%~1"=="pass7" (set "MODE=pass7") else if /i "%~1"=="final" (set "MODE=final") else if /i "%~1"=="igpu64" (set "IGPU64=1") else if /i "%~1"=="nopause" (set "NOPAUSE=1") else if /i "%~1"=="noprompt" (set "NOPROMPT=1") else (
+if /i "%~1"=="all" (set "MODE=all") else if /i "%~1"=="latest" (set "MODE=latest") else if /i "%~1"=="current" (set "MODE=current") else if /i "%~1"=="probe" (set "MODE=probe") else if /i "%~1"=="diag" (set "MODE=diag") else if /i "%~1"=="pass7" (set "MODE=pass7") else if /i "%~1"=="final" (set "MODE=final") else if /i "%~1"=="scale" (set "MODE=scale") else if /i "%~1"=="igpu64" (set "IGPU64=1") else if /i "%~1"=="nopause" (set "NOPAUSE=1") else if /i "%~1"=="noprompt" (set "NOPROMPT=1") else (
     echo Unknown argument "%~1".
     call :usage
     set "NOPAUSE="
@@ -99,7 +109,7 @@ if /i "%~1"=="all" (set "MODE=all") else if /i "%~1"=="latest" (set "MODE=latest
 shift
 goto :parse_args
 :args_done
-echo Modes: run_all.bat [latest^|all^|current^|probe^|diag^|pass7^|final] [igpu64] [noprompt] [nopause]   ^(default latest; probe = wave probe only, seconds; diag = flush diagnostic, minutes; pass7 = low-end shader set; final = the final algorithm set^)
+echo Modes: run_all.bat [latest^|all^|current^|probe^|diag^|pass7^|final^|scale] [igpu64] [noprompt] [nopause]   ^(default latest; probe = wave probe only, seconds; diag = flush diagnostic, minutes; pass7 = low-end shader set; final = the final algorithm set; scale = 20 to 512 sorts per iteration^)
 if defined NOPROMPT (
     set "NPARG=--no-prompt"
     echo Running mode: %MODE%, NO POPUPS ^(noprompt^)
@@ -184,6 +194,7 @@ if not defined DRYRUN (
 )
 if /i "%MODE%"=="pass7" goto :pass7_mode
 if /i "%MODE%"=="final" goto :final_mode
+if /i "%MODE%"=="scale" goto :scale_mode
 
 rem --- plan: shader sets x wave configurations ----------------------------------------------------
 set "SET_COUNT=1"
@@ -752,6 +763,183 @@ for %%w in (%F_WAVES%) do (
 )
 goto :finish
 
+rem --- scale mode: shaders\algorithms_scale.txt at 20, 128, 256 and 512 sorts per iteration ------------
+rem Runs (in this order): smoke (every GPU, default wave size, --sorts S_SORTS, S_SMOKE_ITERS serial
+rem iterations, --dred), then the full run (every GPU, default wave size, --sorts S_SORTS, iterations
+rem S_ITERS on discrete / S_ITERS_I on integrated GPUs, one value per sort count). No wave64 run. Stop
+rem rules: Cancel / device loss stop at once; a verification failure in the smoke run stops before the
+rem full run.
+:scale_mode
+set "SSET=algorithms_scale.txt"
+set "SDIR=%ROOT%shaders"
+if not exist "%SDIR%\%SSET%" (
+    echo ERROR: shaders\%SSET% is missing. Unzip the whole package first.
+    >> "%SUMMARY%" echo shaders\%SSET% is missing
+    set "FINAL_RC=1"
+    goto :finish
+)
+rem Sort counts 1-4 and the measured iterations at each (discrete / integrated GPUs): fewer at the
+rem large counts, whose iterations take longer (the flush still dominates; see the estimate below).
+set "S_N1=20"
+set "S_N2=128"
+set "S_N3=256"
+set "S_N4=512"
+set "S_D1=1000"
+set "S_D2=300"
+set "S_D3=200"
+set "S_D4=150"
+set "S_I1=300"
+set "S_I2=90"
+set "S_I3=60"
+set "S_I4=45"
+set "S_SORTS=%S_N1%,%S_N2%,%S_N3%,%S_N4%"
+set "S_ITERS=%S_D1%,%S_D2%,%S_D3%,%S_D4%"
+set "S_ITERS_I=%S_I1%,%S_I2%,%S_I3%,%S_I4%"
+set "S_SMOKE_ITERS=8"
+set "S_NALG=0"
+for /f "usebackq" %%x in (`findstr /b /c:"algorithm " "%SDIR%\%SSET%"`) do set /a S_NALG+=1
+rem Iterations per GPU run and sort count: algorithms x 10 workloads x (iterations + 5 warmup); smoke
+rem x S_SMOKE_ITERS, no warmup.
+set /a S_ITD1=S_NALG*10*(S_D1+5), S_ITD2=S_NALG*10*(S_D2+5), S_ITD3=S_NALG*10*(S_D3+5), S_ITD4=S_NALG*10*(S_D4+5)
+set /a S_ITI1=S_NALG*10*(S_I1+5), S_ITI2=S_NALG*10*(S_I2+5), S_ITI3=S_NALG*10*(S_I3+5), S_ITI4=S_NALG*10*(S_I4+5)
+set /a S_ITS=S_NALG*10*S_SMOKE_ITERS
+rem Estimate: wall time per iteration in 1/100 ms at 20 / 128 / 256 / 512 sorts (full; smoke = serial),
+rem measured on the RTX 5080 / RTX 2060 scale runs (full_d50; more sorts add the upload, poison and
+rem readback of numSorts x 32 KB per iteration and the longer sorts); the integrated GPUs scaled from
+rem their final-run 20-sort cost (Ryzen iGPU 9.8 ms, Intel UHD 770 7.7 ms full): discrete 85 / 110 /
+rem 140 / 200 full, 470 / 520 / 600 / 800 smoke; RTX 20xx / GTX 190 / 260 / 340 / 480, 600 / 700 / 850 /
+rem 1100; Ryzen iGPU 980 / 1100 / 1300 / 1700, 1400 / 1600 / 1900 / 2500; Intel UHD 770 770 / 900 /
+rem 1100 / 1500, 1200 / 1400 / 1700 / 2200; plus S_OVH_S seconds per run (shader compilation, the
+rem calibrations of every sort count, the wave probe).
+set "S_OVH_S=60"
+set "GPUNO=0"
+for /f "usebackq tokens=1* delims=]" %%a in (`findstr /b /c:"  [" "%OUT%\adapters.txt"`) do (
+    set "GN=%%b"
+    set "GN=!GN:~1!"
+    set "GN=!GN:  vendor =|!"
+    for /f "tokens=1 delims=|" %%n in ("!GN!") do set "GNAME_!GPUNO!=%%n"
+    set /a GPUNO+=1
+)
+set "EST_S=0"
+set "EST_F=0"
+set "GPUNO=0"
+echo.
+echo ==== scale: GPUs ^(estimates from earlier runs of similar GPUs; GpuSort prints a calibrated one^) ====
+>> "%SUMMARY%" echo GPUs:
+for /f "usebackq tokens=5,7,9,11" %%a in (`findstr /c:"wave lane range:" "%OUT%\adapters.txt"`) do (
+    set "GKIND=discrete"
+    if "%%c"=="" set "GKIND=unknown (adapter list of an older GpuSort.exe), counted as discrete"
+    set "GITERS=%S_ITERS%"
+    set "IT1=%S_ITD1%"
+    set "IT2=%S_ITD2%"
+    set "IT3=%S_ITD3%"
+    set "IT4=%S_ITD4%"
+    set "FM1=85"
+    set "FM2=110"
+    set "FM3=140"
+    set "FM4=200"
+    set "SM1=470"
+    set "SM2=520"
+    set "SM3=600"
+    set "SM4=800"
+    set "GN="
+    for %%i in (!GPUNO!) do set "GN=!GNAME_%%i!"
+    if not defined GN set "GN=?"
+    set "SLOWD="
+    if not "!GN:RTX 20=!"=="!GN!" set "SLOWD=1"
+    if not "!GN:GTX =!"=="!GN!" set "SLOWD=1"
+    if defined SLOWD (
+        set "FM1=190"
+        set "FM2=260"
+        set "FM3=340"
+        set "FM4=480"
+        set "SM1=600"
+        set "SM2=700"
+        set "SM3=850"
+        set "SM4=1100"
+    )
+    if /i "%%c"=="yes" (
+        set "GKIND=integrated"
+        set "GITERS=%S_ITERS_I%"
+        set "IT1=%S_ITI1%"
+        set "IT2=%S_ITI2%"
+        set "IT3=%S_ITI3%"
+        set "IT4=%S_ITI4%"
+        set "FM1=980"
+        set "FM2=1100"
+        set "FM3=1300"
+        set "FM4=1700"
+        set "SM1=1400"
+        set "SM2=1600"
+        set "SM3=1900"
+        set "SM4=2500"
+        if /i "%%d"=="8086" (
+            set "FM1=770"
+            set "FM2=900"
+            set "FM3=1100"
+            set "FM4=1500"
+            set "SM1=1200"
+            set "SM2=1400"
+            set "SM3=1700"
+            set "SM4=2200"
+        )
+    )
+    set /a GS=S_ITS*SM1/100000+S_ITS*SM2/100000+S_ITS*SM3/100000+S_ITS*SM4/100000
+    set /a GF1=IT1*FM1/100000, GF2=IT2*FM2/100000, GF3=IT3*FM3/100000, GF4=IT4*FM4/100000
+    set /a GF=GF1+GF2+GF3+GF4
+    set /a EST_S+=GS, EST_F+=GF
+    call :fmt_secs !GF! GFT
+    echo   GPU [!GPUNO!] !GN!: !GKIND!, vendor %%d, wave lanes %%a-%%b
+    echo           smoke ~!GS! s, full ^(!GITERS! iterations at %S_SORTS% sorts^) ~!GFT! ^(per sort count ~!GF1! / !GF2! / !GF3! / !GF4! s^)
+    >> "%SUMMARY%" echo   GPU [!GPUNO!] !GN!: !GKIND!, vendor %%d, wave lanes %%a-%%b, !GITERS! iterations at %S_SORTS% sorts
+    set /a GPUNO+=1
+)
+set "NRUNS=2"
+set /a EST_S+=S_OVH_S, EST_F+=S_OVH_S
+set /a EST_TOTAL=EST_S+EST_F
+call :fmt_secs %EST_S% T_S
+call :fmt_secs %EST_F% T_F
+call :fmt_secs %EST_TOTAL% T_TOTAL
+set "RUNNO=0"
+echo.
+if defined NOPROMPT (
+    echo ==== Plan: %NRUNS% GPU runs of shaders\%SSET%, no popups ^(noprompt: one 10 s countdown now^) ====
+) else (
+    echo ==== Plan: %NRUNS% GPU runs of shaders\%SSET%, each asks for confirmation first ^(%NRUNS% popups^) ====
+)
+>> "%SUMMARY%" echo Plan: %NRUNS% GPU runs of shaders\%SSET% (%S_NALG% algorithms, sorts per iteration %S_SORTS%, default flush full_d50, default wave size), estimated ~%T_TOTAL%
+echo   1/2 smoke, default wave size, every GPU: %S_NALG% algorithms x 10 workloads at %S_SORTS% sorts per
+echo       iteration, %S_SMOKE_ITERS% iterations each, --dred  ~%T_S%
+echo   2/2 full,  default wave size, every GPU: the same, %S_ITERS% iterations at %S_SORTS% sorts
+echo       ^(integrated GPUs: %S_ITERS_I%^)  ~%T_F%
+echo   The full run starts only if the smoke run passed. Estimated total: ~%T_TOTAL%
+echo   ^(GpuSort prints a calibrated estimate per GPU and sort count right after each start^)
+call :countdown
+
+set "FINAL_RC=0"
+set "SMOKE_FAILS=0"
+set "SMOKE_FAILED_RUNS="
+call :scale_run smoke
+if "!RC!"=="2" (
+    set "FINAL_RC=1"
+    goto :stopped
+)
+if "!RC!"=="3" (
+    set "FINAL_RC=1"
+    goto :smoke_lost
+)
+if not "!RC!"=="0" (
+    set /a SMOKE_FAILS+=1
+    set "SMOKE_FAILED_RUNS=!SMOKE_FAILED_RUNS! [!LAST_LABEL!]"
+    if exist "%OUT%\!FILE!.txt" findstr /c:"SMOKE FAILED:" "%OUT%\!FILE!.txt" >> "%SUMMARY%"
+    goto :smoke_failed
+)
+call :scale_run full
+if not "!RC!"=="0" set "FINAL_RC=1"
+if "!RC!"=="2" goto :stopped
+if "!RC!"=="3" goto :stopped
+goto :finish
+
 :smoke_failed
 set "FINAL_RC=1"
 echo.
@@ -801,7 +989,7 @@ goto :end
 rem --- subroutines -------------------------------------------------------------------------------
 
 :usage
-echo Usage: run_all.bat [latest^|all^|current^|probe^|diag^|pass7^|final] [igpu64] [noprompt] [nopause]
+echo Usage: run_all.bat [latest^|all^|current^|probe^|diag^|pass7^|final^|scale] [igpu64] [noprompt] [nopause]
 echo   ^(none^) or latest  current shaders\ + the latest _test\passN snapshot that differs from shaders\
 echo   all               current shaders\ + every _test\passN snapshot
 echo   current           current shaders\ only
@@ -813,6 +1001,8 @@ echo                     --wave-size ^<max^> on an integrated GPU with a wave si
 echo   final             THE FINAL RUN: shaders\algorithms_final.txt, smoke + full run ^(1000 iterations
 echo                     discrete, 300 integrated^), default wave size on every GPU, plus --wave-size ^<max^>
 echo                     on discrete GPUs with a wave size range ^(AMD^)
+echo   scale             THE SCALE RUN: shaders\algorithms_scale.txt at 20, 128, 256 and 512 sorts per
+echo                     iteration, smoke + full run, default wave size on every GPU
 echo   igpu64            final mode: also run integrated GPUs with a wave size range at ^<max^> ^(slow^)
 echo   noprompt          no popups ^(--no-prompt for every run^), after a 10 s countdown ^(Ctrl+C aborts^)
 echo   nopause           do not wait for a key at the end
@@ -908,6 +1098,22 @@ if "%~1"=="smoke" (
 )
 set "LAST_LABEL=!RUNNO!/!NRUNS!: %~1 final !WDESC!"
 set CMD="%EXE%" --shaders "%FDIR%" !KARGS! !XARGS! !NPARG! --label "!LAST_LABEL!" --out "%OUT%\!FILE!.txt" --log "%OUT%\!FILE!.log"
+call :exec
+exit /b 0
+
+rem :scale_run <smoke|full>: one GpuSort run of shaders\algorithms_scale.txt at every sort count of
+rem S_SORTS (scale mode), default wave size, every GPU. Sets RC, RC_TEXT, LAST_LABEL, FILE.
+:scale_run
+set /a RUNNO+=1
+if "%~1"=="smoke" (
+    set "FILE=scale_smoke"
+    set "KARGS=--smoke --dred --algo-file %SSET% --sorts %S_SORTS% --iterations %S_SMOKE_ITERS%"
+) else (
+    set "FILE=scale"
+    set "KARGS=--algo-file %SSET% --sorts %S_SORTS% --iterations %S_ITERS% --iterations-integrated %S_ITERS_I%"
+)
+set "LAST_LABEL=!RUNNO!/!NRUNS!: %~1 scale %S_SORTS% sorts, default wave size, every GPU"
+set CMD="%EXE%" --shaders "%SDIR%" !KARGS! !NPARG! --label "!LAST_LABEL!" --out "%OUT%\!FILE!.txt" --log "%OUT%\!FILE!.log"
 call :exec
 exit /b 0
 

@@ -13,7 +13,8 @@ header (not its name): the results CSV (<stem>.csv, schema_version + median_us),
 
 Writes into <out dir> (default: _test/final/ in the repository):
     all_results.csv      every results row (+ column 'source': the file it came from)
-    all_samples.csv      every samples row (columns as in the samples CSV)
+    all_samples.csv      every samples row (columns as in the samples CSV; sorts_per_iteration is 20
+                         for samples files of schema 1-4, which do not have the column)
     all_wave_probe.csv   every wave probe row (+ column 'source')
     aggregate_summary.txt  the summary printed at the end
 Runs are identified by run_id (<timestamp>_<computer>, one per GpuSort.exe run). The same run found
@@ -34,9 +35,11 @@ import zipfile
 from collections import OrderedDict, defaultdict
 from pathlib import Path
 
-SUPPORTED_SCHEMA_VERSIONS = {"1", "2", "3", "4"}
+SUPPORTED_SCHEMA_VERSIONS = {"1", "2", "3", "4", "5"}
 
-# Required in every results CSV (schema_version 1 to 4).
+# Required in every results CSV (schema_version 1 to 5). Schema 5 (the scale run) changes no results
+# column, but sorts_per_iteration (always 20 before) is the run's --sorts value and part of the row
+# key, and iterations_requested is per row (GPU x sort count).
 RESULTS_COLUMNS = [
     "schema_version", "run_id", "run_timestamp", "computer", "label", "package_commit", "shader_set",
     "gpu_index", "gpu_name", "vendor_id", "device_id", "driver_version", "is_integrated", "dedicated_vram_mb",
@@ -57,6 +60,15 @@ SAMPLES_COLUMNS = [
     "run_id", "gpu_index", "wave_size", "algorithm", "flush_mode", "workload", "iteration", "time_us",
     "largest_sort", "total_elements", "sweep_size",
 ]
+# Appended to the samples CSV in schema 5; older samples files do not have it and were all 20 sorts
+# per iteration, so the output fills in 20 for them.
+SAMPLES_COLUMNS_V5 = ["sorts_per_iteration"]
+SAMPLES_OUT_COLUMNS = SAMPLES_COLUMNS + SAMPLES_COLUMNS_V5
+DEFAULT_SORTS_PER_ITERATION = "20"
+
+# The key of a results row, and of the samples rows that belong to it.
+RESULTS_KEY = ("run_id", "gpu_index", "wave_size", "algorithm", "flush_mode", "workload", "sweep_size",
+               "sorts_per_iteration")
 PROBE_REQUIRED = ["schema_version", "run_id", "computer", "gpu_index", "gpu_name", "probe_variant",
                   "observed_lanes", "verdict"]
 
@@ -309,7 +321,7 @@ def main():
     samples_without_results = set()
     with open(out_samples, "w", newline="", encoding="utf-8") as fo:
         w = csv.writer(fo)
-        w.writerow(SAMPLES_COLUMNS)
+        w.writerow(SAMPLES_OUT_COLUMNS)
         for src in sample_sources:
             this_file = set()
             skipped_dup = 0
@@ -318,6 +330,7 @@ def main():
                     reader = csv.reader(f)
                     header = next(reader)
                     idx = [header.index(c) for c in SAMPLES_COLUMNS]
+                    sorts_i = header.index("sorts_per_iteration") if "sorts_per_iteration" in header else None
                     rid_i = header.index("run_id")
                     for r in reader:
                         if not r:
@@ -331,7 +344,8 @@ def main():
                             continue
                         if rid not in results:
                             samples_without_results.add(rid)
-                        w.writerow([r[i] for i in idx])
+                        w.writerow([r[i] for i in idx] +
+                                   [r[sorts_i] if sorts_i is not None else DEFAULT_SORTS_PER_ITERATION])
                         samples_per_run[rid] += 1
                         n_samples += 1
             except (OSError, UnicodeDecodeError, zipfile.BadZipFile, IndexError) as e:
@@ -399,6 +413,7 @@ def main():
     p(f"Stable power: {fmt_set({d.get('stable_power') or 'n/a (schema 1)' for d in used_rows})}")
     p(f"Workloads: {', '.join(sorted({d['workload'] for d in used_rows}))}")
     p(f"Sweep sizes: {fmt_set({d['sweep_size'] for d in used_rows if d['sweep_size']})}")
+    p(f"Sorts per iteration: {fmt_set({d['sorts_per_iteration'] for d in used_rows if d['sorts_per_iteration']})}")
     iters = sorted({int(d["iterations_requested"]) for d in used_rows if d["iterations_requested"].isdigit()})
     p(f"Iterations requested per combo: {', '.join(map(str, iters)) or '-'}")
     p("")
@@ -429,12 +444,11 @@ def main():
     # Join keys must be unique (results <-> samples).
     keys = defaultdict(int)
     for d in used_rows:
-        keys[(d["run_id"], d["gpu_index"], d["wave_size"], d["algorithm"], d["flush_mode"], d["workload"],
-              d["sweep_size"])] += 1
+        keys[tuple(d[c] for c in RESULTS_KEY)] += 1
     dup_keys = [k for k, n in keys.items() if n > 1]
     if dup_keys:
-        problems.append(f"{len(dup_keys)} duplicate join key(s) (run_id, gpu_index, wave_size, algorithm, "
-                        f"flush_mode, workload, sweep_size) in the results, e.g. {dup_keys[0]}; use algorithm_id")
+        problems.append(f"{len(dup_keys)} duplicate join key(s) ({', '.join(RESULTS_KEY)}) in the results, "
+                        f"e.g. {dup_keys[0]}; use algorithm_id")
     # Every non-excluded run with results should have samples, and vice versa.
     no_samples = [rid for rid in results if rid not in excluded and rid not in samples_per_run]
     if no_samples:

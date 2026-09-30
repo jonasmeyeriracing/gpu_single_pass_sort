@@ -87,7 +87,7 @@ const std::vector<WorkloadDesc>& Workloads()
         {"edges", "tier boundaries 0-8192 (30 fixed sizes, cycled)"},
         {"mostly_mid", "uniform 513-2048"},
         {"mostly_medium", "uniform 129-512"},
-        {"sweep", "all 20 sorts the same size, 16 sizes 32-8192 cycled per iteration"},
+        {"sweep", "all sorts of an iteration the same size, 16 sizes 32-8192 cycled per iteration"},
         {"sparse_keys", "uniform 1-8192; each 4-bit key digit is constant within a sort with p = 1/2"},
     };
     return list;
@@ -115,32 +115,34 @@ bool IsSweepWorkload(uint32_t workloadId)
     return workloadId == kSweep;
 }
 
-void GenerateSizes(uint32_t workloadId, uint32_t iteration, uint32_t sizes[kSortsPerIteration])
+void GenerateSizes(uint32_t workloadId, uint32_t iteration, uint32_t numSorts, uint32_t* sizes)
 {
     if (workloadId == kSweep)
     {
-        for (uint32_t i = 0; i < kSortsPerIteration; ++i)
+        for (uint32_t i = 0; i < numSorts; ++i)
             sizes[i] = kSweepSizes[iteration % kNumSweepSizes];
         return;
     }
     if (workloadId == kEdges)
     {
-        for (uint32_t i = 0; i < kSortsPerIteration; ++i)
-            sizes[i] = kEdgeSizes[(uint64_t(iteration) * kSortsPerIteration + i) % kNumEdgeSizes];
+        for (uint32_t i = 0; i < numSorts; ++i)
+            sizes[i] = kEdgeSizes[(uint64_t(iteration) * numSorts + i) % kNumEdgeSizes];
         return;
     }
     Pcg32 rng(IterationSeed(workloadId, iteration), 1);
-    for (uint32_t i = 0; i < kSortsPerIteration; ++i)
+    for (uint32_t i = 0; i < numSorts; ++i)
         sizes[i] = DrawSize(workloadId, rng);
 }
 
-void GenerateIteration(uint32_t workloadId, uint32_t iteration, IterationData& out)
+void GenerateIteration(uint32_t workloadId, uint32_t iteration, uint32_t numSorts, IterationData& out)
 {
-    uint32_t sizes[kSortsPerIteration];
-    GenerateSizes(workloadId, iteration, sizes);
+    thread_local std::vector<uint32_t> sizes;
+    sizes.resize(numSorts);
+    GenerateSizes(workloadId, iteration, numSorts, sizes.data());
 
+    out.sorts.resize(numSorts);
     uint32_t cursor = 0;
-    for (uint32_t i = 0; i < kSortsPerIteration; ++i)
+    for (uint32_t i = 0; i < numSorts; ++i)
     {
         out.sorts[i].offset = cursor;
         out.sorts[i].count = sizes[i];
@@ -149,7 +151,7 @@ void GenerateIteration(uint32_t workloadId, uint32_t iteration, IterationData& o
 
     out.elements.assign(cursor, 0u);
     Pcg32 rng(IterationSeed(workloadId, iteration), 2);
-    for (uint32_t i = 0; i < kSortsPerIteration; ++i)
+    for (uint32_t i = 0; i < numSorts; ++i)
     {
         uint32_t* dst = out.elements.data() + out.sorts[i].offset;
         for (uint32_t j = 0; j < out.sorts[i].count; ++j)

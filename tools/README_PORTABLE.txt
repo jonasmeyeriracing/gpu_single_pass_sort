@@ -5,10 +5,17 @@ Runs the GpuSort DX12 sort benchmark on this machine. Nothing needs to be instal
 Studio, Windows SDK, VC++ redistributable or git. Needs Windows 10/11 x64 and a GPU driver with
 D3D12, shader model 6.6 and wave ops (any AMD RDNA, NVIDIA Turing or newer, Intel Arc).
 
-The run to do now on every machine: the FINAL run
+The run to do now on every machine: the SCALE run
 --------------------------------------------------
 Please run this from a command prompt in this folder (see "How to run" for unzipping and the
 OK/Cancel boxes) and bring back the results zip:
+    run_all.bat scale      many sorts per batch (see "Scale run" below): a smoke test, then the
+                           full run, on every GPU, default wave size only.
+                           AMD machine (RX 7900 XTX + Ryzen iGPU): ~25 min in total. Intel UHD 770
+                           machine: ~18 min. The script prints the plan with an estimated time per
+                           GPU before the first box.
+    run_all.bat scale noprompt   the same without OK/Cancel boxes (see "No popups").
+The final run (if not done yet on this machine):
     run_all.bat final      the final algorithm set (see "Final run" below): a smoke test, then
                            the full run, on every GPU; on AMD also the discrete GPU at wave64.
                            AMD machine (RX 7900 XTX + Ryzen iGPU): ~1 h in total (XTX ~10 min per
@@ -51,6 +58,8 @@ Modes (from a command prompt in this folder; run_all.bat prints them when it sta
     run_all.bat final      THE FINAL RUN: shaders\algorithms_final.txt, smoke + full run, plus a
                            discrete-GPU-only wave64 smoke + full run on AMD; 2 or 4 OK/Cancel boxes
                            (see "Final run" below)
+    run_all.bat scale      THE SCALE RUN: shaders\algorithms_scale.txt at 20, 128, 256 and 512
+                           sorts per batch, smoke + full run; 2 OK/Cancel boxes (see "Scale run")
     add "igpu64" to final: also run integrated GPUs with a wave size range (Ryzen iGPU) at wave64
     add "noprompt" to any mode for no OK/Cancel boxes (see "No popups" below), e.g.
         run_all.bat diag noprompt
@@ -135,6 +144,21 @@ verification failure in the default smoke test (step 1) stops before every full 
 wave64 smoke test (step 2) only skips the wave64 full run (step 4). The script prints the plan
 with an estimated time per GPU; GpuSort prints a calibrated estimate after each OK.
 
+Scale run (run_all.bat scale)
+-----------------------------
+Every earlier run sorted 20 sorts per batch (one iteration). This one also measures 128, 256 and
+512 sorts per batch, where the sorts compete for the GPU, with a subset of the final set,
+shaders\algorithms_scale.txt (19 algorithms, the same names as in algorithms_final.txt: the
+1024-thread references and every configuration with smaller thread groups for small sorts). All
+four batch sizes run in one GpuSort.exe session per step, default wave size only, every GPU:
+  1. Smoke test: GpuSort.exe --smoke --dred --algo-file algorithms_scale.txt
+     --sorts 20,128,256,512 --iterations 8 -> scale_smoke.txt.
+  2. Full run: GpuSort.exe --algo-file algorithms_scale.txt --sorts 20,128,256,512
+     --iterations 1000,300,200,150 --iterations-integrated 300,90,60,45 (iterations at the four
+     batch sizes; integrated GPUs fewer) -> scale.txt.
+The full run starts only if the smoke test passed; a device loss or Cancel stops at once. The
+results .txt has one table per GPU and batch size; the CSV column sorts_per_iteration says which.
+
 No popups (noprompt)
 --------------------
 "run_all.bat <mode> noprompt" (any mode) passes --no-prompt to every GpuSort.exe run: no OK/Cancel
@@ -197,6 +221,9 @@ Results folder contents
                                 final mode only: smoke and full runs of algorithms_final.txt
                                 (+ .csv, _samples.csv, _wave_probe.csv, .log); _wave64 = the
                                 discrete GPU(s) (with igpu64: every GPU with a range) at wave64
+    scale_smoke.txt, scale.txt  scale mode only: smoke and full runs of algorithms_scale.txt at
+                                20, 128, 256 and 512 sorts per batch (+ .csv, _samples.csv,
+                                _wave_probe.csv, .log)
 <set> is "current" (shaders\) or "passN" (_test\passN\). No _waveNN = default wave size.
 The CSV columns are described in CSV_FORMAT.md; tools\aggregate_results.py (in the repository)
 merges the CSVs of the zips from all machines.
@@ -244,4 +271,7 @@ Running GpuSort.exe directly
     GpuSort.exe --algo-file algorithms_final.txt --iterations 1000 --iterations-integrated 300
                                                  (the final run's full run; 300 iterations on
                                                   integrated GPUs)
+    GpuSort.exe --algo-file algorithms_scale.txt --sorts 20,128,256,512 --iterations 1000,300,200,150
+                                                 (the scale run's full run: 20 to 512 sorts per
+                                                  batch, one iteration count per batch size)
 The exe finds shaders\ next to itself; --shaders selects a snapshot.

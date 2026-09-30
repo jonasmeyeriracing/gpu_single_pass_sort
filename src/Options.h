@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Algorithms.h"
+#include "Workloads.h"
 
 #include <cstdint>
 #include <string>
@@ -16,10 +17,14 @@ struct Options
     bool noSamples = false;              // --no-samples: do not write <csv stem>_samples.csv
     std::wstring logPath;                // --log <file>: also write the console output to this file
     std::string label;                   // --label <text>: shown in the prompt, window and results header
-    uint32_t iterations = 1000;          // --iterations N (measured iterations per gpu/workload/algorithm)
+    std::vector<uint32_t> sortCounts = {kDefaultSortsPerIteration}; // --sorts N[,N...]: sorts per iteration,
+                                         // each 1..kMaxSortsPerIteration; every combo runs once per count, in
+                                         // this order
+    std::vector<uint32_t> iterations = {1000}; // --iterations N[,N...] (measured iterations per gpu/workload/
+                                         // algorithm): one value for every sort count, or one per --sorts entry
     bool iterationsGiven = false;        // --iterations was given explicitly (then it also applies to --smoke)
-    uint32_t iterationsIntegrated = 0;   // --iterations-integrated N: measured iterations on integrated (UMA)
-                                         // GPUs instead of --iterations; 0 = --iterations everywhere
+    std::vector<uint32_t> iterationsIntegrated; // --iterations-integrated N[,N...]: the same on integrated (UMA)
+                                         // GPUs instead of --iterations; empty = --iterations everywhere
     uint32_t warmup = 5;                 // --warmup N (extra iterations excluded from stats)
     std::vector<std::string> algorithms; // --algo name[,name]; empty = all registered
     std::vector<std::string> workloads;  // --workload name[,name]; empty = all
@@ -45,4 +50,8 @@ struct Options
 
 // Returns false and sets 'error' on invalid arguments.
 bool ParseOptions(int argc, wchar_t** argv, Options& options, std::string& error);
+
+// Measured iterations at options.sortCounts[countIndex] on a GPU (integrated: --iterations-integrated
+// if given). A single --iterations / --iterations-integrated value applies to every sort count.
+uint32_t IterationsFor(const Options& options, size_t countIndex, bool integrated);
 void PrintUsage();

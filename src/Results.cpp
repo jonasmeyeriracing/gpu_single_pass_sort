@@ -32,16 +32,17 @@ Stats ComputeStats(std::vector<double> v)
     return s;
 }
 
-std::string FormatSizeDistribution(const std::vector<uint32_t>& workloadIds, uint32_t iterations)
+std::string FormatSizeDistribution(const std::vector<uint32_t>& workloadIds, uint32_t iterations, uint32_t numSorts)
 {
     std::string out;
     out += Format("Workload size distribution (%u measured iterations x %u sorts; counts are sorts per size tier)\n",
-                  iterations, kSortsPerIteration);
+                  iterations, numSorts);
     out += Format("  %-14s %13s %10s", "workload", "total elems", "elems/iter");
     for (uint32_t t = 0; t < kNumSizeTiers; ++t)
         out += Format(" %9s", SizeTierName(t));
     out += Format(" %6s  %s\n", "max", "distribution");
 
+    std::vector<uint32_t> sizes(numSorts);
     for (uint32_t id : workloadIds)
     {
         uint64_t total = 0;
@@ -49,8 +50,7 @@ std::string FormatSizeDistribution(const std::vector<uint32_t>& workloadIds, uin
         uint32_t maxSize = 0;
         for (uint32_t it = 0; it < iterations; ++it)
         {
-            uint32_t sizes[kSortsPerIteration];
-            GenerateSizes(id, it, sizes);
+            GenerateSizes(id, it, numSorts, sizes.data());
             for (uint32_t s : sizes)
             {
                 total += s;
@@ -82,13 +82,28 @@ std::string FormatResults(const RunInfo& info)
         out += Format("Algo list:    %s\n", info.algoFile.c_str());
     if (!info.csvFiles.empty())
         out += Format("CSV files:    %s\n", info.csvFiles.c_str());
-    if (info.iterationsIntegrated && info.iterationsIntegrated != info.iterations)
+    if (info.sortCounts.size() > 1)
+    {
+        // Several sort counts: every GPU x workload x algorithm ran once per count.
+        std::string counts;
+        for (size_t ci = 0; ci < info.sortCounts.size(); ++ci)
+        {
+            const uint32_t it = ci < info.iterationsPerCount.size() ? info.iterationsPerCount[ci] : info.iterations;
+            counts += Format("%s%u sorts: %u", counts.empty() ? "" : ", ", info.sortCounts[ci], it);
+            if (ci < info.iterationsIntegratedPerCount.size() && info.iterationsIntegratedPerCount[ci] != it)
+                counts += Format(" (%u on integrated GPUs)", info.iterationsIntegratedPerCount[ci]);
+        }
+        out += Format("Iterations:   per sorts-per-iteration count (every GPU x workload x algorithm runs once per count,\n"
+                      "              in this order), measured + %u warmup: %s\n",
+                      info.warmup, counts.c_str());
+    }
+    else if (info.iterationsIntegrated && info.iterationsIntegrated != info.iterations)
         out += Format("Iterations:   %u measured (%u on integrated GPUs) + %u warmup per GPU x workload x algorithm, %u sorts\n"
                       "              per iteration\n",
-                      info.iterations, info.iterationsIntegrated, info.warmup, kSortsPerIteration);
+                      info.iterations, info.iterationsIntegrated, info.warmup, info.sortCounts[0]);
     else
         out += Format("Iterations:   %u measured + %u warmup per GPU x workload x algorithm, %u sorts per iteration\n",
-                      info.iterations, info.warmup, kSortsPerIteration);
+                      info.iterations, info.warmup, info.sortCounts[0]);
     out += Format("Cache flush:  %llu MB read+write compute pass before every timed sort, then a DRAIN right before the\n"
                   "              start timestamp (a dispatch on a private 4 KB buffer + UAV barrier), so the tail of the\n"
                   "              flush (barrier wait / cache maintenance a driver defers to the next dispatch) is not\n"
@@ -110,7 +125,12 @@ std::string FormatResults(const RunInfo& info)
                   "              (full_d0 = full_legacy); _dg = the pass5 one-group drain\n",
                   static_cast<unsigned long long>(GpuBenchmark::kFlushBytes >> 20),
                   FlushModeName(info.defaultFlush).c_str(), GpuBenchmark::kSpinGroups, GpuBenchmark::kSpinGroupSize);
-    out += "Timing:       GPU timestamps around the sort ExecuteIndirect dispatches only, per iteration (all 20 sorts)\n";
+    out += info.sortCounts.size() > 1
+               ? "Timing:       GPU timestamps around the sort ExecuteIndirect dispatches only, per iteration (all N sorts\n"
+                 "              of the batch, N = the sorts per iteration of the table)\n"
+               : Format("Timing:       GPU timestamps around the sort ExecuteIndirect dispatches only, per iteration (all %u "
+                        "sorts)\n",
+                        info.sortCounts[0]);
     out += "GPUs:\n";
     for (size_t g = 0; g < info.gpus.size(); ++g)
     {
@@ -121,9 +141,29 @@ std::string FormatResults(const RunInfo& info)
                       static_cast<unsigned long long>(gpu.dedicatedVideoMemory >> 20));
         out += Format("      wave lanes %u-%u, shaders compiled with WAVE_SIZE=%u%s\n", gpu.waveLaneCountMin,
                       gpu.waveLaneCountMax, gpu.waveSize, gpu.waveSizeAttribute ? " + [WaveSize]" : "");
-        out += Format("      %s GPU, %u measured iterations per workload x algorithm\n",
-                      gpu.uma ? "integrated (UMA)" : "discrete", gpu.iterations);
-        if (gpu.estimatedSeconds > 0)
+        if (info.sortCounts.size() > 1)
+        {
+            std::string counts;
+            for (size_t ci = 0; ci < info.sortCounts.size() && ci < gpu.iterationsPerCount.size(); ++ci)
+                counts += Format("%s%u at %u sorts", counts.empty() ? "" : ", ", gpu.iterationsPerCount[ci],
+                                 info.sortCounts[ci]);
+            out += Format("      %s GPU, measured iterations per workload x algorithm: %s\n",
+                          gpu.uma ? "integrated (UMA)" : "discrete", counts.c_str());
+        }
+        else
+            out += Format("      %s GPU, %u measured iterations per workload x algorithm\n",
+                          gpu.uma ? "integrated (UMA)" : "discrete", gpu.iterations);
+        if (gpu.estimatedSeconds > 0 && info.sortCounts.size() > 1)
+        {
+            std::string rates;
+            for (size_t ci = 0; ci < info.sortCounts.size() && ci < gpu.secondsPerIterationPerCount.size(); ++ci)
+                rates += Format("%s%.2f ms at %u sorts", rates.empty() ? "" : ", ",
+                                gpu.secondsPerIterationPerCount[ci] * 1000.0, info.sortCounts[ci]);
+            out += Format("      run-time estimate (%s): %s per iteration -> ~%.0f s for this GPU, actual %.1f s\n",
+                          gpu.calibrated ? "calibrated up front" : "rough guess, the calibration failed", rates.c_str(),
+                          gpu.estimatedSeconds, gpu.wallSeconds);
+        }
+        else if (gpu.estimatedSeconds > 0)
             out += Format("      run-time estimate: %.2f ms per iteration (%s) -> ~%.0f s for this GPU, actual %.1f s\n",
                           gpu.secondsPerIterationEstimate * 1000.0,
                           gpu.calibrated ? "calibrated up front" : "rough guess, the calibration failed",
@@ -150,8 +190,13 @@ std::string FormatResults(const RunInfo& info)
                       info.estimatedSeconds, info.calibrationIterations);
     out += Format("Total benchmark time: %.1f s (after confirmation)\n\n", info.totalSeconds);
 
-    out += FormatSizeDistribution(info.workloadIds, info.iterations);
-    out += "\n";
+    for (size_t ci = 0; ci < info.sortCounts.size(); ++ci)
+    {
+        out += FormatSizeDistribution(info.workloadIds,
+                                      ci < info.iterationsPerCount.size() ? info.iterationsPerCount[ci] : info.iterations,
+                                      info.sortCounts[ci]);
+        out += "\n";
+    }
 
     if (!info.algorithmInfos.empty())
     {
@@ -194,58 +239,106 @@ std::string FormatResults(const RunInfo& info)
     for (const auto& a : info.algorithms)
         algoWidth = std::max(algoWidth, a.size());
 
-    out += "Sort timings in microseconds (per iteration = 20 sorts)\n";
+    const bool multi = info.sortCounts.size() > 1;
+    if (multi)
+        out += "Sort timings in microseconds (per iteration = one batch of N sorts; per GPU one table per N)\n";
+    else
+        out += Format("Sort timings in microseconds (per iteration = %u sorts)\n", info.sortCounts[0]);
     for (size_t g = 0; g < info.gpus.size(); ++g)
     {
         const GpuRecord& gpu = info.gpus[g];
         out += Format("\n[%zu] %s  (WAVE_SIZE %u)\n", g, gpu.name.c_str(), gpu.waveSize);
-        out += Format("  %-14s %-*s %9s %9s %9s %9s %9s %6s\n", "workload", static_cast<int>(algoWidth), "algorithm",
-                      "min", "median", "mean", "p95", "max", "fails");
-        uint32_t lastWorkload = UINT32_MAX;
-        for (const auto& c : gpu.combos)
+        for (size_t ci = 0; ci < info.sortCounts.size(); ++ci)
         {
-            const Stats st = ComputeStats(c.result.timesUs);
-            const char* wname = c.workloadId != lastWorkload ? Workloads()[c.workloadId].name : "";
-            lastWorkload = c.workloadId;
-            out += Format("  %-14s %-*s %9.2f %9.2f %9.2f %9.2f %9.2f %6u\n", wname, static_cast<int>(algoWidth),
-                          c.algorithm.c_str(), st.min, st.median, st.mean, st.p95, st.max, c.result.failures);
-        }
-        // Sweep workload: the same numbers grouped by sort size (measured iteration i has size
-        // SweepSizes()[i % n]; all 20 sorts of an iteration have that size).
-        bool anySweep = false;
-        for (const auto& c : gpu.combos)
-            anySweep |= IsSweepWorkload(c.workloadId);
-        if (anySweep)
-        {
-            const std::vector<uint32_t>& sizes = SweepSizes();
-            const char* statNames[3] = {"median", "mean", "p95"};
-            for (int stat = 0; stat < 3; ++stat)
+            const uint32_t numSorts = info.sortCounts[ci];
+            std::vector<const ComboRecord*> combos;
+            for (const auto& c : gpu.combos)
             {
-                out += Format("\n  sweep: %s us per iteration by sort size (all 20 sorts of an iteration have that size)\n",
-                              statNames[stat]);
-                out += Format("  %-*s", static_cast<int>(algoWidth), "algorithm");
-                for (uint32_t size : sizes)
-                    out += Format(" %7u", size);
-                out += "\n";
-                for (const auto& c : gpu.combos)
+                if (c.sortsPerIteration == numSorts)
+                    combos.push_back(&c);
+            }
+            if (multi)
+            {
+                const uint32_t it = ci < gpu.iterationsPerCount.size() ? gpu.iterationsPerCount[ci] : gpu.iterations;
+                out += Format("\n  === %u sorts per iteration (%u measured iterations per workload x algorithm) ===\n",
+                              numSorts, it);
+                if (combos.empty())
                 {
-                    if (!IsSweepWorkload(c.workloadId))
-                        continue;
-                    out += Format("  %-*s", static_cast<int>(algoWidth), c.algorithm.c_str());
-                    for (size_t si = 0; si < sizes.size(); ++si)
-                    {
-                        std::vector<double> v;
-                        for (size_t i = si; i < c.result.timesUs.size(); i += sizes.size())
-                            v.push_back(c.result.timesUs[i]);
-                        if (v.empty())
-                        {
-                            out += Format(" %7s", "-");
-                            continue;
-                        }
-                        const Stats st = ComputeStats(v);
-                        out += Format(" %7.2f", stat == 0 ? st.median : stat == 1 ? st.mean : st.p95);
-                    }
+                    out += "  (not run)\n";
+                    continue;
+                }
+            }
+            out += Format("  %-14s %-*s %9s %9s %9s %9s %9s %6s\n", "workload", static_cast<int>(algoWidth), "algorithm",
+                          "min", "median", "mean", "p95", "max", "fails");
+            uint32_t lastWorkload = UINT32_MAX;
+            for (const ComboRecord* c : combos)
+            {
+                const Stats st = ComputeStats(c->result.timesUs);
+                const char* wname = c->workloadId != lastWorkload ? Workloads()[c->workloadId].name : "";
+                lastWorkload = c->workloadId;
+                out += Format("  %-14s %-*s %9.2f %9.2f %9.2f %9.2f %9.2f %6u\n", wname, static_cast<int>(algoWidth),
+                              c->algorithm.c_str(), st.min, st.median, st.mean, st.p95, st.max, c->result.failures);
+            }
+            // Sweep workload: the same numbers grouped by sort size (measured iteration i has size
+            // SweepSizes()[i % n]; all sorts of an iteration have that size).
+            bool anySweep = false;
+            for (const ComboRecord* c : combos)
+                anySweep |= IsSweepWorkload(c->workloadId);
+            if (anySweep)
+            {
+                const std::vector<uint32_t>& sizes = SweepSizes();
+                const char* statNames[3] = {"median", "mean", "p95"};
+                for (int stat = 0; stat < 3; ++stat)
+                {
+                    out += Format("\n  sweep: %s us per iteration by sort size (all %u sorts of an iteration have that "
+                                  "size)\n",
+                                  statNames[stat], numSorts);
+                    out += Format("  %-*s", static_cast<int>(algoWidth), "algorithm");
+                    for (uint32_t size : sizes)
+                        out += Format(" %7u", size);
                     out += "\n";
+                    for (const ComboRecord* c : combos)
+                    {
+                        if (!IsSweepWorkload(c->workloadId))
+                            continue;
+                        out += Format("  %-*s", static_cast<int>(algoWidth), c->algorithm.c_str());
+                        for (size_t si = 0; si < sizes.size(); ++si)
+                        {
+                            std::vector<double> v;
+                            for (size_t i = si; i < c->result.timesUs.size(); i += sizes.size())
+                                v.push_back(c->result.timesUs[i]);
+                            if (v.empty())
+                            {
+                                out += Format(" %7s", "-");
+                                continue;
+                            }
+                            const Stats st = ComputeStats(v);
+                            out += Format(" %7.2f", stat == 0 ? st.median : stat == 1 ? st.mean : st.p95);
+                        }
+                        out += "\n";
+                    }
+                }
+            }
+            if (multi)
+            {
+                // CPU side of the batches (overlaps the GPU work of the other batch in flight).
+                double wall = 0, generate = 0, record = 0, verify = 0;
+                uint64_t iterations = 0;
+                for (const ComboRecord* c : combos)
+                {
+                    wall += c->result.wallSeconds;
+                    generate += c->result.generateSeconds;
+                    record += c->result.recordSeconds;
+                    verify += c->result.verifySeconds;
+                    iterations += c->result.iterationsRun;
+                }
+                if (iterations)
+                {
+                    const double k = 1000.0 / static_cast<double>(iterations);
+                    out += Format("\n  %u sorts: wall %.1f s = %.2f ms per iteration (incl. warmup); CPU per iteration "
+                                  "(multithreaded, overlaps the GPU): generate %.2f ms, record + upload copy %.2f ms, "
+                                  "verify %.2f ms\n",
+                                  numSorts, wall, wall * k, generate * k, record * k, verify * k);
                 }
             }
         }
@@ -265,8 +358,14 @@ std::string FormatResults(const RunInfo& info)
         for (const auto& c : gpu.combos)
         {
             for (const auto& m : c.result.failureMessages)
-                out += Format("  failure [%s / %s] %s\n", Workloads()[c.workloadId].name, c.algorithm.c_str(),
-                              m.c_str());
+            {
+                if (multi)
+                    out += Format("  failure [%s / %s / %u sorts] %s\n", Workloads()[c.workloadId].name,
+                                  c.algorithm.c_str(), c.sortsPerIteration, m.c_str());
+                else
+                    out += Format("  failure [%s / %s] %s\n", Workloads()[c.workloadId].name, c.algorithm.c_str(),
+                                  m.c_str());
+            }
         }
     }
     return out;

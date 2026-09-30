@@ -3,6 +3,7 @@
 #include "Benchmark.h"
 #include "Common.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <sstream>
 
@@ -32,6 +33,31 @@ static bool ParseUInt(const std::wstring& s, uint32_t& value)
     }
     value = static_cast<uint32_t>(v);
     return true;
+}
+
+// Comma-separated unsigned integers ("1000" or "1000,300,200"); false if any item is not one.
+static bool ParseUIntList(const std::wstring& s, std::vector<uint32_t>& values)
+{
+    values.clear();
+    size_t start = 0;
+    for (;;)
+    {
+        const size_t comma = s.find(L',', start);
+        uint32_t v = 0;
+        if (!ParseUInt(s.substr(start, comma == std::wstring::npos ? std::wstring::npos : comma - start), v))
+            return false;
+        values.push_back(v);
+        if (comma == std::wstring::npos)
+            return true;
+        start = comma + 1;
+    }
+}
+
+uint32_t IterationsFor(const Options& o, size_t countIndex, bool integrated)
+{
+    const std::vector<uint32_t>& list =
+        integrated && !o.iterationsIntegrated.empty() ? o.iterationsIntegrated : o.iterations;
+    return list.size() == 1 ? list[0] : list.at(countIndex);
 }
 
 bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
@@ -108,25 +134,54 @@ bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
                 return false;
             o.label = WideToUtf8(value);
         }
-        else if (arg == L"--iterations" || arg == L"--iterations-integrated" || arg == L"--warmup")
+        else if (arg == L"--iterations" || arg == L"--iterations-integrated")
         {
             if (!next(value))
                 return false;
-            uint32_t n = 0;
-            if (!ParseUInt(value, n) || (arg != L"--warmup" && n == 0))
+            std::vector<uint32_t> list;
+            if (!ParseUIntList(value, list) || std::find(list.begin(), list.end(), 0u) != list.end())
             {
-                error = "invalid value for " + WideToUtf8(arg) + ": " + WideToUtf8(value);
+                error = "invalid value for " + WideToUtf8(arg) + " (N, or N,N,... one per --sorts value; N >= 1): " +
+                        WideToUtf8(value);
                 return false;
             }
             if (arg == L"--iterations")
             {
-                o.iterations = n;
+                o.iterations = list;
                 o.iterationsGiven = true;
             }
-            else if (arg == L"--iterations-integrated")
-                o.iterationsIntegrated = n;
             else
-                o.warmup = n;
+                o.iterationsIntegrated = list;
+        }
+        else if (arg == L"--warmup")
+        {
+            if (!next(value))
+                return false;
+            uint32_t n = 0;
+            if (!ParseUInt(value, n))
+            {
+                error = "invalid value for " + WideToUtf8(arg) + ": " + WideToUtf8(value);
+                return false;
+            }
+            o.warmup = n;
+        }
+        else if (arg == L"--sorts")
+        {
+            if (!next(value))
+                return false;
+            std::vector<uint32_t> list;
+            bool ok = ParseUIntList(value, list);
+            for (size_t k = 0; ok && k < list.size(); ++k)
+                ok = list[k] >= 1 && list[k] <= kMaxSortsPerIteration &&
+                     std::find(list.begin(), list.begin() + k, list[k]) == list.begin() + k;
+            if (!ok)
+            {
+                error = Format("invalid value for --sorts (N[,N...], each 1..%u, no duplicates): ",
+                               kMaxSortsPerIteration) +
+                        WideToUtf8(value);
+                return false;
+            }
+            o.sortCounts = list;
         }
         else if (arg == L"--wave-size")
         {
@@ -182,6 +237,16 @@ bool ParseOptions(int argc, wchar_t** argv, Options& o, std::string& error)
         error = "--integrated-only and --discrete-only exclude each other";
         return false;
     }
+    for (const std::vector<uint32_t>* list : {&o.iterations, &o.iterationsIntegrated})
+    {
+        if (list->size() > 1 && list->size() != o.sortCounts.size())
+        {
+            error = Format("%s has %zu values and --sorts %zu: give one value, or one per sort count",
+                           list == &o.iterations ? "--iterations" : "--iterations-integrated", list->size(),
+                           o.sortCounts.size());
+            return false;
+        }
+    }
     return true;
 }
 
@@ -204,12 +269,21 @@ void PrintUsage()
         "  --no-samples         Do not write <stem>_samples.csv\n"
         "  --log <file>         Also write all console output to <file>\n"
         "  --label <text>       Run label, shown in the prompt / progress window and in the results header\n"
-        "  --iterations <N>     Measured iterations per GPU x workload x algorithm (default 1000)\n"
-        "  --iterations-integrated <N>\n"
+        "  --sorts <N[,N...]>   Sorts per iteration (one batch: each algorithm dispatch runs N groups),\n"
+        "                       each 1..%u (default 20). Every GPU x algorithm x workload runs once per\n"
+        "                       value, in the given order, e.g. --sorts 20,128,256,512. An iteration of N\n"
+        "                       sorts draws N sizes from the workload's distribution (the first 20 are\n"
+        "                       those of the 20-sort iteration). CSV column sorts_per_iteration\n"
+        "  --iterations <N[,N...]>\n"
+        "                       Measured iterations per GPU x workload x algorithm (default 1000): one\n"
+        "                       value for every sort count, or one per --sorts value, e.g. --sorts\n"
+        "                       20,128,256,512 --iterations 1000,300,200,150\n"
+        "  --iterations-integrated <N[,N...]>\n"
         "                       Measured iterations on integrated (UMA) GPUs instead of --iterations, e.g.\n"
         "                       --iterations 1000 --iterations-integrated 300 (an iGPU iteration takes ~10x\n"
-        "                       as long; the 256 MB flush dominates). The CSV column iterations_requested\n"
-        "                       has each GPU's count. Default: --iterations on every GPU\n"
+        "                       as long; the 256 MB flush dominates); a list as for --iterations. The CSV\n"
+        "                       column iterations_requested has each row's count. Default: --iterations\n"
+        "                       on every GPU\n"
         "  --warmup <N>         Warmup iterations excluded from stats (default 5)\n"
         "  --algo <a[,b]>       Algorithms to run (default: all in algorithms.txt); repeatable\n"
         "  --workload <w[,x]>   Workloads to run (default: all); repeatable\n"
@@ -274,5 +348,6 @@ void PrintUsage()
         "                       in each GPU's WaveLaneCountMin..Max, one verdict each; with --wave-size N\n"
         "                       only that configuration. Exit code 0 all OK, 1 any warning, 3 device lost\n"
         "  --help               Show this help\n",
-        FlushModeName(kDefaultFlushMode).c_str(), kMaxDrainUs, GpuBenchmark::kSpinGroups, GpuBenchmark::kSpinGroupSize);
+        kMaxSortsPerIteration, FlushModeName(kDefaultFlushMode).c_str(), kMaxDrainUs, GpuBenchmark::kSpinGroups,
+        GpuBenchmark::kSpinGroupSize);
 }

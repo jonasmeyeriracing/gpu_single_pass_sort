@@ -25,12 +25,56 @@ namespace
 {
 // Rough guess of the wall time per iteration for the prompt (before any GPU work; dominated by the
 // 256 MB cache flush), and the fallback if the calibration fails. Measured full runs (1000
-// iterations): RTX 5080 0.73 ms, RX 7900 XTX 0.78 ms, Ryzen iGPU 9.7 ms, Intel UHD 770 7.6 ms.
-// Serial smoke runs (a fence wait per iteration) take longer per iteration.
-double GuessSecondsPerIteration(const GpuInfo& g, bool serial)
+// iterations of 20 sorts): RTX 5080 0.73 ms, RX 7900 XTX 0.78 ms, Ryzen iGPU 9.7 ms, Intel UHD 770
+// 7.6 ms. Serial smoke runs (a fence wait per iteration) take longer per iteration. More sorts per
+// iteration add the poison / readback of the whole output (numSorts x 32 KB) and the upload: guessed
+// +1.5 ms (discrete) / +3 ms (integrated) at 512 sorts, twice that in serial runs.
+double GuessSecondsPerIteration(const GpuInfo& g, bool serial, uint32_t numSorts)
 {
-    const double ms = g.uma ? (serial ? 70.0 : 10.0) : (serial ? 20.0 : 0.8);
+    double ms = g.uma ? (serial ? 70.0 : 10.0) : (serial ? 20.0 : 0.8);
+    if (numSorts > kDefaultSortsPerIteration)
+        ms += (g.uma ? 3.0 : 1.5) * (serial ? 2.0 : 1.0) * static_cast<double>(numSorts - kDefaultSortsPerIteration) /
+              static_cast<double>(kMaxSortsPerIteration - kDefaultSortsPerIteration);
     return ms / 1000.0;
+}
+
+// "1000 iterations" or "1000/300/200/150 iterations at 20/128/256/512 sorts" (one value per sort count).
+std::string FormatIterationList(const std::vector<uint32_t>& iterations, const std::vector<uint32_t>& sortCounts)
+{
+    if (sortCounts.size() == 1)
+        return std::to_string(iterations[0]) + " iterations";
+    std::string it, n;
+    for (size_t ci = 0; ci < sortCounts.size(); ++ci)
+    {
+        it += (ci ? "/" : "") + std::to_string(iterations[ci]);
+        n += (ci ? "/" : "") + std::to_string(sortCounts[ci]);
+    }
+    return it + " iterations at " + n + " sorts";
+}
+
+// The selected workload with the most elements per iteration (mean over a few 20-sort iterations):
+// the second calibration workload next to the first one (the upload grows with the data).
+uint32_t HeaviestWorkload(const std::vector<uint32_t>& workloadIds)
+{
+    uint32_t best = workloadIds[0];
+    uint64_t bestTotal = 0;
+    std::vector<uint32_t> sizes(kDefaultSortsPerIteration);
+    for (uint32_t id : workloadIds)
+    {
+        uint64_t total = 0;
+        for (uint32_t it = 0; it < 16; ++it)
+        {
+            GenerateSizes(id, it, kDefaultSortsPerIteration, sizes.data());
+            for (uint32_t s : sizes)
+                total += s;
+        }
+        if (total > bestTotal)
+        {
+            best = id;
+            bestTotal = total;
+        }
+    }
+    return best;
 }
 
 // Run-time estimate: iterations per GPU of the up-front calibration (GpuBenchmark::Calibrate).
@@ -211,7 +255,7 @@ int RunMain(int argc, wchar_t** argv)
         // An explicit --iterations still applies (e.g. for a few samples per sweep size); the smoke
         // run stays serial (one iteration in flight) and has no warmup.
         if (!opt.iterationsGiven)
-            opt.iterations = kSmokeIterations;
+            opt.iterations = {kSmokeIterations};
         opt.warmup = 0;
     }
 
@@ -310,8 +354,17 @@ int RunMain(int argc, wchar_t** argv)
     info.shaderDir = shaderDir.string();
     info.algoFile = algoFile.string();
     info.commandLine = CommandLineUtf8();
-    info.iterations = opt.iterations;
-    info.iterationsIntegrated = opt.iterationsIntegrated;
+    info.iterations = opt.iterations[0];
+    info.iterationsIntegrated = opt.iterationsIntegrated.empty() ? 0 : opt.iterationsIntegrated[0];
+    info.sortCounts = opt.sortCounts;
+    for (size_t ci = 0; ci < opt.sortCounts.size(); ++ci)
+    {
+        info.iterationsPerCount.push_back(IterationsFor(opt, ci, false));
+        if (!opt.iterationsIntegrated.empty())
+            info.iterationsIntegratedPerCount.push_back(IterationsFor(opt, ci, true));
+    }
+    const std::vector<uint32_t>& sortCounts = opt.sortCounts;
+    const bool multiCount = sortCounts.size() > 1;
     info.warmup = opt.warmup;
     info.workloadIds = workloadIds;
     info.defaultFlush = opt.flushMode;
@@ -377,21 +430,24 @@ int RunMain(int argc, wchar_t** argv)
     if (gpus.empty())
         throw std::runtime_error(opt.warp ? "WARP adapter does not qualify (needs SM 6.6)"
                                           : "no qualifying hardware GPU found (needs D3D12 + SM 6.6)");
-    // Measured iterations per GPU: --iterations-integrated on integrated (UMA) GPUs, if given.
-    std::vector<uint32_t> gpuIterations(gpus.size());
+    // Measured iterations per GPU x sort count: --iterations-integrated on integrated (UMA) GPUs, if given.
+    std::vector<std::vector<uint32_t>> gpuIterations(gpus.size());
     bool iterationsDiffer = false;
     for (size_t gi = 0; gi < gpus.size(); ++gi)
     {
-        gpuIterations[gi] = gpus[gi].uma && opt.iterationsIntegrated ? opt.iterationsIntegrated : opt.iterations;
-        iterationsDiffer |= gpuIterations[gi] != opt.iterations;
+        for (size_t ci = 0; ci < sortCounts.size(); ++ci)
+        {
+            gpuIterations[gi].push_back(IterationsFor(opt, ci, gpus[gi].uma));
+            iterationsDiffer |= gpuIterations[gi][ci] != IterationsFor(opt, ci, false);
+        }
     }
     for (size_t gi = 0; gi < gpus.size(); ++gi)
     {
         const GpuInfo& g = gpus[gi];
-        Log("Using adapter: %s (vendor %04X device %04X, driver %s, %llu MB, wave lanes %u-%u, %s, %u iterations)\n",
+        Log("Using adapter: %s (vendor %04X device %04X, driver %s, %llu MB, wave lanes %u-%u, %s, %s)\n",
             g.name.c_str(), g.vendorId, g.deviceId, g.driver.c_str(),
             static_cast<unsigned long long>(g.dedicatedVideoMemory >> 20), g.waveLaneCountMin, g.waveLaneCountMax,
-            g.uma ? "integrated" : "discrete", gpuIterations[gi]);
+            g.uma ? "integrated" : "discrete", FormatIterationList(gpuIterations[gi], sortCounts).c_str());
     }
 
     // --- shader compilation, per wave-size configuration ----------------------------------
@@ -515,15 +571,43 @@ int RunMain(int argc, wchar_t** argv)
         gpuProbe[gi] = &probeFor(gpuWave[gi], gpus[gi]);
 
     if (!opt.waveProbe)
-        Log("\n%s\n", FormatSizeDistribution(workloadIds, opt.iterations).c_str());
+    {
+        for (size_t ci = 0; ci < sortCounts.size(); ++ci)
+            Log("\n%s", FormatSizeDistribution(workloadIds, IterationsFor(opt, ci, false), sortCounts[ci]).c_str());
+        Log("\n");
+    }
 
-    // Iterations per GPU (every GPU runs every workload x algorithm).
+    // Iterations per GPU x sort count (every GPU runs every workload x algorithm at every count).
+    std::vector<std::vector<uint64_t>> gpuCountIterations(gpus.size());
     std::vector<uint64_t> gpuTotalIterations(gpus.size());
     double estimatedSeconds = 0.0; // rough guess for the prompt; calibrated after the prompt
     for (size_t gi = 0; gi < gpus.size(); ++gi)
     {
-        gpuTotalIterations[gi] = uint64_t(gpuIterations[gi] + opt.warmup) * workloadIds.size() * algorithms.size();
-        estimatedSeconds += static_cast<double>(gpuTotalIterations[gi]) * GuessSecondsPerIteration(gpus[gi], opt.smoke);
+        for (size_t ci = 0; ci < sortCounts.size(); ++ci)
+        {
+            const uint64_t n = uint64_t(gpuIterations[gi][ci] + opt.warmup) * workloadIds.size() * algorithms.size();
+            gpuCountIterations[gi].push_back(n);
+            gpuTotalIterations[gi] += n;
+            estimatedSeconds +=
+                static_cast<double>(n) * GuessSecondsPerIteration(gpus[gi], opt.smoke, sortCounts[ci]);
+        }
+    }
+    if (multiCount && !opt.waveProbe)
+    {
+        Log("Plan: every GPU x workload x algorithm at %zu sort counts (sorts per iteration), in this order:\n",
+            sortCounts.size());
+        for (size_t gi = 0; gi < gpus.size(); ++gi)
+        {
+            for (size_t ci = 0; ci < sortCounts.size(); ++ci)
+            {
+                const double guess = GuessSecondsPerIteration(gpus[gi], opt.smoke, sortCounts[ci]);
+                Log("  [%zu] %-32s %3u sorts: %5u iterations (+%u warmup) x %zu workloads x %zu algorithms = %llu "
+                    "iterations, ~%s (rough guess, %.2f ms each)\n",
+                    gi, gpus[gi].name.c_str(), sortCounts[ci], gpuIterations[gi][ci], opt.warmup, workloadIds.size(),
+                    algorithms.size(), static_cast<unsigned long long>(gpuCountIterations[gi][ci]),
+                    FormatDuration(static_cast<double>(gpuCountIterations[gi][ci]) * guess).c_str(), guess * 1000.0);
+            }
+        }
     }
 
     // --stable-power: only with Developer Mode (checked here, applied after the prompt).
@@ -560,14 +644,39 @@ int RunMain(int argc, wchar_t** argv)
             text += L"GpuSort is about to run a GPU benchmark on:\n\n";
             for (const auto& g : gpus)
                 text += L"    " + Utf8ToWide(g.name) + L"\n";
-            const std::string integratedIterations =
-                iterationsDiffer ? Format(" (integrated GPUs: %u)", opt.iterationsIntegrated) : std::string();
-            text += Utf8ToWide(Format("\n%zu workload(s) x %zu algorithm(s) x %u iterations%s (+%u warmup) per GPU.\n"
-                                      "Estimated duration: roughly %s (a rough guess; a calibrated estimate is\n"
-                                      "shown in the progress window and the console right after the start).\n\n",
-                                      workloadIds.size(), algorithms.size(), opt.iterations,
-                                      integratedIterations.c_str(), opt.warmup,
-                                      FormatDuration(estimatedSeconds < 1.0 ? 1.0 : estimatedSeconds).c_str()));
+            if (multiCount)
+            {
+                std::vector<uint32_t> discrete, integrated;
+                for (size_t ci = 0; ci < sortCounts.size(); ++ci)
+                {
+                    discrete.push_back(IterationsFor(opt, ci, false));
+                    integrated.push_back(IterationsFor(opt, ci, true));
+                }
+                const std::string integratedIterations =
+                    iterationsDiffer ? " (integrated GPUs: " + FormatIterationList(integrated, sortCounts) + ")"
+                                     : std::string();
+                text += Utf8ToWide(Format("\n%zu workload(s) x %zu algorithm(s) per GPU at %zu sort counts (sorts per\n"
+                                          "iteration), %s%s (+%u warmup).\n"
+                                          "Estimated duration: roughly %s (a rough guess; a calibrated estimate is\n"
+                                          "shown in the progress window and the console right after the start).\n\n",
+                                          workloadIds.size(), algorithms.size(), sortCounts.size(),
+                                          FormatIterationList(discrete, sortCounts).c_str(),
+                                          integratedIterations.c_str(), opt.warmup,
+                                          FormatDuration(estimatedSeconds < 1.0 ? 1.0 : estimatedSeconds).c_str()));
+            }
+            else
+            {
+                const std::string integratedIterations =
+                    iterationsDiffer ? Format(" (integrated GPUs: %u)", IterationsFor(opt, 0, true)) : std::string();
+                text += Utf8ToWide(Format("\n%zu workload(s) x %zu algorithm(s) x %u iterations%s (+%u warmup) per GPU.\n"
+                                          "Estimated duration: roughly %s (a rough guess; a calibrated estimate is\n"
+                                          "shown in the progress window and the console right after the start).\n\n",
+                                          workloadIds.size(), algorithms.size(), IterationsFor(opt, 0, false),
+                                          integratedIterations.c_str(), opt.warmup,
+                                          FormatDuration(estimatedSeconds < 1.0 ? 1.0 : estimatedSeconds).c_str()));
+                if (sortCounts[0] != kDefaultSortsPerIteration)
+                    text += Utf8ToWide(Format("%u sorts per iteration.\n\n", sortCounts[0]));
+            }
             if (stablePower)
                 text += developerMode ? L"Stable power: every GPU runs with SetStablePowerState(TRUE) (fixed clocks).\n\n"
                                       : L"Stable power was requested, but Windows Developer Mode is off: running\n"
@@ -647,7 +756,8 @@ int RunMain(int argc, wchar_t** argv)
         record.waveLaneCountMax = gpu.waveLaneCountMax;
         record.waveSize = gpuWave[gi].size;
         record.waveSizeAttribute = gpuWave[gi].attribute;
-        record.iterations = gpuIterations[gi];
+        record.iterations = gpuIterations[gi][0];
+        record.iterationsPerCount = gpuIterations[gi];
         record.stablePower = gpuStablePower[gi];
         record.stablePowerNote = gpuStablePowerNote[gi];
         return record;
@@ -661,29 +771,54 @@ int RunMain(int argc, wchar_t** argv)
     // readback) on each GPU, before any sort shader runs. That fixed cost dominates an iteration on
     // every GPU measured so far, so it predicts the run time well; while a GPU runs, its measured
     // rate takes over (the progress window and the console show the refined estimate).
-    std::vector<double> gpuSecondsPerIteration(gpus.size());
+    // Per GPU x sort count; with two calibration workloads (the first and the heaviest selected one:
+    // the upload grows with the data) the mean of both.
+    std::vector<std::vector<double>> gpuSecondsPerIteration(gpus.size());
+    std::vector<std::vector<double>> gpuCountEstimateSeconds(gpus.size());
     std::vector<double> gpuEstimateSeconds(gpus.size());
     std::vector<bool> gpuCalibrated(gpus.size(), false);
+    for (size_t gi = 0; gi < gpus.size(); ++gi)
+    {
+        gpuSecondsPerIteration[gi].assign(sortCounts.size(), 0.0);
+        gpuCountEstimateSeconds[gi].assign(sortCounts.size(), 0.0);
+    }
     const uint32_t calibrationIterations =
         opt.warp ? kCalibrationIterationsWarp : opt.smoke ? kCalibrationIterationsSerial : kCalibrationIterations;
     if (!opt.waveProbe)
     {
+        const uint32_t heavyWorkload = HeaviestWorkload(workloadIds);
+        std::vector<uint32_t> calibrationWorkloads = {workloadIds[0]};
+        if (heavyWorkload != workloadIds[0])
+            calibrationWorkloads.push_back(heavyWorkload);
         info.calibrationIterations = calibrationIterations;
         window.SetText(L"Calibrating the run-time estimate (a few flush passes per GPU) ...");
-        Log("\nRun-time estimate (calibrated per GPU: %u iterations of the upload + flush + drain + readback work,\n"
-            "without a sort; refined with the measured rate while the run progresses):\n",
-            calibrationIterations);
+        std::string calibrationNames;
+        for (uint32_t w : calibrationWorkloads)
+            calibrationNames += std::string(calibrationNames.empty() ? "" : " and ") + Workloads()[w].name;
+        Log("\nRun-time estimate (calibrated per GPU%s: %u iterations of the upload + flush + drain + readback work,\n"
+            "without a sort, with the data of %s%s; refined with the measured rate while the run progresses):\n",
+            multiCount ? " x sort count" : "", calibrationIterations, calibrationNames.c_str(),
+            calibrationWorkloads.size() > 1 ? " (mean)" : "");
         for (size_t gi = 0; gi < gpus.size() && !deviceLost; ++gi)
         {
             const GpuInfo& gpu = gpus[gi];
-            gpuSecondsPerIteration[gi] = GuessSecondsPerIteration(gpu, opt.smoke);
+            gpuSecondsPerIteration[gi].clear();
+            for (uint32_t n : sortCounts)
+                gpuSecondsPerIteration[gi].push_back(GuessSecondsPerIteration(gpu, opt.smoke, n));
             std::unique_ptr<GpuBenchmark> calibration;
             try
             {
                 calibration =
                     std::make_unique<GpuBenchmark>(gpu.device.Get(), flushShader.Get(), flushReadOnlyShader.Get(),
-                                                   spinShader.Get(), noAlgorithms, benchOptions);
-                gpuSecondsPerIteration[gi] = calibration->Calibrate(workloadIds[0], calibrationIterations);
+                                                   spinShader.Get(), noAlgorithms, sortCounts, benchOptions);
+                for (size_t ci = 0; ci < sortCounts.size(); ++ci)
+                {
+                    calibration->SetSortCount(sortCounts[ci]);
+                    double sum = 0.0;
+                    for (uint32_t w : calibrationWorkloads)
+                        sum += calibration->Calibrate(w, calibrationIterations);
+                    gpuSecondsPerIteration[gi][ci] = sum / static_cast<double>(calibrationWorkloads.size());
+                }
                 gpuCalibrated[gi] = true;
                 calibration.reset();
             }
@@ -708,10 +843,27 @@ int RunMain(int argc, wchar_t** argv)
             }
             for (const auto& m : DrainDebugMessages(gpu.device.Get()))
                 Log("    %s\n", m.c_str());
-            gpuEstimateSeconds[gi] = static_cast<double>(gpuTotalIterations[gi]) * gpuSecondsPerIteration[gi];
-            Log("  [%zu] %-32s %6.2f ms per iteration%s x %llu iterations = ~%s\n", gi, gpu.name.c_str(),
-                gpuSecondsPerIteration[gi] * 1000.0, gpuCalibrated[gi] ? "" : " (guess)",
-                static_cast<unsigned long long>(gpuTotalIterations[gi]), FormatDuration(gpuEstimateSeconds[gi]).c_str());
+            gpuEstimateSeconds[gi] = 0.0;
+            gpuCountEstimateSeconds[gi].clear();
+            for (size_t ci = 0; ci < sortCounts.size(); ++ci)
+            {
+                const double e = static_cast<double>(gpuCountIterations[gi][ci]) * gpuSecondsPerIteration[gi][ci];
+                gpuCountEstimateSeconds[gi].push_back(e);
+                gpuEstimateSeconds[gi] += e;
+                if (multiCount)
+                    Log("  [%zu] %-32s %3u sorts: %6.2f ms per iteration%s x %llu iterations = ~%s\n", gi,
+                        gpu.name.c_str(), sortCounts[ci], gpuSecondsPerIteration[gi][ci] * 1000.0,
+                        gpuCalibrated[gi] ? "" : " (guess)",
+                        static_cast<unsigned long long>(gpuCountIterations[gi][ci]), FormatDuration(e).c_str());
+            }
+            if (multiCount)
+                Log("  [%zu] %-32s all sort counts: ~%s\n", gi, gpu.name.c_str(),
+                    FormatDuration(gpuEstimateSeconds[gi]).c_str());
+            else
+                Log("  [%zu] %-32s %6.2f ms per iteration%s x %llu iterations = ~%s\n", gi, gpu.name.c_str(),
+                    gpuSecondsPerIteration[gi][0] * 1000.0, gpuCalibrated[gi] ? "" : " (guess)",
+                    static_cast<unsigned long long>(gpuTotalIterations[gi]),
+                    FormatDuration(gpuEstimateSeconds[gi]).c_str());
         }
         double total = 0.0;
         for (double e : gpuEstimateSeconds)
@@ -726,21 +878,22 @@ int RunMain(int argc, wchar_t** argv)
         const GpuInfo& gpu = gpus[gi];
         GpuRecord record = newRecord(gi);
         record.calibrated = gpuCalibrated[gi];
-        record.secondsPerIterationEstimate = gpuSecondsPerIteration[gi];
+        if (!gpuSecondsPerIteration[gi].empty())
+            record.secondsPerIterationEstimate = gpuSecondsPerIteration[gi][0];
+        record.secondsPerIterationPerCount = gpuSecondsPerIteration[gi];
         record.estimatedSeconds = gpuEstimateSeconds[gi];
         const std::vector<CompiledAlgorithm>& compiled = compileFor(gpuWave[gi]);
         for (const auto& ca : compiled)
             record.dispatchInfo[ca.name] = ca.dispatchInfo;
         const auto gpuStart = std::chrono::steady_clock::now();
-        const uint32_t iterations = gpuIterations[gi];
-        const uint64_t totalIterations = gpuTotalIterations[gi];
-        Log("\n=== GPU %zu/%zu: %s (WAVE_SIZE %u%s, %u iterations + %u warmup) ===\n", gi + 1, gpus.size(),
-            gpu.name.c_str(), gpuWave[gi].size, gpuWave[gi].attribute ? " + [WaveSize]" : "", iterations, opt.warmup);
+        Log("\n=== GPU %zu/%zu: %s (WAVE_SIZE %u%s, %s + %u warmup) ===\n", gi + 1, gpus.size(),
+            gpu.name.c_str(), gpuWave[gi].size, gpuWave[gi].attribute ? " + [WaveSize]" : "",
+            FormatIterationList(gpuIterations[gi], sortCounts).c_str(), opt.warmup);
         std::unique_ptr<GpuBenchmark> benchPtr;
         try
         {
             benchPtr = std::make_unique<GpuBenchmark>(gpu.device.Get(), flushShader.Get(), flushReadOnlyShader.Get(),
-                                                      spinShader.Get(), compiled, benchOptions);
+                                                      spinShader.Get(), compiled, sortCounts, benchOptions);
             GpuBenchmark& bench = *benchPtr;
             record.timestampFrequency = bench.TimestampFrequency();
             for (const auto& m : DrainDebugMessages(gpu.device.Get()))
@@ -808,93 +961,124 @@ int RunMain(int argc, wchar_t** argv)
                     Log("    %s\n", m.c_str());
             }
 
-            // Run-time estimate: the iterations still to run on this GPU at its measured rate (the
-            // calibration until kMeasuredRateMinIterations are done), plus the later GPUs' estimates.
-            uint64_t gpuIterationsDone = 0; // completed combos on this GPU (skipped ones count as done)
-            auto remainingSeconds = [&](uint64_t doneNow) {
-                const double gpuElapsed =
-                    std::chrono::duration<double>(std::chrono::steady_clock::now() - gpuStart).count();
-                const double rate = doneNow >= kMeasuredRateMinIterations
-                                        ? gpuElapsed / static_cast<double>(doneNow)
-                                        : gpuSecondsPerIteration[gi];
-                double remaining = static_cast<double>(totalIterations - std::min(doneNow, totalIterations)) * rate;
-                for (size_t later = gi + 1; later < gpus.size(); ++later)
-                    remaining += gpuEstimateSeconds[later];
-                return remaining;
-            };
-
-            for (size_t wi = 0; wi < workloadIds.size(); ++wi)
+            // (--wave-probe: no sorts, nothing more to submit.)
+            for (size_t ci = 0; ci < sortCounts.size() && !opt.waveProbe; ++ci)
             {
-                const uint32_t workloadId = workloadIds[wi];
-                for (size_t ai = 0; ai < compiled.size(); ++ai)
+                const uint32_t numSorts = sortCounts[ci];
+                const uint32_t iterations = gpuIterations[gi][ci];
+                const uint64_t totalIterations = gpuCountIterations[gi][ci];
+                bench.SetSortCount(numSorts);
+                if (multiCount)
+                    Log("\n  --- %u sorts per iteration (%zu/%zu): %u iterations + %u warmup, %u per command list ---\n",
+                        numSorts, ci + 1, sortCounts.size(), iterations, opt.warmup, bench.BatchSize());
+                const auto countStart = std::chrono::steady_clock::now();
+
+                // Run-time estimate: the iterations still to run at this sort count at its measured rate
+                // (the calibration until kMeasuredRateMinIterations are done), plus the estimates of the
+                // later sort counts and GPUs.
+                uint64_t gpuIterationsDone = 0; // completed combos at this count (skipped ones count as done)
+                auto remainingSeconds = [&](uint64_t doneNow) {
+                    const double countElapsed =
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - countStart).count();
+                    const double rate = doneNow >= kMeasuredRateMinIterations
+                                            ? countElapsed / static_cast<double>(doneNow)
+                                            : gpuSecondsPerIteration[gi][ci];
+                    double remaining = static_cast<double>(totalIterations - std::min(doneNow, totalIterations)) * rate;
+                    for (size_t laterCount = ci + 1; laterCount < sortCounts.size(); ++laterCount)
+                        remaining += gpuCountEstimateSeconds[gi][laterCount];
+                    for (size_t later = gi + 1; later < gpus.size(); ++later)
+                        remaining += gpuEstimateSeconds[later];
+                    return remaining;
+                };
+
+                for (size_t wi = 0; wi < workloadIds.size(); ++wi)
                 {
-                    const char* wname = Workloads()[workloadId].name;
-                    const std::string& aname = compiled[ai].name;
-                    // --smoke: an algorithm with a verification failure on this GPU skips its remaining
-                    // workloads; the other algorithms keep running.
-                    const auto failed = std::find_if(record.smokeFailed.begin(), record.smokeFailed.end(),
-                                                     [&](const SmokeFailure& sf) { return sf.algorithm == aname; });
-                    if (failed != record.smokeFailed.end())
+                    const uint32_t workloadId = workloadIds[wi];
+                    for (size_t ai = 0; ai < compiled.size(); ++ai)
                     {
-                        gpuIterationsDone += iterations + opt.warmup;
-                        Log("  %-14s %-20s skipped (%s)\n", wname, aname.c_str(),
-                            failed->reason.empty() ? "failed verification earlier in this smoke run"
-                                                   : failed->reason.c_str());
-                        continue;
-                    }
-                    uint32_t lastLogged = 0;
-                    auto progress = [&](uint32_t done, uint32_t total, uint32_t failures) {
-                        const double elapsed =
-                            std::chrono::duration<double>(std::chrono::steady_clock::now() - runStart).count();
-                        const double remaining = remainingSeconds(gpuIterationsDone + done);
-                        window.SetText(Utf8ToWide(Format(
-                            "GPU %zu/%zu: %s\nWorkload %zu/%zu: %s\nAlgorithm %zu/%zu: %s\n"
-                            "Iteration %u / %u (incl. %u warmup)\nVerification failures: %u (this run), %u (total)\n"
-                            "Elapsed: %s, estimated remaining: ~%s (total ~%s)",
-                            gi + 1, gpus.size(), gpu.name.c_str(), wi + 1, workloadIds.size(), wname, ai + 1,
-                            compiled.size(), aname.c_str(), done, total, opt.warmup, failures,
-                            totalFailures + failures, FormatDuration(elapsed).c_str(),
-                            FormatDuration(remaining).c_str(), FormatDuration(elapsed + remaining).c_str())));
-                        if (done == total || done - lastLogged >= 250)
+                        const char* wname = Workloads()[workloadId].name;
+                        const std::string& aname = compiled[ai].name;
+                        // --smoke: an algorithm with a verification failure on this GPU skips its remaining
+                        // workloads and sort counts; the other algorithms keep running.
+                        const auto failed = std::find_if(record.smokeFailed.begin(), record.smokeFailed.end(),
+                                                         [&](const SmokeFailure& sf) { return sf.algorithm == aname; });
+                        if (failed != record.smokeFailed.end())
                         {
-                            lastLogged = done;
-                            if (done != total)
-                                Log("  %-14s %-20s %5u / %u  failures %u\n", wname, aname.c_str(), done, total,
-                                    failures);
+                            gpuIterationsDone += iterations + opt.warmup;
+                            Log("  %-14s %-20s skipped (%s)\n", wname, aname.c_str(),
+                                failed->reason.empty() ? "failed verification earlier in this smoke run"
+                                                       : failed->reason.c_str());
+                            continue;
                         }
-                    };
-                    progress(0, iterations + opt.warmup, 0);
-                    // Recorded before running, so a device loss leaves the partial result in place.
-                    record.combos.push_back({workloadId, aname, {}, compiled[ai].flush});
-                    ComboResult& result = record.combos.back().result;
-                    const std::string label = gpu.name + "/" + aname + "/" + wname;
-                    Log("  starting %s\n", label.c_str());
-                    bench.Run(workloadId, ai, iterations, opt.warmup, label, progress, result);
-                    gpuIterationsDone += result.iterationsRun;
-                    totalFailures += result.failures;
-                    const Stats st = ComputeStats(result.timesUs);
-                    Log("  %-14s %-20s done: median %8.2f us, mean %8.2f us, failures %u (%.1f s)\n", wname,
-                        aname.c_str(), st.median, st.mean, result.failures, result.wallSeconds);
-                    for (const auto& m : result.failureMessages)
-                        Log("    FAIL %s\n", m.c_str());
-                    for (const auto& m : DrainDebugMessages(gpu.device.Get()))
-                        Log("    %s\n", m.c_str());
-                    if (opt.smoke && result.failures > 0)
-                    {
-                        // A device loss or fence timeout still stops everything (it throws). A
-                        // verification failure only takes this algorithm out of the rest of the run.
-                        record.smokeFailed.push_back({aname, wname});
-                        Log("  Smoke test: %s failed verification on %s; skipping its remaining workloads on "
-                            "this GPU\n",
-                            aname.c_str(), wname);
+                        uint32_t lastLogged = 0;
+                        auto progress = [&](uint32_t done, uint32_t total, uint32_t failures) {
+                            const double elapsed =
+                                std::chrono::duration<double>(std::chrono::steady_clock::now() - runStart).count();
+                            const double remaining = remainingSeconds(gpuIterationsDone + done);
+                            const std::string countLine =
+                                multiCount ? Format("Sorts per iteration: %u (%zu/%zu)\n", numSorts, ci + 1, sortCounts.size())
+                                           : std::string();
+                            window.SetText(Utf8ToWide(Format(
+                                "GPU %zu/%zu: %s\n%sWorkload %zu/%zu: %s\nAlgorithm %zu/%zu: %s\n"
+                                "Iteration %u / %u (incl. %u warmup)\nVerification failures: %u (this run), %u (total)\n"
+                                "Elapsed: %s, estimated remaining: ~%s (total ~%s)",
+                                gi + 1, gpus.size(), gpu.name.c_str(), countLine.c_str(), wi + 1, workloadIds.size(), wname,
+                                ai + 1, compiled.size(), aname.c_str(), done, total, opt.warmup, failures,
+                                totalFailures + failures, FormatDuration(elapsed).c_str(),
+                                FormatDuration(remaining).c_str(), FormatDuration(elapsed + remaining).c_str())));
+                            if (done == total || done - lastLogged >= 250)
+                            {
+                                lastLogged = done;
+                                if (done != total)
+                                    Log("  %-14s %-20s %5u / %u  failures %u\n", wname, aname.c_str(), done, total,
+                                        failures);
+                            }
+                        };
+                        progress(0, iterations + opt.warmup, 0);
+                        // Recorded before running, so a device loss leaves the partial result in place.
+                        record.combos.push_back({workloadId, aname, {}, compiled[ai].flush, numSorts, iterations});
+                        ComboResult& result = record.combos.back().result;
+                        const std::string label =
+                            gpu.name + "/" + aname + "/" + wname +
+                            (multiCount || numSorts != kDefaultSortsPerIteration ? Format("/%u sorts", numSorts) : "");
+                        Log("  starting %s\n", label.c_str());
+                        bench.Run(workloadId, ai, iterations, opt.warmup, label, progress, result);
+                        gpuIterationsDone += result.iterationsRun;
+                        totalFailures += result.failures;
+                        const Stats st = ComputeStats(result.timesUs);
+                        const double perIteration = result.iterationsRun ? 1000.0 / result.iterationsRun : 0.0;
+                        Log("  %-14s %-20s done: median %8.2f us, mean %8.2f us, failures %u (%.1f s; CPU per iteration: "
+                            "generate %.2f ms, record %.2f ms, verify %.2f ms)\n",
+                            wname, aname.c_str(), st.median, st.mean, result.failures, result.wallSeconds,
+                            result.generateSeconds * perIteration, result.recordSeconds * perIteration,
+                            result.verifySeconds * perIteration);
+                        for (const auto& m : result.failureMessages)
+                            Log("    FAIL %s\n", m.c_str());
+                        for (const auto& m : DrainDebugMessages(gpu.device.Get()))
+                            Log("    %s\n", m.c_str());
+                        if (opt.smoke && result.failures > 0)
+                        {
+                            // A device loss or fence timeout still stops everything (it throws). A
+                            // verification failure only takes this algorithm out of the rest of the run.
+                            record.smokeFailed.push_back({aname, wname});
+                            Log("  Smoke test: %s failed verification on %s; skipping its remaining workloads on "
+                                "this GPU\n",
+                                aname.c_str(), wname);
+                        }
                     }
+                    const double elapsed =
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - runStart).count();
+                    const double remaining = remainingSeconds(gpuIterationsDone);
+                    if (multiCount)
+                        Log("  [workload %zu/%zu done on this GPU at %u sorts] elapsed %s, estimated remaining ~%s (total "
+                            "~%s)\n",
+                            wi + 1, workloadIds.size(), numSorts, FormatDuration(elapsed).c_str(),
+                            FormatDuration(remaining).c_str(), FormatDuration(elapsed + remaining).c_str());
+                    else
+                        Log("  [workload %zu/%zu done on this GPU] elapsed %s, estimated remaining ~%s (total ~%s)\n",
+                            wi + 1, workloadIds.size(), FormatDuration(elapsed).c_str(), FormatDuration(remaining).c_str(),
+                            FormatDuration(elapsed + remaining).c_str());
                 }
-                const double elapsed =
-                    std::chrono::duration<double>(std::chrono::steady_clock::now() - runStart).count();
-                const double remaining = remainingSeconds(gpuIterationsDone);
-                Log("  [workload %zu/%zu done on this GPU] elapsed %s, estimated remaining ~%s (total ~%s)\n", wi + 1,
-                    workloadIds.size(), FormatDuration(elapsed).c_str(), FormatDuration(remaining).c_str(),
-                    FormatDuration(elapsed + remaining).c_str());
             }
         }
         catch (const std::exception& e)
@@ -908,8 +1092,8 @@ int RunMain(int argc, wchar_t** argv)
             if (!record.combos.empty())
             {
                 const ComboRecord& c = record.combos.back();
-                Log("  (while running %s / %s, %u iterations completed)\n", Workloads()[c.workloadId].name,
-                    c.algorithm.c_str(), c.result.iterationsRun);
+                Log("  (while running %s / %s at %u sorts per iteration, %u iterations completed)\n",
+                    Workloads()[c.workloadId].name, c.algorithm.c_str(), c.sortsPerIteration, c.result.iterationsRun);
             }
             if (!record.combos.empty())
                 totalFailures += record.combos.back().result.failures;
