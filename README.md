@@ -39,8 +39,10 @@ in one thread group. The design follows from that:
 - The group picks its algorithm by size with a group-uniform branch on `count`. That branch is free.
 - No global passes, no barriers between sorts, and no indirect-args setup shader.
 
-The goal was to be as fast as possible on both low-end and high-end GPUs. That turned out to need
-two configurations (see [Results](#results)).
+The goal was to be as fast as possible on both low-end and high-end GPUs. The result is one
+default configuration with tier-sized dispatches, `m4_b128_p`, that holds up from 20 to 512 sorts
+per batch on every GPU measured, plus a single-dispatch alternative for high-end NVIDIA GPUs with
+batches of about 20 sorts (see [Results](#results)).
 
 ## Results
 
@@ -55,7 +57,10 @@ two configurations (see [Results](#results)).
 | Intel UHD Graphics 770 (Xe-LP, 32 EUs) | integrated | 16 | final run pending |
 
 The Intel UHD 770 ran earlier shader sets (pass4) with 0 verification failures, but not the final
-set. See [_test/external/notes.md](_test/external/notes.md).
+set. See [_test/external/notes.md](_test/external/notes.md). The
+[scale run](#scaling-with-more-sorts-per-batch) (20 to 512 sorts per batch) covers the RTX 5080,
+the RX 7900 XTX (wave32) and the Radeon iGPU so far; the RTX 2060 and the Intel UHD 770 are
+pending.
 
 ### Final run
 
@@ -65,7 +70,9 @@ GPU. Each GPU ran 10 workloads. Every iteration was verified, with 0 verificatio
 GPU errors ([_test/final/notes.md](_test/final/notes.md)).
 
 Median µs per batch of 20 sorts, with the default measurement (`full_d50`, see
-[Measurement](#measurement-method)). The recommended configuration for each GPU class is in bold.
+[Measurement](#measurement-method)). Bold marks the configuration the final run recommended for
+each GPU class at 20 sorts per batch; the [scale run](#scaling-with-more-sorts-per-batch) replaced
+that with one default, `m4_b128_p` (see [Recommendation](#recommendation)).
 
 | GPU | algorithm | mostly_empty | realistic_mix | mostly_mid | worst_case |
 |---|---|---:|---:|---:|---:|
@@ -93,35 +100,85 @@ The tail matters as much as the median. On the RTX 5080, realistic_mix has a p95
 `pass0_bitonic` and 16.64 µs with `s1_rank512_bitreg2048_radix`. The p95 comes from the rare
 batches that contain a 2049-8192 sort.
 
+### Scaling with more sorts per batch
+
+Everything above is for 20 sorts per batch. With 20 sorts most of the GPU is idle, which hides
+that a single-dispatch configuration launches a 1024-thread group for every sort, even an empty
+or a 16-element one. The scale run ([_test/scale/notes.md](_test/scale/notes.md)) measured 19
+algorithms ([shaders/algorithms_scale.txt](shaders/algorithms_scale.txt)) at 20, 128, 256 and 512
+sorts per batch on the RTX 5080, the RX 7900 XTX and the Radeon iGPU, with 0 verification
+failures. The RTX 2060 and the Intel UHD 770 are pending.
+
+Median µs per batch on realistic_mix. In parentheses: the time divided by the fastest of the 19
+algorithms on that GPU at that batch size.
+
+| GPU | algorithm | 20 sorts | 128 sorts | 256 sorts | 512 sorts |
+|---|---|---:|---:|---:|---:|
+| RTX 5080 | `s1_rank512_bitreg2048_radix` | 8.80 (1.10x) | 15.22 (1.04x) | 17.79 (1.08x) | 25.87 (1.31x) |
+| RTX 5080 | `m4_b128_p` | 10.06 (1.25x) | 14.75 (1.00x) | 16.46 (1.00x) | 20.03 (1.01x) |
+| RTX 5080 | fastest | 8.03 `s7_256` | 14.69 `m3_ref` | 16.46 `m4_b128_p` | 19.78 `m3_ref` |
+| RX 7900 XTX | `s1_rank512_bitreg2048_radix` | 9.92 (1.05x) | 15.24 (1.00x) | 18.90 (1.11x) | 28.88 (1.43x) |
+| RX 7900 XTX | `m4_b128_p` | 9.44 (1.00x) | 15.56 (1.02x) | 17.00 (1.00x) | 20.14 (1.00x) |
+| RX 7900 XTX | fastest | 9.44 `m4_b128_p` | 15.24 `s1_rank512_bitreg2048_radix` | 17.00 `m4_b128_p` | 20.14 `m4_b128_p` |
+| Radeon iGPU | `s1_rank512_bitreg2048_radix` | 40.18 (1.74x) | 245.96 (1.93x) | 490.66 (1.89x) | 969.52 (1.91x) |
+| Radeon iGPU | `m4_b128_p` | 23.52 (1.02x) | 127.12 (1.00x) | 259.54 (1.00x) | 508.72 (1.00x) |
+| Radeon iGPU | fastest | 23.06 `m4_b128e8` | 127.12 `m4_b128_p` | 259.54 `m4_b128_p` | 508.72 `m4_b128_p` |
+
+RTX 5080 (top) and Radeon iGPU (bottom), realistic_mix, log scale:
+
+![Batch time by number of sorts per batch, RTX 5080 and Radeon iGPU](docs/images/scaling_realistic_mix.png)
+
+- **Mixed batches need tier-sized groups.** Once the GPU is busy, a 1024-thread group for a
+  50-element sort takes occupancy that the other sorts need. `m4_b128_p` is the fastest or within
+  2 % of the fastest at every batch size on all three GPUs, except 20 sorts on the RTX 5080. The
+  single dispatch falls behind as the batch grows: at 512 sorts it is 1.31x (RTX 5080), 1.43x
+  (RX 7900 XTX) and 1.91x (Radeon iGPU) slower than the fastest.
+- **Large sorts still need 1024-thread groups.** On worst_case (all 8192), every configuration
+  that sorts 2049+ with the pass2 LDS radix in 1024-thread groups (`s1_*`, `m3_ref`,
+  `m4_b128_p`) is within 8 % of the fastest at every batch size. The configurations with the
+  256-thread ballot radix are 1.5-1.7x slower at 512 sorts. More, smaller groups do not make up
+  for the slower algorithm even when the GPU is full. `m4_b128_p` keeps the 1024-thread radix
+  for its large tier, which is why it holds up on both workloads.
+- **The 129-512 tier can still be tuned for large batches.** On mostly_medium (uniform 129-512)
+  at 512 sorts, `m4_b128e8` (bitonic E8 instead of E4 in the 128-thread tier) is 21 % faster
+  than `m4_b128_p` on the RX 7900 XTX (11.84 vs 14.92 µs) and 16 % faster on the Radeon iGPU. On
+  the RTX 5080, `t2_rank512_bitonic` (rank sort in 512-thread groups) is the fastest at every
+  batch size (12.13 vs 17.46 µs at 512 sorts). Neither is better than `m4_b128_p` across all
+  workloads yet.
+
 ### Recommendation
 
-- **Discrete GPUs: `s1_rank512_bitreg2048_radix`.** One 1024-thread dispatch that uses 32 KB of
-  groupshared memory. Rank sort up to 512 elements, register bitonic up to 2048, LDS radix above.
-  On every discrete GPU and workload it is 1.2-2.4x faster than `pass0_bitonic` at the default
-  wave size. On the RTX 5080 it beats `m4_b128_p` by 45 % on mostly_empty and 15 % on
-  realistic_mix.
-- **Integrated GPUs: `m4_b128_p`.** Four dispatches with tier-sized groups: rank sort up to 128
-  elements in 128 threads, bitonic E4 for 129-512 in 128 threads, bitonic E8 for 513-2048 in 256
-  threads, and the pass2 LDS radix above 2048 in 1024 threads. On the Ryzen iGPU it is 1.7x
-  faster than `s1_rank512_bitreg2048_radix` on realistic_mix (23.4 vs 40.1 µs) and mostly_mid
-  (64.0 vs 109.3 µs). It is 3.1x faster than `pass0_bitonic` on realistic_mix.
+- **Default, every GPU: `m4_b128_p`.** Four dispatches with tier-sized groups: rank sort up to
+  128 elements in 128 threads, bitonic E4 for 129-512 in 128 threads, bitonic E8 for 513-2048 in
+  256 threads, and the pass2 LDS radix above 2048 in 1024 threads. On realistic_mix it is the
+  fastest or within 2 % of the fastest of the 19 scale-run algorithms at 20 to 512 sorts per
+  batch on the RTX 5080, RX 7900 XTX and Radeon iGPU (the exception: 20 sorts on the RTX 5080),
+  and on worst_case it is within 7 % everywhere. At 20 sorts it is 1.7x faster than
+  `s1_rank512_bitreg2048_radix` on the Ryzen iGPU (realistic_mix 23.4 vs 40.1 µs, mostly_mid
+  64.0 vs 109.3 µs), about 5 % faster on the RX 7900 XTX and on the RTX 2060 (realistic_mix), and
+  3.1x faster than `pass0_bitonic` on the iGPU. Its weak spot is batches of only tiny sorts
+  (mostly_empty: 1.07-1.88x the fastest), where the absolute times are small.
+- **High-end NVIDIA with batches of about 20 sorts: `s1_rank512_bitreg2048_radix`.** One
+  1024-thread dispatch that uses 32 KB of groupshared memory: rank sort up to 512 elements,
+  register bitonic up to 2048, LDS radix above. It avoids the multi-dispatch cost, which is large
+  on the RTX 5080: at 20 sorts it beats `m4_b128_p` by 13 % on realistic_mix (8.80 vs 10.06 µs)
+  and by 45 % on mostly_empty (2.69 vs 4.90 µs, final run). It loses that lead as the batch
+  grows: 15.22 vs 14.75 µs at 128 sorts, 1.29x slower at 512. Measured on the RTX 5080 only; on
+  the RTX 2060 at 20 sorts (final run) it is faster on mostly_empty and mostly_mid but 5 % slower
+  on realistic_mix, and its scale run is pending.
 - **AMD: wave32.** This is the default (`WAVE_SIZE=32` + `[WaveSize(32)]`). On the RX 7900 XTX,
   wave64 costs about 70 % on realistic_mix and mostly_mid (16.84 vs 9.84 µs for `s1_...`) and
   about 10 % on worst_case.
-- Pending: confirming the integrated recommendation on the Intel UHD 770 (wave16).
+- Pending: the Intel UHD 770 (wave16; the `p7_*` shaders that `m4_b128_p` uses have not run on
+  Intel hardware) and the RTX 2060 in the scale run.
 
-Caveats, from [_test/final/notes.md](_test/final/notes.md):
+Caveats at 20 sorts per batch, from [_test/final/notes.md](_test/final/notes.md):
 
-- Everywhere except the RTX 2060, the better of the two recommendations is within about 10 % of
-  the fastest of all 69 algorithms. On the RTX 2060, `s7_512` (one 512-thread dispatch) is 19 %
-  faster on realistic_mix (15.71 µs) and 13 % faster on mostly_mid. It is slower on large sorts
-  on the other GPUs, though (worst_case: 30.88 vs 20.08 µs on the 7900 XTX, 321.8 vs 260.6 µs on
-  the iGPU).
-- `m4_b128_p` is about 5 % faster than `s1_rank512_bitreg2048_radix` on the RX 7900 XTX
-  (realistic_mix 9.44 vs 9.84 µs, mostly_mid 9.32 vs 9.88 µs). The same holds on the RTX 2060
-  for realistic_mix (19.39 vs 20.42 µs). The single dispatch was kept as the discrete
-  recommendation because it avoids the multi-dispatch cost. That cost is large on the RTX 5080
-  (mostly_empty 4.90 vs 2.69 µs).
+- Everywhere except the RTX 2060, the better of `m4_b128_p` and `s1_rank512_bitreg2048_radix` is
+  within about 10 % of the fastest of all 69 algorithms. On the RTX 2060, `s7_512` (one 512-thread
+  dispatch) is 19 % faster on realistic_mix (15.71 µs) and 13 % faster on mostly_mid. It is slower
+  on large sorts on the other GPUs, though (worst_case: 30.88 vs 20.08 µs on the 7900 XTX, 321.8
+  vs 260.6 µs on the iGPU).
 - The RTX 2060's timestamps are quantized in steps of about 1.024 µs, so its small-workload
   medians are only accurate to about ±1 µs.
 
@@ -150,13 +207,16 @@ Each point links to the pass notes where it was measured.
   added about 0.1-0.3 µs to small workloads on the RTX 5080. An empty dispatch in front of the
   bitonic dispatch delayed it by about 1.2 µs ([pass1](_test/pass1/notes.md)). In pass7,
   multi-dispatch cost 1.1-1.6 µs on the RTX 5080's small workloads ([pass7](_test/pass7/notes.md)).
-  One dispatch is best on high-end GPUs.
+  One dispatch is best on high-end GPUs, but only while the batch is small: at 128 sorts per batch
+  the single and the tier-sized dispatches are about even, and at 512 sorts `m4_b128_p` is 1.3-1.4x
+  faster than `s1_rank512_bitreg2048_radix` on the discrete GPUs ([scale](_test/scale/notes.md)).
 - **Integrated GPUs are limited by occupancy, not latency. They want tier-sized groups.** The
   Ryzen iGPU holds at most two 1024-thread groups at a time. Putting the same algorithms in
   tier-sized groups with tier-sized LDS cut mostly_mid by 41 %, and bitonic in 128-thread groups
   cut mostly_medium by 48 %. The gain comes mostly from the thread count, not the LDS size. A
   single dispatch with smaller groups does not get it, because every group reserves the largest
-  tier's LDS and threads ([pass7](_test/pass7/notes.md)).
+  tier's LDS and threads ([pass7](_test/pass7/notes.md)). Discrete GPUs behave the same once a
+  batch has a few hundred sorts ([scale](_test/scale/notes.md)).
 - **Wave intrinsics are not equally cheap.** On NVIDIA (driver 32.0.16.1714), `WavePrefixSum` costs
   6.4x a `WaveReadLaneAt` shuffle and `WaveMatch` 8.6x. `WaveActiveSum`, `WaveActiveBallot` and
   `WavePrefixCountBits` cost the same as a shuffle ([pass3](_test/pass3/notes.md)). Replacing the
@@ -184,7 +244,8 @@ Each point links to the pass notes where it was measured.
 ## Charts
 
 These images come from the interactive results page. Each value is the median µs per batch of 20
-sorts in the final run.
+sorts in the final run. The scaling chart (20 to 512 sorts per batch) is under
+[Scaling with more sorts per batch](#scaling-with-more-sorts-per-batch).
 
 **Best time for each workload.** For each GPU, the fastest algorithm on each workload:
 
@@ -218,19 +279,23 @@ median divided by the fastest algorithm's median on the same GPU:
 - Interactive page, published: <https://claude.ai/artifact/3PHgWLiq9ej94L2pM3wWZZ>. This link is
   private: only people it has been shared with can open it.
 - Local copy: open [tools/results_page/index.html](tools/results_page/index.html) in a browser.
-  The file is an HTML fragment that loads `data.js` from its own folder, so keep the two files
-  together. Regenerate `data.js` with [tools/results_page/prep.py](tools/results_page/prep.py)
-  (see [tools/results_page/README.md](tools/results_page/README.md)).
+  The file is an HTML fragment that loads `data.js` and `scale.js` from its own folder, so keep
+  the files together. Regenerate `data.js` with [tools/results_page/prep.py](tools/results_page/prep.py)
+  and `scale.js` with [tools/results_page/prep_scale.py](tools/results_page/prep_scale.py) (see
+  [tools/results_page/README.md](tools/results_page/README.md)).
 - Raw data: [_test/final/all_results.csv](_test/final/all_results.csv) has one row per GPU x
   algorithm x workload. [_test/final/all_samples.csv.gz](_test/final/all_samples.csv.gz) has
-  every measured iteration (2,967,000 rows). The columns are described in
-  [tools/CSV_FORMAT.md](tools/CSV_FORMAT.md).
+  every measured iteration (2,967,000 rows). The scale run's data is in
+  [_test/scale/all_results.csv](_test/scale/all_results.csv) (one row per GPU x algorithm x
+  workload x sorts per batch) and [_test/scale/all_samples.csv.gz](_test/scale/all_samples.csv.gz)
+  (721,050 rows). The columns are described in [tools/CSV_FORMAT.md](tools/CSV_FORMAT.md).
 
 ## Integration guide
 
-This section describes the shaders as they are in [shaders/](shaders/). The two recommended
-configurations use three entry-point files: `single_pass.hlsl`, `radix_sort.hlsl` and
-`p7_sort.hlsl`, plus their includes.
+This section describes the shaders as they are in [shaders/](shaders/). The recommended default,
+`m4_b128_p`, uses two entry-point files: `radix_sort.hlsl` and `p7_sort.hlsl`. The alternative for
+high-end NVIDIA GPUs with small batches, `s1_rank512_bitreg2048_radix`, uses `single_pass.hlsl`.
+All three need their includes.
 
 ### Data layout
 
@@ -267,8 +332,8 @@ out in an order that depends on the building block that handles the sort's size:
 | LDS radix sorts (`radix_sort*.hlsli`, `p7_radix.hlsli`) | 16-bit key | stable (input order) |
 | bitonic sorts (`pass0_bitonic.hlsl`, `bitonic_reg*.hlsli`, `p7_bitonic.hlsli`) | the full 32-bit value | ordered by payload |
 
-In `s1_rank512_bitreg2048_radix`, sorts of 513-2048 elements take the bitonic path and all other
-sizes are stable. In `m4_b128_p`, sorts of 129-2048 take the bitonic path. If equal keys must come
+In `m4_b128_p`, sorts of 129-2048 elements take the bitonic path and all other sizes are stable.
+In `s1_rank512_bitreg2048_radix`, sorts of 513-2048 take the bitonic path. If equal keys must come
 out in input order at every size, use a payload that increases with input position, such as the
 draw index in submission order. Then both orders are the same. The benchmark's verification only
 checks key order and that the output is a permutation of the input.
@@ -287,26 +352,30 @@ once per dispatch line, with these defines:
 | `RANK_MAX`, `BITREG_MAX`, `LARGE_RADIX` | `single_pass.hlsl` tiers: rank sort ≤ `RANK_MAX`, register bitonic ≤ `BITREG_MAX`, then radix (`LARGE_RADIX=1`) or bitonic (`0`) |
 | `P7_RANK_MAX`, `P7_RANK_EPT`, `P7_BIT_MAX`, `P7_BIT_E`, `P7_BIT2_MAX`, `P7_BIT2_E`, `P7_LARGE`, `P7_LDS_WORDS` | `p7_sort.hlsl` tiers: rank sort (elements per thread), up to two bitonic tiers (elements per thread), large tier (1 = bitonic, 2 = ballot radix), and the groupshared size (default: the smallest power of two that fits the tier) |
 
-The two recommended configurations, copied from
+The default and the alternative configuration, copied from
 [shaders/algorithms_final.txt](shaders/algorithms_final.txt). The format of each line is
 `dispatch <file> <entry> <GROUP_SIZE> <defines>`:
 
 ```
-algorithm s1_rank512_bitreg2048_radix        # discrete GPUs
-dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
-
-algorithm m4_b128_p                          # integrated GPUs
+algorithm m4_b128_p                          # default, every GPU
 dispatch radix_sort.hlsl main 1024 MIN_COUNT=2049
 dispatch p7_sort.hlsl main 256 MIN_COUNT=513 MAX_COUNT=2048 P7_BIT_MAX=2048 P7_BIT_E=8
 dispatch p7_sort.hlsl main 128 MIN_COUNT=129 MAX_COUNT=512 P7_BIT_MAX=512 P7_BIT_E=4
 dispatch p7_sort.hlsl main 128 MAX_COUNT=128 P7_RANK_MAX=128
+
+algorithm s1_rank512_bitreg2048_radix        # high-end NVIDIA, batches of about 20 sorts
+dispatch single_pass.hlsl main 1024 RANK_MAX=512 BITREG_MAX=2048 LARGE_RADIX=1
 ```
 
-For example, the discrete configuration on AMD RDNA:
+(The `desc` lines in algorithms_final.txt and algorithms_scale.txt still call these the discrete
+and the integrated recommendation. That was the final run's advice at 20 sorts per batch; the
+lists are left unchanged so that their rows keep joining with the archived results.)
+
+For example, the 129-512 tier of `m4_b128_p` on AMD RDNA:
 
 ```
-dxc -T cs_6_6 -E main -O3 -HV 2021 -D GROUP_SIZE=1024 -D WAVE_SIZE=32 -D WAVE_SIZE_REQUIRED=1 ^
-    -D RANK_MAX=512 -D BITREG_MAX=2048 -D LARGE_RADIX=1 shaders\single_pass.hlsl
+dxc -T cs_6_6 -E main -O3 -HV 2021 -D GROUP_SIZE=128 -D WAVE_SIZE=32 -D WAVE_SIZE_REQUIRED=1 ^
+    -D MIN_COUNT=129 -D MAX_COUNT=512 -D P7_BIT_MAX=512 -D P7_BIT_E=4 shaders\p7_sort.hlsl
 ```
 
 ### Dispatching
@@ -332,16 +401,29 @@ device->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE, &arch, sizeof(arch));
 D3D12_FEATURE_DATA_D3D12_OPTIONS1 o1 = {};
 device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &o1, sizeof(o1));
 
-const bool integrated   = arch.UMA;                   // true -> m4_b128_p, false -> s1_rank512_bitreg2048_radix
 const UINT waveSize     = o1.WaveLaneCountMin;        // NVIDIA 32, AMD RDNA 32 (range 32-64), Intel UHD 770 16
 const bool waveSizeAttr = o1.WaveLaneCountMin != o1.WaveLaneCountMax; // -> WAVE_SIZE_REQUIRED=1
 // o1.WaveOps must be TRUE.
+
+// Configuration: m4_b128_p unless all of these hold (then s1_rank512_bitreg2048_radix):
+DXGI_ADAPTER_DESC1 desc = {};
+adapter->GetDesc1(&desc);
+const bool singleDispatch = desc.VendorId == 0x10DE   // NVIDIA
+                         && !arch.UMA                 // discrete
+                         && isHighEndGpu              // your own GPU list; measured: RTX 5080
+                         && typicalSortsPerBatch <= 20; // s1 won at 20 sorts, was even at 128, lost at 256+
 ```
 
-This is what the benchmark does (`src/Device.cpp`, `src/main.cpp`). The shaders assume that
-lane = `SV_GroupIndex % WAVE_SIZE` and that `WAVE_SIZE` is the real lane count. If the driver can
-pick between several wave sizes, pin it with `[WaveSize]`. The benchmark's wave probe checks both
-assumptions on every GPU before it runs.
+Use `m4_b128_p` when in doubt: where `s1_rank512_bitreg2048_radix` wins (RTX 5080, 20 sorts), it
+saves about 1.3 µs per batch on realistic_mix (8.80 vs 10.06 µs); where it loses, it costs up to
+5.8 µs on the RTX 5080 and 8.7 µs on the RX 7900 XTX at 512 sorts, and 1.7-1.9x on the Radeon
+iGPU. The measured batch sizes are 20, 128, 256 and 512; the crossover between 20 and 128 was
+not measured.
+
+The wave-size part is what the benchmark does (`src/Device.cpp`, `src/main.cpp`). The shaders
+assume that lane = `SV_GroupIndex % WAVE_SIZE` and that `WAVE_SIZE` is the real lane count. If the
+driver can pick between several wave sizes, pin it with `[WaveSize]`. The benchmark's wave probe
+checks both assumptions on every GPU before it runs.
 
 ### Limits
 
@@ -412,7 +494,7 @@ its groupshared memory per group in parentheses.
 | `s1_rank1024_bitreg` | 2 | 1024 (32 KB) | R ≤1024, B8 above (= s3_rank1024_bitE8 of the pass3 diag set: identical DXIL) | 10.2 | 23.2 | 16.3 | 48.8 |
 | `s1_rank512_radix` | 2 | 1024 (32 KB) | R ≤512, P above | 12.7 | 19.8 | 9.96 | 40.0 |
 | `s1_rank1024_radix` | 2 | 1024 (32 KB) | R ≤1024, P above | 12.5 | 20.5 | 12.3 | 42.4 |
-| `s1_rank512_bitreg2048_radix` **(recommended, discrete)** | 2 | 1024 (32 KB) | R ≤512, B8 ≤2048, P above | 8.88 | 20.4 | 9.84 | 40.1 |
+| `s1_rank512_bitreg2048_radix` **(alternative: high-end NVIDIA, small batches)** | 2 | 1024 (32 KB) | R ≤512, B8 ≤2048, P above | 8.88 | 20.4 | 9.84 | 40.1 |
 | `s1_rank512_bitreg4096_radix` | 2 | 1024 (32 KB) | R ≤512, B8 ≤4096, P above | 8.90 | 22.5 | 9.90 | 40.9 |
 | `s1_bitreg` | 2 | 1024 (32 KB) | B8 for every size (= s3_bitE8 / s4_bitE8 of the pass3 / pass4 diag sets: identical DXIL) | 8.98 | 22.8 | 9.64 | 57.1 |
 | `s1_radix` | 2 | 1024 (32 KB) | P for every size (the radix fixed-cost anchor) | 11.0 | 19.3 | 9.72 | 93.4 |
@@ -462,7 +544,7 @@ its groupshared memory per group in parentheses.
 | `m4_b256` | 7 | 256 (32 KB) + 256 (8 KB) + 128 (2 KB) + 256 (1 KB) | X 2049+ @256, B8 513-2048 @256, B4 257-512 @128, R ≤256 @256 | 10.4 | 18.4 | 9.64 | 24.9 |
 | `m4_b128e8` | 7 | 256 (32 KB) + 256 (8 KB) + 128 (2 KB) + 128 (512 B) | X 2049+ @256, B8 513-2048 @256, B8 129-512 @128, R ≤128 @128 | 10.3 | 17.5 | 9.56 | **23.0** |
 | `m3_r2` | 7 | 256 (32 KB) + 256 (8 KB) + 256 (2 KB) | X 2049+ @256, B8 513-2048 @256, R x2 ≤512 @256 | 10.2 | 18.3 | 9.56 | 30.6 |
-| `m4_b128_p` **(recommended, integrated)** | 7 | 1024 (32 KB) + 256 (8 KB) + 128 (2 KB) + 128 (512 B) | P 2049+ @1024, B8 513-2048 @256, B4 129-512 @128, R ≤128 @128 | 10.4 | 19.4 | 9.44 | 23.4 |
+| `m4_b128_p` **(recommended default)** | 7 | 1024 (32 KB) + 256 (8 KB) + 128 (2 KB) + 128 (512 B) | P 2049+ @1024, B8 513-2048 @256, B4 129-512 @128, R ≤128 @128 | 10.4 | 19.4 | 9.44 | 23.4 |
 | `s7_256` | 7 | 256 (32 KB) | R x2 ≤512, B8 ≤2048, X above | **8.05** | 19.0 | 9.88 | 42.4 |
 | `s7_512` | 7 | 512 (32 KB) | R ≤512, B8 ≤2048, X above | 8.37 | **15.7** | 9.60 | 39.9 |
 | `s7_256b` | 7 | 256 (32 KB) | R ≤128, B4 ≤512, B8 ≤2048, X above | 8.22 | 16.0 | 9.76 | 45.7 |
@@ -601,7 +683,9 @@ The zip has the exe, the DXC DLLs, the shaders, every `_test\passN` snapshot, `r
 1. `python tools/aggregate_results.py <result folders or zips> -o <dir>` merges runs from several
    machines into `all_results.csv`, `all_samples.csv` and `all_wave_probe.csv`, and prints a
    summary with verification failures, GPU errors and wave-probe warnings.
-2. `python tools/results_page/prep.py <dir> tools/results_page/data.js` builds the page data.
+2. `python tools/results_page/prep.py <dir> tools/results_page/data.js` builds the page data;
+   `python tools/results_page/prep_scale.py tools/results_page/scale.js <dir>/all_results.csv`
+   builds the scaling section's data from a scale run.
 3. Open `tools/results_page/index.html`.
 
 ## Development history
@@ -618,6 +702,7 @@ The zip has the exe, the DXC DLLs, the shaders, every `_test\passN` snapshot, `r
 | [pass7](_test/pass7/notes.md) | Low-end / integrated GPUs: tier-sized groups and LDS, ballot radix X. Produced `m4_b128_p` and the final set |
 | [external](_test/external/notes.md) | Results from the RX 7900 XTX, Ryzen iGPU and Intel UHD 770 machines, and the flush diagnostic |
 | [final](_test/final/notes.md) | The final run: 69 algorithms on 4 GPUs (5 configurations), 0 verification failures, recommendations |
+| [scale](_test/scale/notes.md) | 20 to 512 sorts per batch: 19 algorithms on 3 GPUs, 0 verification failures. `m4_b128_p` becomes the single default |
 
 Each `_test/passN/` folder has that pass's shaders, algorithm list, `results.txt` and notes.
 `GpuSort.exe --shaders _test/passN` re-runs a snapshot.
@@ -632,6 +717,7 @@ shaders/                       current shaders and algorithm lists (algorithms_f
 _test/pass0 .. pass7/          per-pass shader snapshots, results and notes
 _test/external/                results from other machines
 _test/final/                   final run data (all_results.csv, all_samples.csv.gz) and notes
+_test/scale/                   scale run data (20 to 512 sorts per batch) and notes
 tools/                         run_all.bat, package.ps1, aggregate_results.py, CSV_FORMAT.md,
                                README_PORTABLE.txt, results_page/ (interactive results page)
 docs/                          task_brief.md (the original task), images/ (charts in this README)

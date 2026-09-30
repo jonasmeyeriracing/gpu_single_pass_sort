@@ -83,6 +83,10 @@ mostly_mid).
 
 ## Recommendation
 
+**Updated by the scale run (_test/scale/notes.md, 20 to 512 sorts per batch): `m4_b128_p` is now
+the single recommended default; `s1_rank512_bitreg2048_radix` only for high-end NVIDIA GPUs with
+small batches (about 20 sorts).** The recommendation of the final run (20 sorts per batch):
+
 - **Discrete GPUs: `s1_rank512_bitreg2048_radix`.** 1.2-2.4x faster than pass0_bitonic on every
   discrete GPU and workload at the default wave size; best or within ~5 % of m4_b128_p on the
   7900 XTX and the 2060, and ahead of it on the RTX 5080 (by 45 % on mostly_empty, 15 % on

@@ -1,0 +1,9 @@
+GpuSort portable run on JONAS-CPH, started Wed 09/30/2026 14:58:40.52
+Mode: scale
+Qualifying GPUs: 1 (details in adapters.txt)
+GPUs:
+  GPU [0] NVIDIA GeForce RTX 5080: discrete, vendor 10DE, wave lanes 32-32, 1000,300,200,150 iterations at 20,128,256,512 sorts
+Plan: 2 GPU runs of shaders\algorithms_scale.txt (19 algorithms, sorts per iteration 20,128,256,512, default flush full_d50, default wave size), estimated ~8.2 min
+[1/2: smoke scale 20,128,256,512 sorts, default wave size, every GPU] exit code 0 (ok) -> scale_smoke.txt / scale_smoke.log
+[2/2: full scale 20,128,256,512 sorts, default wave size, every GPU] exit code 0 (ok) -> scale.txt / scale.log
+Finished Wed 09/30/2026 15:05:27.21, overall exit code 0

@@ -1,0 +1,12 @@
+GpuSort portable run on STIMULATOR, started 30/09/2026 15.45.13,03
+Mode: scale
+No popups (noprompt): every GpuSort.exe run got --no-prompt
+Qualifying GPUs: 2 (details in adapters.txt)
+GPUs:
+  GPU [0] AMD Radeon RX 7900 XTX: discrete, vendor 1002, wave lanes 32-64, 1000,300,200,150 iterations at 20,128,256,512 sorts
+  GPU [1] AMD Radeon(TM) Graphics: integrated, vendor 1002, wave lanes 32-64, 300,90,60,45 iterations at 20,128,256,512 sorts
+Plan: 2 GPU runs of shaders\algorithms_scale.txt (19 algorithms, sorts per iteration 20,128,256,512, default flush full_d50, default wave size), estimated ~28.1 min
+No popups: 10 s countdown before the first GPU run
+[1/2: smoke scale 20,128,256,512 sorts, default wave size, every GPU] exit code 0 (ok) -> scale_smoke.txt / scale_smoke.log
+[2/2: full scale 20,128,256,512 sorts, default wave size, every GPU] exit code 0 (ok) -> scale.txt / scale.log
+Finished 30/09/2026 16.10.22,69, overall exit code 0

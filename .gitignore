@@ -8,3 +8,5 @@ x64/
 dist/
 # aggregate_results.py writes the uncompressed samples here by default (285 MB); the repo keeps all_samples.csv.gz
 _test/final/all_samples.csv
+# aggregate_results.py -o _test/scale writes the uncompressed samples here (69 MB); the repo keeps all_samples.csv.gz
+_test/scale/all_samples.csv

@@ -27,7 +27,12 @@ unpacked). Left out there as well: dxdiag.txt and every `*.log` (50-180 KB; no r
 final-run folders (STIMULATOR_20260929_1529, JONAS-CPH_20260929_1658) leave out every
 `*_samples.csv` (156 and 134 MB); the samples of their benchmark runs are in
 _test/final/all_samples.csv.gz, the raw zips are `G:\My Drive\STIMULATOR_20260929_1529.zip` and
-`C:\Users\jonas\Desktop\GpuSort-portable-3ebe93b\results\JONAS-CPH_20260929_1658.zip`.
+`C:\Users\jonas\Desktop\GpuSort-portable-3ebe93b\results\JONAS-CPH_20260929_1658.zip`. The two
+scale-run folders (JONAS-CPH_20260930_1458, STIMULATOR_20260930_1545) are archived the same way:
+no `*_samples.csv` (30 and 39 MB), no dxdiag.txt, no logs. The samples of their benchmark runs
+are in _test/scale/all_samples.csv.gz, the raw zips are
+`C:\Users\jonas\Desktop\GpuSort-portable-495478d\results\JONAS-CPH_20260930_1458.zip` and
+`G:\My Drive\STIMULATOR_20260930_1545.zip`.
 
 | folder | GPUs | package (shaders) | mode | runs | result |
 |---|---|---|---|---|---|
@@ -39,6 +44,8 @@ _test/final/all_samples.csv.gz, the raw zips are `G:\My Drive\STIMULATOR_2026092
 | STIMULATOR_20260929_1225 | 7900 XTX + Ryzen iGPU | 627724b (_test/pass7) | `run_all.bat pass7`: smoke + full (300 iterations), wave32 both GPUs + wave64 iGPU only | 4 of 4 | exit 0, **0 verification failures** (21 algorithms x 10 workloads, every run; smoke 24 algorithms) |
 | STIMULATOR_20260929_1529 | 7900 XTX + Ryzen iGPU | 99a07b4 (final set) | `run_all.bat final`: smoke + full (1000 iterations XTX, 300 iGPU), default wave32 both GPUs + wave64 XTX only | 4 of 4 | exit 0, **0 verification failures** (69 algorithm entries x 10 workloads, every run); see _test/final/notes.md |
 | JONAS-CPH_20260929_1658 | RTX 5080 + RTX 2060 | 3ebe93b (final set) | `run_all.bat final`: smoke + full (1000 iterations), wave32 | 2 of 2 | exit 0, **0 verification failures**; see _test/final/notes.md |
+| JONAS-CPH_20260930_1458 | RTX 5080 (RTX 2060 removed) | 495478d (scale set) | `run_all.bat scale`: smoke + full, 19 algorithms x 10 workloads x 20 / 128 / 256 / 512 sorts per batch (1000 / 300 / 200 / 150 iterations), wave32 | 2 of 2 | exit 0, **0 verification failures**; see _test/scale/notes.md |
+| STIMULATOR_20260930_1545 | 7900 XTX + Ryzen iGPU | 495478d (scale set) | `run_all.bat scale`: as above (iGPU: 300 / 90 / 60 / 45 iterations), default wave32 on both GPUs | 2 of 2 | exit 0, **0 verification failures**; see _test/scale/notes.md |
 
 ## Machines
 

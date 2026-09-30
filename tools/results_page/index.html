@@ -96,6 +96,8 @@ th { color: var(--fg-2); font-weight: 500; position: sticky; top: 0; background:
 td { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
 th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
 td.best { color: var(--fg); font-weight: 600; }
+table.scale td { white-space: normal; overflow-wrap: anywhere; vertical-align: top; font-size: 0.75rem; }
+table.scale td:first-child { width: 18%; }
 td.name { font-family: var(--font-data); color: var(--fg); }
 tr.rec td.name::after { content: " ★"; color: var(--accent); }
 details summary { cursor: pointer; color: var(--fg-2); font-size: var(--step-0); }
@@ -119,11 +121,11 @@ details summary { cursor: pointer; color: var(--fg-2); font-size: var(--step-0);
       <select id="f-workload"></select>
     </div>
     <div class="field">
-      <label for="f-gpu">GPU (size, p95 and algorithm charts)</label>
+      <label for="f-gpu">GPU (size, p95, scaling and algorithm charts)</label>
       <select id="f-gpu"></select>
     </div>
     <div class="field">
-      <label for="f-algo">Compare algorithm (size and p95 charts)</label>
+      <label for="f-algo">Compare algorithm (size, p95 and scaling charts)</label>
       <select id="f-algo"></select>
     </div>
     <div class="field">
@@ -168,6 +170,20 @@ details summary { cursor: pointer; color: var(--fg-2); font-size: var(--step-0);
     <div class="chart" id="c5"></div>
   </section>
 
+  <section class="card" aria-labelledby="c6-h">
+    <header>
+      <h2 id="c6-h">Scaling with the number of sorts</h2>
+      <p id="c6-sub"></p>
+    </header>
+    <div class="legend" id="c6-legend"></div>
+    <div class="chart" id="c6"></div>
+    <header>
+      <h3 style="font-size:var(--step-1)">Fastest algorithm by workload and batch size</h3>
+      <p id="c7-sub"></p>
+    </header>
+    <div class="tablewrap" id="c7"></div>
+  </section>
+
   <section class="card" aria-labelledby="c3-h">
     <header>
       <h2 id="c3-h">Every algorithm, ranked</h2>
@@ -202,6 +218,7 @@ details summary { cursor: pointer; color: var(--fg-2); font-size: var(--step-0);
 <div class="tip" id="tip" hidden></div>
 
 <script src="data.js"></script>
+<script src="scale.js"></script>
 <script>
 (function () {
   const D = window.SORT_DATA;
@@ -475,6 +492,101 @@ details summary { cursor: pointer; color: var(--fg-2); font-size: var(--step-0);
     hit.addEventListener("blur", () => { hair.setAttribute("visibility", "hidden"); hideTip(); });
   }
 
+  // ---------- scaling with the number of sorts per batch (separate scale run) ----------
+  const S = window.SCALE_DATA;
+  function scaleCfg() { if (!S) return -1; return S.cfgs.indexOf(D.cfgs[state.cfg].label); }
+  function sval(sc, id, w, n) {
+    const ai = S.algos.indexOf(id), wi = S.workloads.indexOf(w), ni = S.counts.indexOf(n);
+    if (sc < 0 || ai < 0 || wi < 0 || ni < 0) return null;
+    return S.values[sc][ai][wi][ni];
+  }
+  function renderScale() {
+    const node = $("c6"), tnode = $("c7"); node.replaceChildren(); tnode.replaceChildren();
+    const sc = scaleCfg(), cfg = D.cfgs[state.cfg];
+    if (sc < 0) {
+      const p = document.createElement("p"); p.className = "meta";
+      p.textContent = `No scaling run for ${cfg.label} yet. Scaling data exists for: ${S ? S.cfgs.join(", ") : "none"}.`;
+      node.appendChild(p); $("c6-legend").replaceChildren(); $("c6-sub").textContent = ""; $("c7-sub").textContent = "";
+      return;
+    }
+    const picks = [
+      { id: "pass0_bitonic", label: "pass0 baseline" },
+      { id: "s1_rank512_bitreg2048_radix", label: "single dispatch" },
+      { id: "m4_b128_p", label: "tier-sized dispatches" },
+    ];
+    let note = "";
+    if (!picks.some((p) => p.id === state.algo)) {
+      if (S.algos.includes(state.algo)) picks.push({ id: state.algo, label: "selected" });
+      else note = ` The selected algorithm (${state.algo}) was not part of the scaling run.`;
+    }
+    const colors = ["--de", "--s6", "--s7", "--s8"].map(css);
+    const series = picks.map((p, k) => ({ ...p, color: colors[k], pts: S.counts.map((n) => { const v = sval(sc, p.id, state.workload, n); return { n, v: v ? v[0] : null, p95: v ? v[1] : null }; }) }));
+    legend($("c6-legend"), series.map((s) => ({ label: `${s.id} (${s.label})`, color: s.color })));
+    $("c6-sub").textContent = `${cfg.label} · ${WL_LABEL[state.workload]}. Median µs per batch with 20, 128, 256 and 512 sorts in the batch (each sort drawn from the same size distribution).${note}`;
+    const W = Math.max(560, node.clientWidth || 900), H = 300, m = { l: 56, r: 24, t: 12, b: 38 };
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const svg = el("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Batch time by number of sorts per batch" }, node);
+    const g = el("g", { transform: `translate(${m.l},${m.t})` }, svg);
+    const all = series.flatMap((s) => s.pts.filter((p) => p.v != null).map((p) => p.v));
+    const [lo, hi] = state.log ? logBounds(all) : [0, Math.max(...all) * 1.05];
+    const sy = scaleY(lo, hi, ih, state.log);
+    const l0 = Math.log2(S.counts[0]), l1 = Math.log2(S.counts[S.counts.length - 1]);
+    const x = (n) => (Math.log2(n) - l0) / (l1 - l0) * iw;
+    for (const t of sy.ticks) { el("line", { x1: 0, x2: iw, y1: sy.f(t), y2: sy.f(t), class: "gridline" }, g); text(g, -8, sy.f(t) + 4, fmt(t), "", "end"); }
+    el("line", { x1: 0, x2: iw, y1: ih, y2: ih, class: "axisline" }, g);
+    for (const n of S.counts) text(g, x(n), ih + 18, n, "lbl", "middle");
+    text(g, iw, ih + 34, "sorts per batch", "", "end");
+    for (const s of series) {
+      const d = s.pts.filter((p) => p.v != null).map((p, i) => `${i ? "L" : "M"}${x(p.n).toFixed(1)},${sy.f(p.v).toFixed(1)}`).join("");
+      el("path", { d, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, g);
+      s.pts.forEach((p) => { if (p.v != null) el("circle", { cx: x(p.n), cy: sy.f(p.v), r: 4, fill: s.color, stroke: css("--surface"), "stroke-width": 2 }, g); });
+    }
+    const hair = el("line", { x1: 0, x2: 0, y1: 0, y2: ih, stroke: css("--axis"), "stroke-width": 1, visibility: "hidden" }, g);
+    const hit = el("rect", { x: -10, y: 0, width: iw + 20, height: ih, fill: "transparent", tabindex: 0, "aria-label": "Hover or focus for values per batch size" }, g);
+    function at(evt, n) {
+      hair.setAttribute("x1", x(n)); hair.setAttribute("x2", x(n)); hair.setAttribute("visibility", "visible");
+      showTip(evt, `${n} sorts per batch · ${cfg.label}`, series.map((q) => {
+        const p = q.pts.find((z) => z.n === n);
+        return { color: q.color, value: p && p.v != null ? fmt(p.v) + " µs" : "–", label: `${q.id} · p95 ${p && p.p95 != null ? fmt(p.p95) : "–"}` };
+      }));
+    }
+    hit.addEventListener("pointermove", (evt) => {
+      const r = svg.getBoundingClientRect(); const px = evt.clientX - r.left - m.l;
+      let best = S.counts[0], bd = Infinity; for (const n of S.counts) { const dd = Math.abs(x(n) - px); if (dd < bd) { bd = dd; best = n; } }
+      at(evt, best);
+    });
+    hit.addEventListener("pointerleave", () => { hair.setAttribute("visibility", "hidden"); hideTip(); });
+    hit.addEventListener("focus", () => { const r = svg.getBoundingClientRect(); const n = S.counts[S.counts.length - 1]; at({ clientX: r.left + m.l + x(n), clientY: r.top + m.t }, n); });
+    hit.addEventListener("blur", () => { hair.setAttribute("visibility", "hidden"); hideTip(); });
+
+    // table: fastest algorithm per workload and batch size, with the two candidates' slowdown
+    $("c7-sub").textContent = `${cfg.label}. Fastest of the ${S.algos.length} algorithms in the scaling run for each workload and batch size (median µs), and how much slower the single-dispatch (s1) and tier-sized (m4p) configurations are.`;
+    const t = document.createElement("table");
+    const hr = document.createElement("tr");
+    for (const h of ["Workload", ...S.counts.map((n) => `${n} sorts`)]) { const th = document.createElement("th"); th.textContent = h; hr.appendChild(th); }
+    const thead = document.createElement("thead"); thead.appendChild(hr); t.appendChild(thead);
+    const tb = document.createElement("tbody");
+    for (const w of S.workloads) {
+      const tr = document.createElement("tr");
+      const n0 = document.createElement("td"); n0.textContent = WL_LABEL[w] || w; n0.style.fontFamily = "var(--font-ui)"; tr.appendChild(n0);
+      for (const n of S.counts) {
+        let best = null;
+        for (const a of S.algos) { const v = sval(sc, a, w, n); if (v && (!best || v[0] < best.v)) best = { a, v: v[0] }; }
+        const td = document.createElement("td"); td.style.textAlign = "left";
+        if (best) {
+          const s1 = sval(sc, "s1_rank512_bitreg2048_radix", w, n), m4 = sval(sc, "m4_b128_p", w, n);
+          const top = document.createElement("div"); top.textContent = `${best.a} ${fmt(best.v)}`; top.style.color = "var(--fg)";
+          const sub = document.createElement("div"); sub.style.color = "var(--muted)";
+          sub.textContent = `s1 ${s1 ? (s1[0] / best.v).toFixed(2) + "×" : "–"} · m4p ${m4 ? (m4[0] / best.v).toFixed(2) + "×" : "–"}`;
+          td.appendChild(top); td.appendChild(sub);
+        } else td.textContent = "–";
+        tr.appendChild(td);
+      }
+      tb.appendChild(tr);
+    }
+    t.className = "scale"; t.appendChild(tb); tnode.appendChild(t);
+  }
+
   // ---------- chart 3: ranked bars for one GPU ----------
   function renderBars() {
     const node = $("c3"); node.replaceChildren();
@@ -579,12 +691,13 @@ details summary { cursor: pointer; color: var(--fg-2); font-size: var(--step-0);
     "Batch time is set by the largest sort in the batch: the 20 sorts run concurrently, one thread group each, so a single 8k sort dominates a batch of otherwise small ones.",
     "The flush before every batch reads and writes 256 MB, then a 50 µs arithmetic-only drain lets the memory system settle; without the drain the RX 7900 XTX measured about 12 µs of flush tail inside the timed window.",
     "The RX 7900 XTX machine ran package 99a07b4 and the NVIDIA machine ran 3ebe93b. They differ only in a CPU-side fix to shader compilation; shaders, timing and workloads are identical.",
+    "Batches with more sorts (scaling run: 20 to 512 sorts per batch, 19 algorithms): the tier-sized m4_b128_p is the best or within a few percent on the realistic mix at every batch size on the RTX 5080, RX 7900 XTX and Radeon iGPU, while the single-dispatch s1_rank512_bitreg2048_radix is 1.3 to 1.9 times slower at 512 sorts. m4_b128_p is the robust default; s1 only wins with small batches on high-end NVIDIA.",
     "Recommended: s1_rank512_bitreg2048_radix (one 1024-thread dispatch: rank sort ≤ 512, register bitonic ≤ 2,048, radix above) for discrete GPUs; m4_b128_p (tier-sized dispatches: rank ≤ 128, bitonic in 128- and 256-thread groups, radix above 2,048) for integrated GPUs.",
     "Intel UHD Graphics 770 results will be added when that machine is available again.",
   ];
   for (const n of notes) { const li = document.createElement("li"); li.textContent = n; $("notes").appendChild(li); }
 
-  function renderAll() { renderTiles(); renderBestPerWorkload(); renderSweep(); renderP95(); renderBars(); renderHeat(); renderTable(); }
+  function renderAll() { renderTiles(); renderBestPerWorkload(); renderSweep(); renderP95(); renderScale(); renderBars(); renderHeat(); renderTable(); }
   renderAll();
   let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(renderAll, 150); });
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", renderAll);

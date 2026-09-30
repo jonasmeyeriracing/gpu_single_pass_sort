@@ -1,0 +1,1190 @@
+GpuSort benchmark results
+=========================
+Date:         2026-09-30 14:59:15
+Computer:     JONAS-CPH
+Label:        1/2: smoke scale 20,128,256,512 sorts, default wave size, every GPU
+Command line: "C:\Users\jonas\Desktop\GpuSort-portable-495478d\GpuSort.exe"  --shaders "C:\Users\jonas\Desktop\GpuSort-portable-495478d\shaders" --smoke --dred --algo-file algorithms_scale.txt --sorts 20,128,256,512 --iterations 8  --label "1/2: smoke scale 20,128,256,512 sorts, default wave size, every GPU" --out "C:\Users\jonas\Desktop\GpuSort-portable-495478d\results\JONAS-CPH_20260930_1458\scale_smoke.txt" --log "C:\Users\jonas\Desktop\GpuSort-portable-495478d\results\JONAS-CPH_20260930_1458\scale_smoke.log"
+Shader dir:   C:\Users\jonas\Desktop\GpuSort-portable-495478d\shaders
+Algo list:    algorithms_scale.txt
+CSV files:    scale_smoke.csv (per GPU x algorithm x workload), scale_smoke_samples.csv (per iteration), scale_smoke_wave_probe.csv (per wave configuration); columns: CSV_FORMAT.md
+Iterations:   per sorts-per-iteration count (every GPU x workload x algorithm runs once per count,
+              in this order), measured + 0 warmup: 20 sorts: 8, 128 sorts: 8, 256 sorts: 8, 512 sorts: 8
+Cache flush:  256 MB read+write compute pass before every timed sort, then a DRAIN right before the
+              start timestamp (a dispatch on a private 4 KB buffer + UAV barrier), so the tail of the
+              flush (barrier wait / cache maintenance a driver defers to the next dispatch) is not
+              inside the timed window.
+Flush mode:   'full_d50' for algorithms without their own (the measurement of record).
+              *** NOTE: the default is full_d50 (flush, then a ~50 us ALU spin drain) since the final
+              *** set; packages up to 627724b used 'full' (flush + the pass5 one-group drain), which
+              *** on the RX 7900 XTX still timed ~12 us of post-flush penalty in most small-workload
+              *** iterations (mostly_empty median full 14.7 vs full_d50 1.8 us), and pass0-pass4 used
+              *** full_legacy (no drain). Results measured with another default are NOT directly
+              *** comparable; the flush_mode column / the Algorithms list below says which one ran.
+              full = code + data cold (flush, one-group drain, pass5); full_legacy = pre-pass5 full
+              (no drain); full_ro = read-only flush, no drain (diagnostic); code = only code cold
+              (flush before the upload, drain); data = only data cold (untimed warm-up run of the
+              same dispatches, drain); none = no flush (drain)
+              Drain suffixes (pass6): <mode>_d<N> = SPIN drain of about N us instead (an ALU-only
+              dispatch, 4 groups x 64 threads, one 16-byte store per thread to the private 4 KB
+              buffer, loop count from the per-GPU calibration below, + UAV barrier); _d0 = no drain
+              (full_d0 = full_legacy); _dg = the pass5 one-group drain
+Timing:       GPU timestamps around the sort ExecuteIndirect dispatches only, per iteration (all N sorts
+              of the batch, N = the sorts per iteration of the table)
+GPUs:
+  [0] NVIDIA GeForce RTX 5080  (driver 32.0.16.1714, timestamp freq 1000000000 Hz, wall time 16.5 s)
+      vendor 10DE device 2C02, 15977 MB VRAM
+      wave lanes 32-32, shaders compiled with WAVE_SIZE=32
+      discrete GPU, measured iterations per workload x algorithm: 8 at 20 sorts, 8 at 128 sorts, 8 at 256 sorts, 8 at 512 sorts
+      run-time estimate (calibrated up front): 0.79 ms at 20 sorts, 0.93 ms at 128 sorts, 1.23 ms at 256 sorts, 1.62 ms at 512 sorts per iteration -> ~7 s for this GPU, actual 16.5 s
+      stable power: off
+      drain spin: 111.73 loop iterations per us (calibrated before the first sort: 11111 vs 1
+              iterations, median of 8 each, 99.44 us apart; the 1-iteration dispatch + barrier
+              takes 1.49 us); check: 20 us = 2235 iterations measured 21.41 us incl. that overhead
+      Wave probe: compiled without [WaveSize] (driver's choice), groups 64/128/256/512/1024: observed lanes 32, lane mapping OK, waves OK, readlane^32 n/a, readlane^1 OK, readlane+16 OK, readlane(last) OK, prefixsum OK, activesum OK, countbits OK, ballot OK, shflscan x8 OK, shflscan after if OK, shflscan after select OK
+      Wave probe verdict: OK, the sort shaders' configuration (WAVE_SIZE=32) runs with 32 lanes and lane = SV_GroupIndex % 32
+  skipped: Microsoft Basic Render Driver: software adapter
+  skipped: NVIDIA GeForce RTX 5080 (LUID 00000000:00056481): indirect display / non-render adapter
+Run-time estimate: ~7 s up front (per GPU: 4 calibration iterations of the upload + flush +
+              drain + readback work without a sort, times the iterations of the run)
+Total benchmark time: 16.6 s (after confirmation)
+
+Workload size distribution (8 measured iterations x 20 sorts; counts are sorts per size tier)
+  workload         total elems elems/iter         0      1-64    65-128   129-512  513-2048 2049-8192    max  distribution
+  mostly_empty            1474      184.2       117        43         0         0         0         0     63  70% empty, rest 1-64
+  mostly_small           10756     1344.5         1        73        86         0         0         0    128  uniform 0-128
+  realistic_mix          69310     8663.8        26         8        14        90        19         3   7892  15% empty, 72% 16-512, 10% 513-2048, 3% 2049-8192
+  mostly_large          803487   100435.9         0         0         0         0         0       160   8095  uniform 2048-8192
+  worst_case           1310720   163840.0         0         0         0         0         0       160   8192  all 8192
+  edges                 204639    25579.9         6        48        16        30        30        30   8192  tier boundaries 0-8192 (30 fixed sizes, cycled)
+  mostly_mid            209660    26207.5         0         0         0         0       160         0   2047  uniform 513-2048
+  mostly_medium          49601     6200.1         0         0         0       160         0         0    512  uniform 129-512
+  sweep                  63360     7920.0         0        40        20        60        40         0   1024  all sorts of an iteration the same size, 16 sizes 32-8192 cycled per iteration
+  sparse_keys           676159    84519.9         0         5         2         4        20       129   8162  uniform 1-8192; each 4-bit key digit is constant within a sort with p = 1/2
+
+Workload size distribution (8 measured iterations x 128 sorts; counts are sorts per size tier)
+  workload         total elems elems/iter         0      1-64    65-128   129-512  513-2048 2049-8192    max  distribution
+  mostly_empty            9106     1138.2       744       280         0         0         0         0     64  70% empty, rest 1-64
+  mostly_small           67588     8448.5         7       496       521         0         0         0    128  uniform 0-128
+  realistic_mix         465057    58132.1       160        58        86       590       103        27   7892  15% empty, 72% 16-512, 10% 513-2048, 3% 2049-8192
+  mostly_large         5256921   657115.1         0         0         0         0         0      1024   8191  uniform 2048-8192
+  worst_case           8388608  1048576.0         0         0         0         0         0      1024   8192  all 8192
+  edges                1389552   173694.0        35       275       102       204       204       204   8192  tier boundaries 0-8192 (30 fixed sizes, cycled)
+  mostly_mid           1321466   165183.2         0         0         0         0      1024         0   2048  uniform 513-2048
+  mostly_medium         331054    41381.8         0         0         0      1024         0         0    512  uniform 129-512
+  sweep                 405504    50688.0         0       256       128       384       256         0   1024  all sorts of an iteration the same size, 16 sizes 32-8192 cycled per iteration
+  sparse_keys          4233125   529140.6         0        10         9        47       191       767   8180  uniform 1-8192; each 4-bit key digit is constant within a sort with p = 1/2
+
+Workload size distribution (8 measured iterations x 256 sorts; counts are sorts per size tier)
+  workload         total elems elems/iter         0      1-64    65-128   129-512  513-2048 2049-8192    max  distribution
+  mostly_empty           18272     2284.0      1467       581         0         0         0         0     64  70% empty, rest 1-64
+  mostly_small          134801    16850.1        16       987      1045         0         0         0    128  uniform 0-128
+  realistic_mix         975364   121920.5       324       128       178      1151       200        67   7892  15% empty, 72% 16-512, 10% 513-2048, 3% 2049-8192
+  mostly_large        10537756  1317219.5         0         0         0         0         0      2048   8191  uniform 2048-8192
+  worst_case          16777216  2097152.0         0         0         0         0         0      2048   8192  all 8192
+  edges                2779257   347407.1        69       551       204       408       408       408   8192  tier boundaries 0-8192 (30 fixed sizes, cycled)
+  mostly_mid           2629395   328674.4         0         0         0         0      2048         0   2048  uniform 513-2048
+  mostly_medium         654383    81797.9         0         0         0      2048         0         0    512  uniform 129-512
+  sweep                 811008   101376.0         0       512       256       768       512         0   1024  all sorts of an iteration the same size, 16 sizes 32-8192 cycled per iteration
+  sparse_keys          8481034  1060129.2         0        15        16       101       390      1526   8186  uniform 1-8192; each 4-bit key digit is constant within a sort with p = 1/2
+
+Workload size distribution (8 measured iterations x 512 sorts; counts are sorts per size tier)
+  workload         total elems elems/iter         0      1-64    65-128   129-512  513-2048 2049-8192    max  distribution
+  mostly_empty           38370     4796.2      2906      1190         0         0         0         0     64  70% empty, rest 1-64
+  mostly_small          268585    33573.1        36      1974      2086         0         0         0    128  uniform 0-128
+  realistic_mix        1937656   242207.0       608       270       390      2314       379       135   8184  15% empty, 72% 16-512, 10% 513-2048, 3% 2049-8192
+  mostly_large        21030015  2628751.9         0         0         0         0         0      4096   8192  uniform 2048-8192
+  worst_case          33554432  4194304.0         0         0         0         0         0      4096   8192  all 8192
+  edges                5559630   694953.8       137      1096       411       820       816       816   8192  tier boundaries 0-8192 (30 fixed sizes, cycled)
+  mostly_mid           5245300   655662.5         0         0         0         0      4096         0   2048  uniform 513-2048
+  mostly_medium        1302697   162837.1         0         0         0      4096         0         0    512  uniform 129-512
+  sweep                1622016   202752.0         0      1024       512      1536      1024         0   1024  all sorts of an iteration the same size, 16 sizes 32-8192 cycled per iteration
+  sparse_keys         16876591  2109573.9         0        28        31       198       758      3081   8191  uniform 1-8192; each 4-bit key digit is constant within a sort with p = 1/2
+
+Algorithms (flush mode; per dispatch: threads per group t / groupshared bytes B; DXIL container
+bytes per dispatch; compiled for WAVE_SIZE=32; then the pass that introduced it, its tags [..] and its description)
+  pass0_bitonic                 full_d50     1024t/32768B                                  5252
+                                pass 0: LDS bitonic sort for every size, one 1024-thread dispatch (the pass0 baseline)
+  s1_radix                      full_d50     1024t/32768B                                  25204
+                                pass 2: 1 dispatch @1024: P for every size (the radix fixed-cost anchor)
+  s1_rank512_bitreg2048_radix   full_d50     1024t/32768B                                  30268
+                                pass 2 [rec_discrete reference]: 1 dispatch @1024 (32 KB): R <=512, B8 <=2048, P above. The portable reference; RECOMMENDED for discrete GPUs
+  s1_rank512_bitreg4096_radix   full_d50     1024t/32768B                                  30268
+                                pass 2: 1 dispatch @1024: R <=512, B8 <=4096, P above
+  s3_rank512_bitreg2048_radix2  full_d50     1024t/32768B                                  30372
+                                pass 3: 1 dispatch @1024: R <=512, B8 <=2048, radix2 above
+  s4_3tier_rx3r                 full_d50     1024t/32768B                                  19024
+                                pass 4: 1 dispatch @1024: R <=512, B8 <=2048, radix3 (rolled pass loop) above
+  t2_rank512_bitonic            full_d50     512t/2048B;1024t/32768B                       5280 + 5232
+                                pass 1: 2 dispatches: R <=512 @512, LDS bitonic 513+ @1024
+  t3_rank128_rank512_bitonic    full_d50     128t/512B;512t/2048B;1024t/32768B             5280 + 5280 + 5232
+                                pass 1: 3 dispatches: R <=128 @128, R 129-512 @512, LDS bitonic 513+ @1024
+  m3_ref                        full_d50     1024t/32768B;256t/8192B;512t/2048B            25196 + 8860 + 5356
+                                pass 7: 3 dispatches: P 2049+ @1024 (32 KB), B8 513-2048 @256 (8 KB), R <=512 @512 (2 KB)
+  m3_x512                       full_d50     512t/32768B;256t/8192B;512t/2048B             21212 + 8860 + 5356
+                                pass 7: 3 dispatches: X 2049+ @512, B8 513-2048 @256, R <=512 @512
+  m4_b128_p                     full_d50     1024t/32768B;256t/8192B;128t/2048B;128t/512B  25196 + 8860 + 7076 + 5356
+                                pass 7 [rec_integrated]: 4 dispatches: P 2049+ @1024, B8 513-2048 @256, B4 129-512 @128, R <=128 @128. RECOMMENDED for integrated GPUs
+  m4_b128                       full_d50     256t/32768B;256t/8192B;128t/2048B;128t/512B   40708 + 8860 + 7076 + 5356
+                                pass 7: 4 dispatches: X 2049+ @256, B8 513-2048 @256, B4 129-512 @128, R <=128 @128
+  m4_b128e8                     full_d50     256t/32768B;256t/8192B;128t/2048B;128t/512B   40708 + 8860 + 8856 + 5356
+                                pass 7: 4 dispatches: X 2049+ @256, B8 513-2048 @256, B8 129-512 @128, R <=128 @128
+  m4_b64                        full_d50     256t/32768B;256t/8192B;128t/2048B;64t/256B    40708 + 8860 + 7076 + 5356
+                                pass 7: 4 dispatches: X 2049+ @256, B8 513-2048 @256, B4 65-512 @128, R <=64 @64
+  m4_b256                       full_d50     256t/32768B;256t/8192B;128t/2048B;256t/1024B  40708 + 8860 + 7076 + 5356
+                                pass 7: 4 dispatches: X 2049+ @256, B8 513-2048 @256, B4 257-512 @128, R <=256 @256
+  s7_256                        full_d50     256t/32768B                                   46636
+                                pass 7: 1 dispatch @256 (32 KB): R x2 <=512, B8 <=2048, X above
+  s7_512                        full_d50     512t/32768B                                   26384
+                                pass 7: 1 dispatch @512 (32 KB): R <=512, B8 <=2048, X above
+  s7_256b                       full_d50     256t/32768B                                   48668
+                                pass 7: 1 dispatch @256 (32 KB): R <=128, B4 <=512, B8 <=2048, X above
+  x7_all_256                    full_d50     256t/32768B                                   40700
+                                pass 7: 1 dispatch @256: X for every size
+
+Sort timings in microseconds (per iteration = one batch of N sorts; per GPU one table per N)
+
+[0] NVIDIA GeForce RTX 5080  (WAVE_SIZE 32)
+
+  === 20 sorts per iteration (8 measured iterations per workload x algorithm) ===
+  workload       algorithm                          min    median      mean       p95       max  fails
+  mostly_empty   pass0_bitonic                     3.62      4.37      4.42      5.28      5.28      0
+                 s1_radix                         11.84     11.92     12.05     12.64     12.64      0
+                 s1_rank512_bitreg2048_radix       2.85      2.98      3.08      3.97      3.97      0
+                 s1_rank512_bitreg4096_radix       2.82      2.93      3.06      4.03      4.03      0
+                 s3_rank512_bitreg2048_radix2      2.85      2.94      3.10      4.16      4.16      0
+                 s4_3tier_rx3r                     2.85      3.12      3.18      3.58      3.58      0
+                 t2_rank512_bitonic                3.07      3.89      3.89      4.51      4.51      0
+                 t3_rank128_rank512_bitonic        3.58      4.37      4.36      5.09      5.09      0
+                 m3_ref                            4.29      5.25      5.08      5.82      5.82      0
+                 m3_x512                           4.32      5.04      5.14      6.05      6.05      0
+                 m4_b128_p                         4.38      5.76      5.58      6.43      6.43      0
+                 m4_b128                           4.42      5.71      5.51      6.46      6.46      0
+                 m4_b128e8                         4.61      5.94      5.74      6.40      6.40      0
+                 m4_b64                            4.74      5.49      5.54      6.37      6.37      0
+                 m4_b256                           4.45      5.23      5.26      5.82      5.82      0
+                 s7_256                            2.88      2.94      2.97      3.10      3.10      0
+                 s7_512                            2.91      3.17      3.35      4.16      4.16      0
+                 s7_256b                           2.82      2.91      3.01      3.78      3.78      0
+                 x7_all_256                        4.13      4.27      4.39      5.38      5.38      0
+  mostly_small   pass0_bitonic                     4.83      4.96      4.95      5.02      5.02      0
+                 s1_radix                         11.87     12.00     12.19     12.83     12.83      0
+                 s1_rank512_bitreg2048_radix       2.91      2.99      3.13      3.97      3.97      0
+                 s1_rank512_bitreg4096_radix       2.88      3.10      3.23      4.10      4.10      0
+                 s3_rank512_bitreg2048_radix2      2.85      3.01      3.12      3.84      3.84      0
+                 s4_3tier_rx3r                     2.94      3.09      3.18      3.97      3.97      0
+                 t2_rank512_bitonic                3.07      3.28      3.49      4.38      4.38      0
+                 t3_rank128_rank512_bitonic        3.26      3.86      4.07      5.28      5.28      0
+                 m3_ref                            4.32      4.83      5.01      5.82      5.82      0
+                 m3_x512                           4.42      4.75      5.02      5.98      5.98      0
+                 m4_b128_p                         5.25      5.82      5.96      7.49      7.49      0
+                 m4_b128                           4.38      5.58      5.65      6.75      6.75      0
+                 m4_b128e8                         4.51      5.34      5.48      6.75      6.75      0
+                 m4_b64                            5.34      6.40      6.36      7.30      7.30      0
+                 m4_b256                           4.77      5.71      5.59      6.11      6.11      0
+                 s7_256                            3.01      3.17      3.16      3.33      3.33      0
+                 s7_512                            2.94      3.12      3.20      3.90      3.90      0
+                 s7_256b                           2.78      2.85      3.03      4.00      4.00      0
+                 x7_all_256                        4.16      4.30      4.39      5.12      5.12      0
+  realistic_mix  pass0_bitonic                     8.10     12.54     20.80     43.36     43.36      0
+                 s1_radix                         11.90     12.30     12.69     15.62     15.62      0
+                 s1_rank512_bitreg2048_radix       6.72      9.07     11.11     17.82     17.82      0
+                 s1_rank512_bitreg4096_radix       7.04      8.88     10.86     17.02     17.02      0
+                 s3_rank512_bitreg2048_radix2      6.72      9.63     11.06     17.44     17.44      0
+                 s4_3tier_rx3r                     6.82      9.22     11.03     19.58     19.58      0
+                 t2_rank512_bitonic                9.89     14.08     22.10     44.29     44.29      0
+                 t3_rank128_rank512_bitonic       10.91     15.07     22.93     45.73     45.73      0
+                 m3_ref                            8.35     10.53     11.41     17.09     17.09      0
+                 m3_x512                           8.74      9.74     11.13     18.53     18.53      0
+                 m4_b128_p                         8.32     10.02     11.39     17.41     17.41      0
+                 m4_b128                           8.54      9.86     14.46     32.13     32.13      0
+                 m4_b128e8                         7.58     10.54     14.84     32.58     32.58      0
+                 m4_b64                            8.54     10.38     14.69     32.19     32.19      0
+                 m4_b256                           7.84     10.62     14.70     32.06     32.06      0
+                 s7_256                            6.72      8.19     13.84     33.66     33.66      0
+                 s7_512                            6.27      8.48     10.42     19.46     19.46      0
+                 s7_256b                           5.86      8.88     13.82     33.66     33.66      0
+                 x7_all_256                        6.91     10.38     14.14     31.58     31.58      0
+  mostly_large   pass0_bitonic                    43.94     44.21     44.23     44.48     44.48      0
+                 s1_radix                         15.94     16.58     16.76     18.24     18.24      0
+                 s1_rank512_bitreg2048_radix      16.83     17.06     17.24     18.14     18.14      0
+                 s1_rank512_bitreg4096_radix      16.16     16.72     16.76     17.98     17.98      0
+                 s3_rank512_bitreg2048_radix2     16.06     17.26     17.48     19.01     19.01      0
+                 s4_3tier_rx3r                    18.46     19.42     19.54     20.70     20.70      0
+                 t2_rank512_bitonic               45.22     45.86     45.80     46.37     46.37      0
+                 t3_rank128_rank512_bitonic       45.02     46.22     46.12     46.85     46.85      0
+                 m3_ref                           16.10     16.59     16.85     18.11     18.11      0
+                 m3_x512                          18.02     19.02     19.00     19.55     19.55      0
+                 m4_b128_p                        16.13     16.86     17.00     18.14     18.14      0
+                 m4_b128                          29.38     31.12     30.79     31.65     31.65      0
+                 m4_b128e8                        29.50     31.36     30.82     31.68     31.68      0
+                 m4_b64                           29.38     30.88     30.72     31.62     31.62      0
+                 m4_b256                          29.22     30.91     30.84     32.19     32.19      0
+                 s7_256                           29.73     31.34     31.04     31.58     31.58      0
+                 s7_512                           18.34     19.30     19.26     19.90     19.90      0
+                 s7_256b                          29.57     30.78     30.70     31.36     31.36      0
+                 x7_all_256                       28.80     30.54     30.24     30.88     30.88      0
+  worst_case     pass0_bitonic                    44.48     44.69     44.77     45.70     45.70      0
+                 s1_radix                         19.01     19.18     19.33     20.35     20.35      0
+                 s1_rank512_bitreg2048_radix      19.94     20.13     20.14     20.42     20.42      0
+                 s1_rank512_bitreg4096_radix      19.14     19.54     19.66     20.54     20.54      0
+                 s3_rank512_bitreg2048_radix2     19.49     19.79     19.80     20.10     20.10      0
+                 s4_3tier_rx3r                    21.25     21.54     21.58     22.24     22.24      0
+                 t2_rank512_bitonic               45.57     45.74     46.06     46.82     46.82      0
+                 t3_rank128_rank512_bitonic       45.28     46.75     46.66     47.71     47.71      0
+                 m3_ref                           19.17     19.42     19.53     20.45     20.45      0
+                 m3_x512                          20.32     20.43     20.52     20.80     20.80      0
+                 m4_b128_p                        19.20     19.58     19.66     20.51     20.51      0
+                 m4_b128                          33.25     33.70     33.86     34.88     34.88      0
+                 m4_b128e8                        33.34     33.60     95.01    524.86    524.86      0
+                 m4_b64                           33.38     33.66     33.66     33.95     33.95      0
+                 m4_b256                          33.34     33.87     33.97     34.94     34.94      0
+                 s7_256                           34.43     34.82     34.86     35.49     35.49      0
+                 s7_512                           21.06     21.52     21.46     21.66     21.66      0
+                 s7_256b                          34.66     34.99     35.04     35.68     35.68      0
+                 x7_all_256                       32.93     33.22     33.29     34.05     34.05      0
+  edges          pass0_bitonic                     8.00     43.94     30.72     44.32     44.32      0
+                 s1_radix                         12.06     18.32     16.14     18.72     18.72      0
+                 s1_rank512_bitreg2048_radix       6.75     18.32     14.21     19.30     19.30      0
+                 s1_rank512_bitreg4096_radix       6.72     17.65     13.66     17.92     17.92      0
+                 s3_rank512_bitreg2048_radix2      6.78     18.66     14.31     18.91     18.91      0
+                 s4_3tier_rx3r                     6.88     21.17     15.92     21.50     21.50      0
+                 t2_rank512_bitonic                9.06     44.77     31.87     46.21     46.21      0
+                 t3_rank128_rank512_bitonic        9.44     45.33     32.59     46.91     46.91      0
+                 m3_ref                            7.39     18.50     14.70     18.75     18.75      0
+                 m3_x512                           7.01     19.62     15.36     20.93     20.93      0
+                 m4_b128_p                         7.23     18.62     14.64     19.17     19.17      0
+                 m4_b128                           7.81     30.62     22.43     31.14     31.14      0
+                 m4_b128e8                         7.49     30.67     22.41     31.39     31.39      0
+                 m4_b64                            7.94     30.75     22.34     31.84     31.84      0
+                 m4_b256                           7.65     30.34     22.56     32.35     32.35      0
+                 s7_256                            6.02     31.09     21.76     31.36     31.36      0
+                 s7_512                            6.21     20.02     15.10     21.18     21.18      0
+                 s7_256b                           6.11     30.86     21.90     31.94     31.94      0
+                 x7_all_256                        6.98     29.98     21.50     30.43     30.43      0
+  mostly_mid     pass0_bitonic                    12.54     12.62     12.64     12.86     12.86      0
+                 s1_radix                         12.13     12.42     12.40     12.83     12.83      0
+                 s1_rank512_bitreg2048_radix       8.80      8.93      8.95      9.22      9.22      0
+                 s1_rank512_bitreg4096_radix       8.90      9.02      9.01      9.25      9.25      0
+                 s3_rank512_bitreg2048_radix2      9.28      9.34      9.42      9.82      9.82      0
+                 s4_3tier_rx3r                     9.38      9.47      9.50      9.76      9.76      0
+                 t2_rank512_bitonic               13.28     13.78     14.07     15.46     15.46      0
+                 t3_rank128_rank512_bitonic       13.73     14.54     14.55     15.46     15.46      0
+                 m3_ref                            9.22      9.74      9.83     10.78     10.78      0
+                 m3_x512                           9.12     10.67     10.40     10.82     10.82      0
+                 m4_b128_p                         9.18      9.74      9.73     10.18     10.18      0
+                 m4_b128                           9.25     10.16     10.18     10.91     10.91      0
+                 m4_b128e8                         9.34     10.58     10.42     10.98     10.98      0
+                 m4_b64                            9.41     10.72     10.43     11.49     11.49      0
+                 m4_b256                           9.44      9.60      9.92     11.26     11.26      0
+                 s7_256                            8.29      8.42      8.52      9.18      9.18      0
+                 s7_512                            8.45      8.77      8.76      9.15      9.15      0
+                 s7_256b                           8.42      8.56      8.69      9.63      9.63      0
+                 x7_all_256                       10.02     10.16     10.30     11.04     11.04      0
+  mostly_medium  pass0_bitonic                     6.43      6.56      6.59      6.82      6.82      0
+                 s1_radix                         11.68     12.13     12.11     12.64     12.64      0
+                 s1_rank512_bitreg2048_radix       4.58      4.94      4.93      5.09      5.09      0
+                 s1_rank512_bitreg4096_radix       4.74      4.98      5.04      5.66      5.66      0
+                 s3_rank512_bitreg2048_radix2      4.93      4.99      5.13      5.79      5.79      0
+                 s4_3tier_rx3r                     4.61      5.06      5.01      5.25      5.25      0
+                 t2_rank512_bitonic                4.70      4.90      5.01      5.95      5.95      0
+                 t3_rank128_rank512_bitonic        5.22      6.06      6.17      7.20      7.20      0
+                 m3_ref                            6.40      7.09     26.55    163.78    163.78      0
+                 m3_x512                           5.92      6.91      6.70      7.62      7.62      0
+                 m4_b128_p                         6.53      6.86      6.96      7.78      7.78      0
+                 m4_b128                           6.59      7.92      7.58      8.13      8.13      0
+                 m4_b128e8                         6.62      7.57      7.66      8.74      8.74      0
+                 m4_b64                            7.07      7.52      7.53      8.03      8.03      0
+                 m4_b256                           6.59      7.41      7.30      7.94      7.94      0
+                 s7_256                            4.90      5.12      5.12      5.34      5.34      0
+                 s7_512                            4.54      5.01      5.09      6.11      6.11      0
+                 s7_256b                           4.86      5.15      5.08      5.18      5.18      0
+                 x7_all_256                        5.28      5.36      5.40      5.57      5.57      0
+  sweep          pass0_bitonic                     4.16      6.10      6.26      9.25      9.25      0
+                 s1_radix                         11.84     12.10     12.19     12.70     12.70      0
+                 s1_rank512_bitreg2048_radix       2.91      3.79      4.51      7.17      7.17      0
+                 s1_rank512_bitreg4096_radix       3.01      4.48      4.70      7.14      7.14      0
+                 s3_rank512_bitreg2048_radix2      2.91      3.90      4.45      6.98      6.98      0
+                 s4_3tier_rx3r                     2.98      4.06      4.70      7.65      7.65      0
+                 t2_rank512_bitonic                3.04      4.10      5.33     10.40     10.40      0
+                 t3_rank128_rank512_bitonic        3.42      5.52      6.34     11.10     11.10      0
+                 m3_ref                            4.16      6.19      6.32      8.77      8.77      0
+                 m3_x512                           4.00      6.24      6.25      8.77      8.77      0
+                 m4_b128_p                         5.28      7.07      7.00      8.74      8.74      0
+                 m4_b128                           4.45      6.78      6.59      8.93      8.93      0
+                 m4_b128e8                         4.74      6.86      6.88      9.28      9.28      0
+                 m4_b64                            4.93      6.70      6.72      9.34      9.34      0
+                 m4_b256                           4.58      7.06      6.61      8.03      8.03      0
+                 s7_256                            2.88      4.64      4.49      6.21      6.21      0
+                 s7_512                            3.10      3.87      4.42      6.56      6.56      0
+                 s7_256b                           2.85      4.94      4.74      7.17      7.17      0
+                 x7_all_256                        4.32      5.28      5.54      7.55      7.55      0
+  sparse_keys    pass0_bitonic                    43.81     43.95     44.10     44.83     44.83      0
+                 s1_radix                         15.81     16.91     16.97     18.56     18.56      0
+                 s1_rank512_bitreg2048_radix      16.51     16.80     16.82     17.15     17.15      0
+                 s1_rank512_bitreg4096_radix      16.22     16.77     16.74     17.73     17.73      0
+                 s3_rank512_bitreg2048_radix2     16.61     17.52     17.44     18.37     18.37      0
+                 s4_3tier_rx3r                    18.46     19.44     19.32     19.84     19.84      0
+                 t2_rank512_bitonic               44.74     45.78     45.72     46.75     46.75      0
+                 t3_rank128_rank512_bitonic       45.09     45.71     45.67     45.95     45.95      0
+                 m3_ref                           16.32     17.20     16.96     17.44     17.44      0
+                 m3_x512                          18.30     18.91     18.94     19.81     19.81      0
+                 m4_b128_p                        16.29     16.98     17.12     17.92     17.92      0
+                 m4_b128                          28.35     30.48     30.48     32.13     32.13      0
+                 m4_b128e8                        28.64     30.37     30.30     31.26     31.26      0
+                 m4_b64                           28.32     30.35     30.21     31.30     31.30      0
+                 m4_b256                          28.42     30.75     30.42     31.14     31.14      0
+                 s7_256                           28.77     30.93     30.69     31.42     31.42      0
+                 s7_512                           17.98     19.02     18.98     19.74     19.74      0
+                 s7_256b                          28.64     30.50     30.24     31.10     31.10      0
+                 x7_all_256                       28.22     29.68     29.60     30.40     30.40      0
+
+  sweep: median us per iteration by sort size (all 20 sorts of an iteration have that size)
+  algorithm                         32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  pass0_bitonic                   4.16    4.61    4.77    5.54    6.66    6.82    8.29    9.25       -       -       -       -       -       -       -       -
+  s1_radix                       11.84   12.48   12.10   12.06   12.26   12.00   12.70   12.10       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg2048_radix     3.14    2.91    3.33    3.52    4.06    4.90    7.17    7.04       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg4096_radix     3.01    3.36    3.04    4.74    4.22    5.15    6.98    7.14       -       -       -       -       -       -       -       -
+  s3_rank512_bitreg2048_radix2    2.91    3.01    3.07    3.58    4.22    4.96    6.88    6.98       -       -       -       -       -       -       -       -
+  s4_3tier_rx3r                   3.78    2.98    2.98    3.55    4.35    5.15    7.65    7.14       -       -       -       -       -       -       -       -
+  t2_rank512_bitonic              3.55    3.04    3.20    4.10    4.10    5.06    9.18   10.40       -       -       -       -       -       -       -       -
+  t3_rank128_rank512_bitonic      3.42    4.99    3.42    5.06    5.98    6.82   11.10    9.92       -       -       -       -       -       -       -       -
+  m3_ref                          5.47    4.16    5.22    5.47    6.91    7.04    8.77    7.49       -       -       -       -       -       -       -       -
+  m3_x512                         6.34    4.00    4.83    6.14    5.22    6.62    8.10    8.77       -       -       -       -       -       -       -       -
+  m4_b128_p                       5.28    5.82    6.18    6.98    7.17    8.74    8.13    7.68       -       -       -       -       -       -       -       -
+  m4_b128                         5.02    4.45    5.50    6.75    6.91    6.82    8.93    8.32       -       -       -       -       -       -       -       -
+  m4_b128e8                       4.74    5.86    6.05    6.66    8.13    7.07    7.30    9.28       -       -       -       -       -       -       -       -
+  m4_b64                          4.93    5.09    5.73    6.18    7.23    7.39    9.34    7.90       -       -       -       -       -       -       -       -
+  m4_b256                         4.58    6.91    5.50    5.54    7.20    7.46    7.65    8.03       -       -       -       -       -       -       -       -
+  s7_256                          2.88    2.94    3.23    4.61    4.67    5.34    6.02    6.21       -       -       -       -       -       -       -       -
+  s7_512                          3.10    3.17    3.10    3.58    4.16    5.34    6.37    6.56       -       -       -       -       -       -       -       -
+  s7_256b                         3.65    3.07    2.85    4.74    5.18    5.15    6.08    7.17       -       -       -       -       -       -       -       -
+  x7_all_256                      4.32    4.38    5.02    5.22    5.34    5.76    6.69    7.55       -       -       -       -       -       -       -       -
+
+  sweep: mean us per iteration by sort size (all 20 sorts of an iteration have that size)
+  algorithm                         32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  pass0_bitonic                   4.16    4.61    4.77    5.54    6.66    6.82    8.29    9.25       -       -       -       -       -       -       -       -
+  s1_radix                       11.84   12.48   12.10   12.06   12.26   12.00   12.70   12.10       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg2048_radix     3.14    2.91    3.33    3.52    4.06    4.90    7.17    7.04       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg4096_radix     3.01    3.36    3.04    4.74    4.22    5.15    6.98    7.14       -       -       -       -       -       -       -       -
+  s3_rank512_bitreg2048_radix2    2.91    3.01    3.07    3.58    4.22    4.96    6.88    6.98       -       -       -       -       -       -       -       -
+  s4_3tier_rx3r                   3.78    2.98    2.98    3.55    4.35    5.15    7.65    7.14       -       -       -       -       -       -       -       -
+  t2_rank512_bitonic              3.55    3.04    3.20    4.10    4.10    5.06    9.18   10.40       -       -       -       -       -       -       -       -
+  t3_rank128_rank512_bitonic      3.42    4.99    3.42    5.06    5.98    6.82   11.10    9.92       -       -       -       -       -       -       -       -
+  m3_ref                          5.47    4.16    5.22    5.47    6.91    7.04    8.77    7.49       -       -       -       -       -       -       -       -
+  m3_x512                         6.34    4.00    4.83    6.14    5.22    6.62    8.10    8.77       -       -       -       -       -       -       -       -
+  m4_b128_p                       5.28    5.82    6.18    6.98    7.17    8.74    8.13    7.68       -       -       -       -       -       -       -       -
+  m4_b128                         5.02    4.45    5.50    6.75    6.91    6.82    8.93    8.32       -       -       -       -       -       -       -       -
+  m4_b128e8                       4.74    5.86    6.05    6.66    8.13    7.07    7.30    9.28       -       -       -       -       -       -       -       -
+  m4_b64                          4.93    5.09    5.73    6.18    7.23    7.39    9.34    7.90       -       -       -       -       -       -       -       -
+  m4_b256                         4.58    6.91    5.50    5.54    7.20    7.46    7.65    8.03       -       -       -       -       -       -       -       -
+  s7_256                          2.88    2.94    3.23    4.61    4.67    5.34    6.02    6.21       -       -       -       -       -       -       -       -
+  s7_512                          3.10    3.17    3.10    3.58    4.16    5.34    6.37    6.56       -       -       -       -       -       -       -       -
+  s7_256b                         3.65    3.07    2.85    4.74    5.18    5.15    6.08    7.17       -       -       -       -       -       -       -       -
+  x7_all_256                      4.32    4.38    5.02    5.22    5.34    5.76    6.69    7.55       -       -       -       -       -       -       -       -
+
+  sweep: p95 us per iteration by sort size (all 20 sorts of an iteration have that size)
+  algorithm                         32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  pass0_bitonic                   4.16    4.61    4.77    5.54    6.66    6.82    8.29    9.25       -       -       -       -       -       -       -       -
+  s1_radix                       11.84   12.48   12.10   12.06   12.26   12.00   12.70   12.10       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg2048_radix     3.14    2.91    3.33    3.52    4.06    4.90    7.17    7.04       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg4096_radix     3.01    3.36    3.04    4.74    4.22    5.15    6.98    7.14       -       -       -       -       -       -       -       -
+  s3_rank512_bitreg2048_radix2    2.91    3.01    3.07    3.58    4.22    4.96    6.88    6.98       -       -       -       -       -       -       -       -
+  s4_3tier_rx3r                   3.78    2.98    2.98    3.55    4.35    5.15    7.65    7.14       -       -       -       -       -       -       -       -
+  t2_rank512_bitonic              3.55    3.04    3.20    4.10    4.10    5.06    9.18   10.40       -       -       -       -       -       -       -       -
+  t3_rank128_rank512_bitonic      3.42    4.99    3.42    5.06    5.98    6.82   11.10    9.92       -       -       -       -       -       -       -       -
+  m3_ref                          5.47    4.16    5.22    5.47    6.91    7.04    8.77    7.49       -       -       -       -       -       -       -       -
+  m3_x512                         6.34    4.00    4.83    6.14    5.22    6.62    8.10    8.77       -       -       -       -       -       -       -       -
+  m4_b128_p                       5.28    5.82    6.18    6.98    7.17    8.74    8.13    7.68       -       -       -       -       -       -       -       -
+  m4_b128                         5.02    4.45    5.50    6.75    6.91    6.82    8.93    8.32       -       -       -       -       -       -       -       -
+  m4_b128e8                       4.74    5.86    6.05    6.66    8.13    7.07    7.30    9.28       -       -       -       -       -       -       -       -
+  m4_b64                          4.93    5.09    5.73    6.18    7.23    7.39    9.34    7.90       -       -       -       -       -       -       -       -
+  m4_b256                         4.58    6.91    5.50    5.54    7.20    7.46    7.65    8.03       -       -       -       -       -       -       -       -
+  s7_256                          2.88    2.94    3.23    4.61    4.67    5.34    6.02    6.21       -       -       -       -       -       -       -       -
+  s7_512                          3.10    3.17    3.10    3.58    4.16    5.34    6.37    6.56       -       -       -       -       -       -       -       -
+  s7_256b                         3.65    3.07    2.85    4.74    5.18    5.15    6.08    7.17       -       -       -       -       -       -       -       -
+  x7_all_256                      4.32    4.38    5.02    5.22    5.34    5.76    6.69    7.55       -       -       -       -       -       -       -       -
+
+  20 sorts: wall 2.0 s = 1.32 ms per iteration (incl. warmup); CPU per iteration (multithreaded, overlaps the GPU): generate 0.04 ms, record + upload copy 0.05 ms, verify 0.30 ms
+
+  === 128 sorts per iteration (8 measured iterations per workload x algorithm) ===
+  workload       algorithm                          min    median      mean       p95       max  fails
+  mostly_empty   pass0_bitonic                     4.77      4.93      4.92      5.15      5.15      0
+                 s1_radix                         11.42     11.73     11.70     11.84     11.84      0
+                 s1_rank512_bitreg2048_radix       3.55      3.74      3.80      4.22      4.22      0
+                 s1_rank512_bitreg4096_radix       3.49      3.68      3.72      4.00      4.00      0
+                 s3_rank512_bitreg2048_radix2      3.62      3.70      3.81      4.58      4.58      0
+                 s4_3tier_rx3r                     3.39      3.54      3.64      4.38      4.38      0
+                 t2_rank512_bitonic                3.39      4.40      4.38      5.41      5.41      0
+                 t3_rank128_rank512_bitonic        3.71      4.11      4.30      5.25      5.25      0
+                 m3_ref                            4.58      5.23      5.30      5.89      5.89      0
+                 m3_x512                           4.06      4.93      4.85      5.82      5.82      0
+                 m4_b128_p                         5.57      5.86      6.06      7.01      7.01      0
+                 m4_b128                           4.64      5.42      5.37      5.92      5.92      0
+                 m4_b128e8                         4.54      5.22      5.17      5.86      5.86      0
+                 m4_b64                            4.58      5.14      5.19      5.70      5.70      0
+                 m4_b256                           4.80      5.14      5.36      6.88      6.88      0
+                 s7_256                            3.30      3.41      3.43      3.65      3.65      0
+                 s7_512                            3.20      3.41      3.40      3.65      3.65      0
+                 s7_256b                           3.10      3.28      3.28      3.39      3.39      0
+                 x7_all_256                        4.77      4.94      5.02      5.79      5.79      0
+  mostly_small   pass0_bitonic                     7.65      7.79      7.82      8.00      8.00      0
+                 s1_radix                         20.35     20.62     20.69     21.57     21.57      0
+                 s1_rank512_bitreg2048_radix       4.26      4.40      4.41      4.61      4.61      0
+                 s1_rank512_bitreg4096_radix       4.19      4.35      4.43      5.28      5.28      0
+                 s3_rank512_bitreg2048_radix2      4.13      4.35      4.40      5.06      5.06      0
+                 s4_3tier_rx3r                     4.26      4.37      4.45      5.09      5.09      0
+                 t2_rank512_bitonic                3.71      4.00      4.17      4.90      4.90      0
+                 t3_rank128_rank512_bitonic        4.06      4.59      4.56      5.09      5.09      0
+                 m3_ref                            4.61      4.74      5.23      6.98      6.98      0
+                 m3_x512                           4.19      5.44      5.28      5.98      5.98      0
+                 m4_b128_p                         4.70      5.54      5.70      6.66      6.66      0
+                 m4_b128                           4.90      5.42      5.55      6.66      6.66      0
+                 m4_b128e8                         4.58      6.29      6.01      6.91      6.91      0
+                 m4_b64                            5.60      6.30      6.21      6.91      6.91      0
+                 m4_b256                           4.90      5.41      5.40      5.98      5.98      0
+                 s7_256                            4.29      4.48      4.54      5.18      5.18      0
+                 s7_512                            4.13      4.35      4.44      5.18      5.18      0
+                 s7_256b                           4.06      4.13      4.15      4.29      4.29      0
+                 x7_all_256                        6.69      6.85      6.88      7.17      7.17      0
+  realistic_mix  pass0_bitonic                    21.92     44.38     42.28     48.32     48.32      0
+                 s1_radix                         20.48     21.30     21.71     23.55     23.55      0
+                 s1_rank512_bitreg2048_radix      14.02     15.55     15.51     17.31     17.31      0
+                 s1_rank512_bitreg4096_radix      13.70     15.39     15.44     16.70     16.70      0
+                 s3_rank512_bitreg2048_radix2     12.90     15.97     15.46     16.99     16.99      0
+                 s4_3tier_rx3r                    11.33     17.84     17.09     19.30     19.30      0
+                 t2_rank512_bitonic               23.84     45.60     43.07     46.66     46.66      0
+                 t3_rank128_rank512_bitonic       24.64     46.32     43.49     46.88     46.88      0
+                 m3_ref                           12.90     14.66     14.86     16.58     16.58      0
+                 m3_x512                          11.81     16.42     16.11     18.62     18.62      0
+                 m4_b128_p                        13.25     15.10     15.12     17.25     17.25      0
+                 m4_b128                          16.83     25.73     25.37     31.33     31.33      0
+                 m4_b128e8                        16.93     25.60     25.40     31.39     31.39      0
+                 m4_b64                           16.93     25.57     25.37     31.10     31.10      0
+                 m4_b256                          17.34     25.74     25.51     31.33     31.33      0
+                 s7_256                           17.12     26.18     25.77     31.39     31.39      0
+                 s7_512                           10.59     16.83     16.41     20.32     20.32      0
+                 s7_256b                          17.18     26.53     26.10     31.94     31.94      0
+                 x7_all_256                       15.17     25.57     24.84     29.92     29.92      0
+  mostly_large   pass0_bitonic                    87.01     87.84    146.35    557.15    557.15      0
+                 s1_radix                         29.76     30.51     30.69     31.81     31.81      0
+                 s1_rank512_bitreg2048_radix      30.18     31.22     31.23     32.16     32.16      0
+                 s1_rank512_bitreg4096_radix      29.25     30.24     30.16     30.91     30.91      0
+                 s3_rank512_bitreg2048_radix2     30.62     31.62     78.06    404.00    404.00      0
+                 s4_3tier_rx3r                    31.46     33.55     33.52     34.94     34.94      0
+                 t2_rank512_bitonic               88.42     89.33     89.42     90.30     90.30      0
+                 t3_rank128_rank512_bitonic       88.64     89.10     89.24     90.53     90.53      0
+                 m3_ref                           29.22     29.89     30.13     32.80     32.80      0
+                 m3_x512                          29.86     32.72     32.36     33.54     33.54      0
+                 m4_b128_p                        29.25     30.00     30.05     31.49     31.49      0
+                 m4_b128                          47.52     49.07     49.19     52.03     52.03      0
+                 m4_b128e8                        46.02     49.36     49.10     52.06     52.06      0
+                 m4_b64                           46.05     49.07     49.13     52.70     52.70      0
+                 m4_b256                          46.34     49.26     49.02     51.81     51.81      0
+                 s7_256                           46.40     49.60     49.32     51.39     51.39      0
+                 s7_512                           30.34     32.29     32.27     33.76     33.76      0
+                 s7_256b                          46.05     48.90     48.75     50.98     50.98      0
+                 x7_all_256                       45.41     48.32     48.06     50.02     50.02      0
+  worst_case     pass0_bitonic                    91.78     91.98     92.02     92.32     92.32      0
+                 s1_radix                         39.58     40.29     40.42     41.22     41.22      0
+                 s1_rank512_bitreg2048_radix      39.71     41.12     40.88     41.76     41.76      0
+                 s1_rank512_bitreg4096_radix      38.56     39.14     39.22     40.70     40.70      0
+                 s3_rank512_bitreg2048_radix2     40.32     41.28     41.26     42.21     42.21      0
+                 s4_3tier_rx3r                    44.19     44.56     44.57     45.09     45.09      0
+                 t2_rank512_bitonic               92.99     93.81     93.78     94.59     94.59      0
+                 t3_rank128_rank512_bitonic       93.06     94.75     94.38     95.30     95.30      0
+                 m3_ref                           39.55     39.82     39.96     40.64     40.64      0
+                 m3_x512                          42.94     43.20     43.40     43.94     43.94      0
+                 m4_b128_p                        39.23     40.05     40.10     41.28     41.28      0
+                 m4_b128                          64.96     65.46     65.44     65.76     65.76      0
+                 m4_b128e8                        65.15     65.44     65.64     66.91     66.91      0
+                 m4_b64                           64.96     65.81     65.70     66.30     66.30      0
+                 m4_b256                          64.48     65.44     65.31     65.76     65.76      0
+                 s7_256                           66.14     67.15     67.11     68.19     68.19      0
+                 s7_512                           44.96     45.18     45.35     46.69     46.69      0
+                 s7_256b                          66.30     66.66     66.84     67.94     67.94      0
+                 x7_all_256                       64.35     64.61     64.80     65.66     65.66      0
+  edges          pass0_bitonic                    46.53     47.09     47.15     47.94     47.94      0
+                 s1_radix                         27.39     27.62     27.94     29.18     29.18      0
+                 s1_rank512_bitreg2048_radix      18.37     18.86     19.02     20.42     20.42      0
+                 s1_rank512_bitreg4096_radix      17.66     18.21     18.32     19.33     19.33      0
+                 s3_rank512_bitreg2048_radix2     18.62     19.30     19.64     20.93     20.93      0
+                 s4_3tier_rx3r                    21.34     21.63     22.02     23.26     23.26      0
+                 t2_rank512_bitonic               45.92     46.62     46.55     47.14     47.14      0
+                 t3_rank128_rank512_bitonic       46.14     47.04     47.16     48.35     48.35      0
+                 m3_ref                           18.59     18.83     19.11     19.81     19.81      0
+                 m3_x512                          19.84     20.05     20.15     20.99     20.99      0
+                 m4_b128_p                        18.91     19.68     19.68     20.83     20.83      0
+                 m4_b128                          31.01     31.36     31.35     31.68     31.68      0
+                 m4_b128e8                        31.01     31.25     31.45     32.42     32.42      0
+                 m4_b64                           30.94     31.42     31.37     31.78     31.78      0
+                 m4_b256                          31.01     31.42     31.44     32.45     32.45      0
+                 s7_256                           31.04     31.68     31.66     32.00     32.00      0
+                 s7_512                           20.42     21.25     21.19     21.95     21.95      0
+                 s7_256b                          30.82     31.41     31.42     31.94     31.94      0
+                 x7_all_256                       31.01     31.26     50.64    186.59    186.59      0
+  mostly_mid     pass0_bitonic                    23.52     23.62     23.76     24.70     24.70      0
+                 s1_radix                         21.38     21.92     21.92     22.98     22.98      0
+                 s1_rank512_bitreg2048_radix      16.13     16.29     16.41     17.18     17.18      0
+                 s1_rank512_bitreg4096_radix      16.10     16.32     16.43     17.38     17.38      0
+                 s3_rank512_bitreg2048_radix2     16.45     16.80     16.79     17.31     17.31      0
+                 s4_3tier_rx3r                    16.58     16.96     16.94     17.28     17.28      0
+                 t2_rank512_bitonic               23.97     24.99     25.08     25.86     25.86      0
+                 t3_rank128_rank512_bitonic       24.58     25.41     25.30     26.14     26.14      0
+                 m3_ref                           14.18     17.42     18.01     27.07     27.07      0
+                 m3_x512                          13.82     17.06     17.35     19.84     19.84      0
+                 m4_b128_p                        13.95     14.77     16.28     20.42     20.42      0
+                 m4_b128                          13.95     17.28     17.10     20.00     20.00      0
+                 m4_b128e8                        13.79     14.67     16.21     20.03     20.03      0
+                 m4_b64                           13.98     16.98     16.64     20.19     20.19      0
+                 m4_b256                          14.08     14.83     15.68     20.19     20.19      0
+                 s7_256                           14.59     14.96     14.98     15.52     15.52      0
+                 s7_512                           15.07     15.42     15.49     16.16     16.16      0
+                 s7_256b                          14.56     15.01     14.98     15.33     15.33      0
+                 x7_all_256                       16.32     16.69     16.67     16.96     16.96      0
+  mostly_medium  pass0_bitonic                    11.49     11.63     11.62     11.81     11.81      0
+                 s1_radix                         20.32     20.66     20.66     21.12     21.12      0
+                 s1_rank512_bitreg2048_radix       6.69      7.23      7.22      7.65      7.65      0
+                 s1_rank512_bitreg4096_radix       6.98      7.12      7.19      7.65      7.65      0
+                 s3_rank512_bitreg2048_radix2      6.69      7.18      7.20      7.94      7.94      0
+                 s4_3tier_rx3r                     6.88      7.38      7.36      8.03      8.03      0
+                 t2_rank512_bitonic                6.43      6.75      6.73      7.04      7.04      0
+                 t3_rank128_rank512_bitonic        7.01      7.76      7.80      8.58      8.58      0
+                 m3_ref                            8.26      8.93      9.26     11.26     11.26      0
+                 m3_x512                           7.94      9.34      9.41     10.75     10.75      0
+                 m4_b128_p                         8.64      9.39      9.64     11.78     11.78      0
+                 m4_b128                           8.42      8.59      8.76      9.31      9.31      0
+                 m4_b128e8                         7.78      8.96      9.28     10.66     10.66      0
+                 m4_b64                            8.13      8.64      9.16     13.09     13.09      0
+                 m4_b256                           8.10      8.78      8.94     10.75     10.75      0
+                 s7_256                            7.74      7.87      8.01      8.74      8.74      0
+                 s7_512                            6.72      7.18      7.16      7.55      7.55      0
+                 s7_256b                           8.35      8.46      8.57      9.38      9.38      0
+                 x7_all_256                        8.86      9.01      9.01      9.12      9.12      0
+  sweep          pass0_bitonic                     6.43     10.69     10.67     15.20     15.20      0
+                 s1_radix                         20.42     20.74     20.91     21.92     21.92      0
+                 s1_rank512_bitreg2048_radix       4.22      6.77      7.52     12.54     12.54      0
+                 s1_rank512_bitreg4096_radix       4.22      6.13      7.32     12.42     12.42      0
+                 s3_rank512_bitreg2048_radix2      4.16      6.13      7.33     12.70     12.70      0
+                 s4_3tier_rx3r                     4.16      6.26      7.47     12.67     12.67      0
+                 t2_rank512_bitonic                3.71      5.09      7.81     16.86     16.86      0
+                 t3_rank128_rank512_bitonic        4.22      7.42      9.29     17.73     17.73      0
+                 m3_ref                            4.26      7.06      7.61     11.49     11.49      0
+                 m3_x512                           5.44      7.47      7.90     12.86     12.86      0
+                 m4_b128_p                         5.92      7.52      8.33     12.19     12.19      0
+                 m4_b128                           4.83      8.64      8.29     11.71     11.71      0
+                 m4_b128e8                         4.45      7.49      7.58     11.94     11.94      0
+                 m4_b64                            4.74      8.26      8.26     12.58     12.58      0
+                 m4_b256                           4.61      7.73      7.82     10.75     10.75      0
+                 s7_256                            4.10      7.17      7.27     11.14     11.14      0
+                 s7_512                            4.03      6.32      7.25     12.42     12.42      0
+                 s7_256b                           4.03      8.05      7.44     11.36     11.36      0
+                 x7_all_256                        6.88      8.50      9.15     13.57     13.57      0
+  sparse_keys    pass0_bitonic                    65.02     65.41     66.58     73.79     73.79      0
+                 s1_radix                         27.23     28.69     28.47     29.38     29.38      0
+                 s1_rank512_bitreg2048_radix      28.64     29.87     29.69     30.53     30.53      0
+                 s1_rank512_bitreg4096_radix      27.71     28.37     28.40     29.31     29.31      0
+                 s3_rank512_bitreg2048_radix2     29.18     29.89     29.95     30.85     30.85      0
+                 s4_3tier_rx3r                    28.83     30.53     30.47     32.67     32.67      0
+                 t2_rank512_bitonic               66.72     67.49     68.03     72.86     72.86      0
+                 t3_rank128_rank512_bitonic       66.34     67.76     68.25     73.66     73.66      0
+                 m3_ref                           27.55     28.13     28.50     31.17     31.17      0
+                 m3_x512                          27.26     28.37     28.73     30.85     30.85      0
+                 m4_b128_p                        27.81     28.46     28.94     31.04     31.04      0
+                 m4_b128                          38.82     40.50     40.87     43.65     43.65      0
+                 m4_b128e8                        39.04     40.42     40.68     42.82     42.82      0
+                 m4_b64                           39.17     40.43     40.81     42.82     42.82      0
+                 m4_b256                          39.33     40.29     40.76     43.42     43.42      0
+                 s7_256                           40.96     42.21     42.48     44.74     44.74      0
+                 s7_512                           27.14     28.35     28.38     29.79     29.79      0
+                 s7_256b                          40.64     42.11     89.39    420.10    420.10      0
+                 x7_all_256                       39.17     41.26     41.26     43.74     43.74      0
+
+  sweep: median us per iteration by sort size (all 128 sorts of an iteration have that size)
+  algorithm                         32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  pass0_bitonic                   6.43    7.46    8.29    9.66   11.71   11.74   14.88   15.20       -       -       -       -       -       -       -       -
+  s1_radix                       21.41   20.67   20.77   20.70   20.58   20.42   20.83   21.92       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg2048_radix     4.22    4.26    4.70    6.72    6.82    8.80   12.13   12.54       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg4096_radix     4.22    4.22    4.67    5.54    6.72    8.64   12.16   12.42       -       -       -       -       -       -       -       -
+  s3_rank512_bitreg2048_radix2    4.16    4.19    4.42    5.34    6.91    8.64   12.29   12.70       -       -       -       -       -       -       -       -
+  s4_3tier_rx3r                   4.16    4.38    4.58    5.50    7.01    9.22   12.26   12.67       -       -       -       -       -       -       -       -
+  t2_rank512_bitonic              4.00    3.71    4.70    4.45    5.47    7.07   16.86   16.22       -       -       -       -       -       -       -       -
+  t3_rank128_rank512_bitonic      5.34    4.22    5.57    6.37    8.48    9.60   17.73   17.02       -       -       -       -       -       -       -       -
+  m3_ref                          4.26    5.38    4.99    6.78    7.33    9.41   11.26   11.49       -       -       -       -       -       -       -       -
+  m3_x512                         5.54    5.44    5.44    7.94    7.01    8.96    9.98   12.86       -       -       -       -       -       -       -       -
+  m4_b128_p                       6.37    6.82    5.92    6.43    8.22   12.19    9.82   10.88       -       -       -       -       -       -       -       -
+  m4_b128                         4.83    6.21    5.70    8.93    8.35    9.09   11.52   11.71       -       -       -       -       -       -       -       -
+  m4_b128e8                       4.99    4.45    5.73    6.50    8.48    8.61    9.95   11.94       -       -       -       -       -       -       -       -
+  m4_b64                          4.74    5.57    5.79    7.10    9.41   12.58   10.43   10.46       -       -       -       -       -       -       -       -
+  m4_b256                         4.61    6.43    4.96    6.98    8.48    9.63   10.75   10.75       -       -       -       -       -       -       -       -
+  s7_256                          4.10    4.26    4.70    6.14    8.19    8.96   10.66   11.14       -       -       -       -       -       -       -       -
+  s7_512                          4.29    4.03    4.58    5.63    7.01    8.74   12.42   11.33       -       -       -       -       -       -       -       -
+  s7_256b                         4.03    4.13    4.35    7.55    8.54    8.83   10.72   11.36       -       -       -       -       -       -       -       -
+  x7_all_256                      7.04    6.88    6.91    7.94    9.06    9.98   11.81   13.57       -       -       -       -       -       -       -       -
+
+  sweep: mean us per iteration by sort size (all 128 sorts of an iteration have that size)
+  algorithm                         32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  pass0_bitonic                   6.43    7.46    8.29    9.66   11.71   11.74   14.88   15.20       -       -       -       -       -       -       -       -
+  s1_radix                       21.41   20.67   20.77   20.70   20.58   20.42   20.83   21.92       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg2048_radix     4.22    4.26    4.70    6.72    6.82    8.80   12.13   12.54       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg4096_radix     4.22    4.22    4.67    5.54    6.72    8.64   12.16   12.42       -       -       -       -       -       -       -       -
+  s3_rank512_bitreg2048_radix2    4.16    4.19    4.42    5.34    6.91    8.64   12.29   12.70       -       -       -       -       -       -       -       -
+  s4_3tier_rx3r                   4.16    4.38    4.58    5.50    7.01    9.22   12.26   12.67       -       -       -       -       -       -       -       -
+  t2_rank512_bitonic              4.00    3.71    4.70    4.45    5.47    7.07   16.86   16.22       -       -       -       -       -       -       -       -
+  t3_rank128_rank512_bitonic      5.34    4.22    5.57    6.37    8.48    9.60   17.73   17.02       -       -       -       -       -       -       -       -
+  m3_ref                          4.26    5.38    4.99    6.78    7.33    9.41   11.26   11.49       -       -       -       -       -       -       -       -
+  m3_x512                         5.54    5.44    5.44    7.94    7.01    8.96    9.98   12.86       -       -       -       -       -       -       -       -
+  m4_b128_p                       6.37    6.82    5.92    6.43    8.22   12.19    9.82   10.88       -       -       -       -       -       -       -       -
+  m4_b128                         4.83    6.21    5.70    8.93    8.35    9.09   11.52   11.71       -       -       -       -       -       -       -       -
+  m4_b128e8                       4.99    4.45    5.73    6.50    8.48    8.61    9.95   11.94       -       -       -       -       -       -       -       -
+  m4_b64                          4.74    5.57    5.79    7.10    9.41   12.58   10.43   10.46       -       -       -       -       -       -       -       -
+  m4_b256                         4.61    6.43    4.96    6.98    8.48    9.63   10.75   10.75       -       -       -       -       -       -       -       -
+  s7_256                          4.10    4.26    4.70    6.14    8.19    8.96   10.66   11.14       -       -       -       -       -       -       -       -
+  s7_512                          4.29    4.03    4.58    5.63    7.01    8.74   12.42   11.33       -       -       -       -       -       -       -       -
+  s7_256b                         4.03    4.13    4.35    7.55    8.54    8.83   10.72   11.36       -       -       -       -       -       -       -       -
+  x7_all_256                      7.04    6.88    6.91    7.94    9.06    9.98   11.81   13.57       -       -       -       -       -       -       -       -
+
+  sweep: p95 us per iteration by sort size (all 128 sorts of an iteration have that size)
+  algorithm                         32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  pass0_bitonic                   6.43    7.46    8.29    9.66   11.71   11.74   14.88   15.20       -       -       -       -       -       -       -       -
+  s1_radix                       21.41   20.67   20.77   20.70   20.58   20.42   20.83   21.92       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg2048_radix     4.22    4.26    4.70    6.72    6.82    8.80   12.13   12.54       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg4096_radix     4.22    4.22    4.67    5.54    6.72    8.64   12.16   12.42       -       -       -       -       -       -       -       -
+  s3_rank512_bitreg2048_radix2    4.16    4.19    4.42    5.34    6.91    8.64   12.29   12.70       -       -       -       -       -       -       -       -
+  s4_3tier_rx3r                   4.16    4.38    4.58    5.50    7.01    9.22   12.26   12.67       -       -       -       -       -       -       -       -
+  t2_rank512_bitonic              4.00    3.71    4.70    4.45    5.47    7.07   16.86   16.22       -       -       -       -       -       -       -       -
+  t3_rank128_rank512_bitonic      5.34    4.22    5.57    6.37    8.48    9.60   17.73   17.02       -       -       -       -       -       -       -       -
+  m3_ref                          4.26    5.38    4.99    6.78    7.33    9.41   11.26   11.49       -       -       -       -       -       -       -       -
+  m3_x512                         5.54    5.44    5.44    7.94    7.01    8.96    9.98   12.86       -       -       -       -       -       -       -       -
+  m4_b128_p                       6.37    6.82    5.92    6.43    8.22   12.19    9.82   10.88       -       -       -       -       -       -       -       -
+  m4_b128                         4.83    6.21    5.70    8.93    8.35    9.09   11.52   11.71       -       -       -       -       -       -       -       -
+  m4_b128e8                       4.99    4.45    5.73    6.50    8.48    8.61    9.95   11.94       -       -       -       -       -       -       -       -
+  m4_b64                          4.74    5.57    5.79    7.10    9.41   12.58   10.43   10.46       -       -       -       -       -       -       -       -
+  m4_b256                         4.61    6.43    4.96    6.98    8.48    9.63   10.75   10.75       -       -       -       -       -       -       -       -
+  s7_256                          4.10    4.26    4.70    6.14    8.19    8.96   10.66   11.14       -       -       -       -       -       -       -       -
+  s7_512                          4.29    4.03    4.58    5.63    7.01    8.74   12.42   11.33       -       -       -       -       -       -       -       -
+  s7_256b                         4.03    4.13    4.35    7.55    8.54    8.83   10.72   11.36       -       -       -       -       -       -       -       -
+  x7_all_256                      7.04    6.88    6.91    7.94    9.06    9.98   11.81   13.57       -       -       -       -       -       -       -       -
+
+  128 sorts: wall 3.0 s = 1.99 ms per iteration (incl. warmup); CPU per iteration (multithreaded, overlaps the GPU): generate 0.26 ms, record + upload copy 0.08 ms, verify 0.59 ms
+
+  === 256 sorts per iteration (8 measured iterations per workload x algorithm) ===
+  workload       algorithm                          min    median      mean       p95       max  fails
+  mostly_empty   pass0_bitonic                     6.27      6.51      6.54      6.88      6.88      0
+                 s1_radix                         12.80     13.44     13.42     14.27     14.27      0
+                 s1_rank512_bitreg2048_radix       4.70      4.99      4.94      5.09      5.09      0
+                 s1_rank512_bitreg4096_radix       4.64      4.90      4.95      5.60      5.60      0
+                 s3_rank512_bitreg2048_radix2      4.48      4.77      4.76      5.02      5.02      0
+                 s4_3tier_rx3r                     4.51      4.82      4.89      5.66      5.66      0
+                 t2_rank512_bitonic                4.29      4.77      4.74      5.18      5.18      0
+                 t3_rank128_rank512_bitonic        4.70      5.31      5.39      6.62      6.62      0
+                 m3_ref                            5.41      5.71      5.78      6.14      6.14      0
+                 m3_x512                           5.09      5.82      5.80      6.50      6.50      0
+                 m4_b128_p                         5.44      5.66      5.83      6.46      6.46      0
+                 m4_b128                           5.22      5.71      5.76      6.50      6.50      0
+                 m4_b128e8                         4.99      6.03      5.82      6.53      6.53      0
+                 m4_b64                            5.22      6.10      5.99      6.66      6.66      0
+                 m4_b256                           5.22      5.47      5.72      6.98      6.98      0
+                 s7_256                            4.26      4.42      4.45      4.67      4.67      0
+                 s7_512                            4.32      4.56      4.65      5.54      5.54      0
+                 s7_256b                           4.16      4.43      4.46      5.25      5.25      0
+                 x7_all_256                        6.30      6.53      6.66      7.42      7.42      0
+  mostly_small   pass0_bitonic                    11.20     11.63     11.57     11.81     11.81      0
+                 s1_radix                         29.31     36.96     36.04     37.41     37.41      0
+                 s1_rank512_bitreg2048_radix       5.92      6.03      6.14      6.78      6.78      0
+                 s1_rank512_bitreg4096_radix       5.63      5.90      5.89      6.30      6.30      0
+                 s3_rank512_bitreg2048_radix2      5.66      5.86      5.90      6.18      6.18      0
+                 s4_3tier_rx3r                     5.79      5.98      6.10      6.75      6.75      0
+                 t2_rank512_bitonic                4.38      4.91     74.07    558.62    558.62      0
+                 t3_rank128_rank512_bitonic        4.74      5.26      5.20      5.38      5.38      0
+                 m3_ref                            5.82      6.24      6.30      7.14      7.14      0
+                 m3_x512                           5.47      6.11      6.31      8.10      8.10      0
+                 m4_b128_p                         5.86      6.40      6.61      7.74      7.74      0
+                 m4_b128                           5.95      6.16      6.24      6.75      6.75      0
+                 m4_b128e8                         5.82      6.14      6.19      6.56      6.56      0
+                 m4_b64                            6.62      6.78      6.90      7.58      7.58      0
+                 m4_b256                           5.44      6.11      6.24      7.94      7.94      0
+                 s7_256                            5.95      6.10      6.08      6.18      6.18      0
+                 s7_512                            5.63      5.84      5.83      6.02      6.02      0
+                 s7_256b                           5.54      5.58      5.68      6.37      6.37      0
+                 x7_all_256                        9.47     10.77     10.71     11.49     11.49      0
+  realistic_mix  pass0_bitonic                    48.86     51.47     51.24     52.99     52.99      0
+                 s1_radix                         30.40     31.38     31.74     34.75     34.75      0
+                 s1_rank512_bitreg2048_radix      17.25     18.13     18.47     20.16     20.16      0
+                 s1_rank512_bitreg4096_radix      16.38     18.91     18.72     20.10     20.10      0
+                 s3_rank512_bitreg2048_radix2     17.18     18.72     18.98     20.67     20.67      0
+                 s4_3tier_rx3r                    19.58     21.09     21.25     22.78     22.78      0
+                 t2_rank512_bitonic               46.82     47.52     47.47     48.03     48.03      0
+                 t3_rank128_rank512_bitonic       47.87     48.72     48.72     49.34     49.34      0
+                 m3_ref                           15.20     16.86     16.69     17.66     17.66      0
+                 m3_x512                          17.02     18.59     18.39     20.35     20.35      0
+                 m4_b128_p                        15.52     16.85     16.72     17.89     17.89      0
+                 m4_b128                          26.91     29.46     29.37     31.68     31.68      0
+                 m4_b128e8                        27.26     29.62     29.53     32.16     32.16      0
+                 m4_b64                           26.91     29.25     29.31     32.00     32.00      0
+                 m4_b256                          27.55     29.20     29.59     33.18     33.18      0
+                 s7_256                           27.65     30.26     30.29     33.50     33.50      0
+                 s7_512                           18.91     20.38     20.50     22.05     22.05      0
+                 s7_256b                          28.42     29.65     30.46     33.50     33.50      0
+                 x7_all_256                       28.06     29.76     30.47     34.34     34.34      0
+  mostly_large   pass0_bitonic                   130.98    132.34    132.46    134.08    134.08      0
+                 s1_radix                         45.28     46.24     46.38     47.94     47.94      0
+                 s1_rank512_bitreg2048_radix      46.59     47.25     47.69     49.82     49.82      0
+                 s1_rank512_bitreg4096_radix      46.40     47.68     47.66     49.50     49.50      0
+                 s3_rank512_bitreg2048_radix2     46.43     47.23     47.32     48.00     48.00      0
+                 s4_3tier_rx3r                    51.36     52.16     52.15     52.61     52.61      0
+                 t2_rank512_bitonic              133.06    134.16    134.12    135.62    135.62      0
+                 t3_rank128_rank512_bitonic      134.02    134.54    134.66    135.55    135.55      0
+                 m3_ref                           45.86     46.69     79.47    308.16    308.16      0
+                 m3_x512                          49.15     50.08     49.96     50.43     50.43      0
+                 m4_b128_p                        45.54     46.82     47.03     48.35     48.35      0
+                 m4_b128                          74.27     75.95     75.92     77.31     77.31      0
+                 m4_b128e8                        73.57     75.98     75.55     76.58     76.58      0
+                 m4_b64                           74.69     76.05     75.67     76.29     76.29      0
+                 m4_b256                          73.92     75.86     75.70     76.77     76.77      0
+                 s7_256                           75.01     76.19     76.06     76.83     76.83      0
+                 s7_512                           49.06     50.38     50.41     51.30     51.30      0
+                 s7_256b                          73.76     75.44     75.50     76.90     76.90      0
+                 x7_all_256                       73.28     74.37     74.44     75.30     75.30      0
+  worst_case     pass0_bitonic                   179.01    179.63    179.64    180.32    180.32      0
+                 s1_radix                         71.87     72.19     72.73     75.20     75.20      0
+                 s1_rank512_bitreg2048_radix      69.76     71.97     71.72     72.83     72.83      0
+                 s1_rank512_bitreg4096_radix      66.78     68.00     68.01     68.96     68.96      0
+                 s3_rank512_bitreg2048_radix2     71.65     72.48     72.69     74.05     74.05      0
+                 s4_3tier_rx3r                    81.06     82.61     82.49     84.13     84.13      0
+                 t2_rank512_bitonic              179.39    180.75    180.66    181.70    181.70      0
+                 t3_rank128_rank512_bitonic      179.55    180.80    180.79    182.27    182.27      0
+                 m3_ref                           71.90     72.56     72.63     73.86     73.86      0
+                 m3_x512                          76.54     77.26     77.42     78.98     78.98      0
+                 m4_b128_p                        71.81     73.10     73.13     75.17     75.17      0
+                 m4_b128                         119.42    120.53    120.59    122.11    122.11      0
+                 m4_b128e8                       119.90    120.54    120.64    121.86    121.86      0
+                 m4_b64                          119.49    120.77    120.73    121.79    121.79      0
+                 m4_b256                         119.78    120.51    120.78    123.07    123.07      0
+                 s7_256                          121.22    121.92    122.00    122.82    122.82      0
+                 s7_512                           78.37     80.93     80.40     81.89     81.89      0
+                 s7_256b                         120.67    121.90    121.72    122.24    122.24      0
+                 x7_all_256                      119.14    119.49    119.57    120.35    120.35      0
+  edges          pass0_bitonic                    56.64     58.00     58.14     59.68     59.68      0
+                 s1_radix                         37.18     38.35     39.82     43.78     43.78      0
+                 s1_rank512_bitreg2048_radix      24.80     25.94     26.26     28.16     28.16      0
+                 s1_rank512_bitreg4096_radix      24.00     24.98     25.14     27.23     27.23      0
+                 s3_rank512_bitreg2048_radix2     24.96     26.16     26.22     27.36     27.36      0
+                 s4_3tier_rx3r                    28.03     28.99     29.20     30.50     30.50      0
+                 t2_rank512_bitonic               52.51     55.46     73.42    205.82    205.82      0
+                 t3_rank128_rank512_bitonic       53.15     55.58     55.45     57.09     57.09      0
+                 m3_ref                           20.96     22.53     23.19     28.77     28.77      0
+                 m3_x512                          21.63     22.19     22.31     23.90     23.90      0
+                 m4_b128_p                        19.97     20.51     20.72     22.14     22.14      0
+                 m4_b128                          31.39     31.81     32.00     33.54     33.54      0
+                 m4_b128e8                        31.68     32.16     32.14     32.74     32.74      0
+                 m4_b64                           31.65     32.13     32.20     32.93     32.93      0
+                 m4_b256                          31.49     32.00     32.08     33.44     33.44      0
+                 s7_256                           35.84     36.70     36.85     38.08     38.08      0
+                 s7_512                           26.30     27.10     27.07     27.68     27.68      0
+                 s7_256b                          35.87     36.72     36.87     37.92     37.92      0
+                 x7_all_256                       38.78     39.74     39.94     41.15     41.15      0
+  mostly_mid     pass0_bitonic                    34.85     35.58     35.51     35.97     35.97      0
+                 s1_radix                         37.70     38.43     38.40     39.04     39.04      0
+                 s1_rank512_bitreg2048_radix      23.97     25.71     25.28     26.37     26.37      0
+                 s1_rank512_bitreg4096_radix      23.90     25.58     25.17     25.98     25.98      0
+                 s3_rank512_bitreg2048_radix2     24.48     25.81     25.46     26.27     26.27      0
+                 s4_3tier_rx3r                    24.54     26.16     25.91     27.39     27.39      0
+                 t2_rank512_bitonic               35.39     37.36     37.12     38.14     38.14      0
+                 t3_rank128_rank512_bitonic       36.86     37.90     37.91     38.94     38.94      0
+                 m3_ref                           25.63     27.46     75.84    418.05    418.05      0
+                 m3_x512                          20.32     23.31     23.73     27.58     27.58      0
+                 m4_b128_p                        25.66     27.46     27.34     28.38     28.38      0
+                 m4_b128                          21.54     27.23     26.80     29.89     29.89      0
+                 m4_b128e8                        26.85     27.65     27.97     30.66     30.66      0
+                 m4_b64                           21.12     27.07     25.99     28.03     28.03      0
+                 m4_b256                          19.65     26.78     25.84     28.48     28.48      0
+                 s7_256                           21.89     22.40     22.58     23.87     23.87      0
+                 s7_512                           22.43     23.26     23.20     23.84     23.84      0
+                 s7_256b                          21.82     22.51     22.64     23.81     23.81      0
+                 x7_all_256                       25.09     26.06     26.01     26.43     26.43      0
+  mostly_medium  pass0_bitonic                    18.11     18.61     18.56     18.94     18.94      0
+                 s1_radix                         36.90     37.15     37.15     37.34     37.34      0
+                 s1_rank512_bitreg2048_radix      10.37     10.54     10.72     11.71     11.71      0
+                 s1_rank512_bitreg4096_radix      10.40     10.51     10.59     10.98     10.98      0
+                 s3_rank512_bitreg2048_radix2     10.34     10.61     10.60     10.94     10.94      0
+                 s4_3tier_rx3r                    10.40     10.75     10.80     11.46     11.46      0
+                 t2_rank512_bitonic                7.71      8.37      8.40      9.22      9.22      0
+                 t3_rank128_rank512_bitonic        8.83     10.21     10.30     11.71     11.71      0
+                 m3_ref                            9.98     10.58     10.62     11.36     11.36      0
+                 m3_x512                           9.60     11.09     11.15     12.35     12.35      0
+                 m4_b128_p                        10.78     13.26     13.74     18.05     18.05      0
+                 m4_b128                           9.63     11.39     11.84     15.10     15.10      0
+                 m4_b128e8                         9.86     11.50     11.50     13.47     13.47      0
+                 m4_b64                           10.66     11.44     12.16     15.23     15.23      0
+                 m4_b256                           9.66     11.87     11.56     12.42     12.42      0
+                 s7_256                           11.36     11.58     11.66     12.51     12.51      0
+                 s7_512                           10.30     10.64     10.75     11.78     11.78      0
+                 s7_256b                          12.99     13.28     13.42     14.14     14.14      0
+                 x7_all_256                       13.60     13.81     14.00     15.14     15.14      0
+  sweep          pass0_bitonic                    10.56     18.96     18.88     27.68     27.68      0
+                 s1_radix                         37.02     37.33     37.42     38.34     38.34      0
+                 s1_rank512_bitreg2048_radix       5.57     10.24     12.22     22.02     22.02      0
+                 s1_rank512_bitreg4096_radix       5.47     10.06     12.12     22.05     22.05      0
+                 s3_rank512_bitreg2048_radix2      5.60     10.02     12.42     22.69     22.69      0
+                 s4_3tier_rx3r                     5.82     10.30     12.51     22.94     22.94      0
+                 t2_rank512_bitonic                4.70      6.96     12.38     29.73     29.73      0
+                 t3_rank128_rank512_bitonic        5.02     10.53     13.69     29.92     29.92      0
+                 m3_ref                            5.95      9.23     10.29     16.00     16.00      0
+                 m3_x512                           5.47      9.04     10.04     15.14     15.14      0
+                 m4_b128_p                         6.21     10.05     10.19     16.06     16.06      0
+                 m4_b128                           5.28     10.94     10.40     15.87     15.87      0
+                 m4_b128e8                         5.12     10.29     10.40     16.13     16.13      0
+                 m4_b64                            5.50     11.55     11.07     16.00     16.00      0
+                 m4_b256                           5.44      9.76      9.77     15.30     15.30      0
+                 s7_256                            5.76     12.22     12.01     18.91     18.91      0
+                 s7_512                            5.50     10.30     11.58     20.10     20.10      0
+                 s7_256b                           5.28     13.50     12.09     19.33     19.33      0
+                 x7_all_256                       10.75     14.42     15.49     23.94     23.94      0
+  sparse_keys    pass0_bitonic                   108.38    110.70    111.01    114.08    114.08      0
+                 s1_radix                         43.97     45.63     45.55     46.88     46.88      0
+                 s1_rank512_bitreg2048_radix      42.24     43.49     43.52     45.54     45.54      0
+                 s1_rank512_bitreg4096_radix      41.54     42.53     42.61     43.49     43.49      0
+                 s3_rank512_bitreg2048_radix2     43.04     44.10     44.07     45.47     45.47      0
+                 s4_3tier_rx3r                    46.62     48.34     48.17     49.41     49.41      0
+                 t2_rank512_bitonic              110.14    111.01    111.88    115.49    115.49      0
+                 t3_rank128_rank512_bitonic      110.43    111.63    112.64    116.51    116.51      0
+                 m3_ref                           41.60     43.47     43.34     45.73     45.73      0
+                 m3_x512                          42.72     43.47     43.90     46.27     46.27      0
+                 m4_b128_p                        40.29     42.34     42.50     44.48     44.48      0
+                 m4_b128                          58.02     61.14     61.34     63.33     63.33      0
+                 m4_b128e8                        58.05     61.22     61.10     63.84     63.84      0
+                 m4_b64                           58.30     61.01     61.17     63.78     63.78      0
+                 m4_b256                          58.18     61.12     61.07     63.23     63.23      0
+                 s7_256                           63.90     66.40     65.96     67.87     67.87      0
+                 s7_512                           43.42     44.90     44.69     45.86     45.86      0
+                 s7_256b                          62.66     65.74     65.15     67.23     67.23      0
+                 x7_all_256                       62.91     65.90     99.90    343.33    343.33      0
+
+  sweep: median us per iteration by sort size (all 256 sorts of an iteration have that size)
+  algorithm                         32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  pass0_bitonic                  10.56   12.03   14.30   16.96   20.96   21.18   27.39   27.68       -       -       -       -       -       -       -       -
+  s1_radix                       37.02   37.25   37.38   37.12   37.28   37.47   37.47   38.34       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg2048_radix     5.57    5.92    6.78    8.61   11.87   15.17   21.82   22.02       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg4096_radix     5.47    5.79    6.69    8.77   11.36   15.10   21.73   22.05       -       -       -       -       -       -       -       -
+  s3_rank512_bitreg2048_radix2    5.60    6.59    6.56    8.61   11.42   15.33   22.69   22.53       -       -       -       -       -       -       -       -
+  s4_3tier_rx3r                   5.82    6.11    6.40    8.54   12.06   15.65   22.94   22.56       -       -       -       -       -       -       -       -
+  t2_rank512_bitonic              5.18    4.86    4.70    5.98    7.94   11.07   29.73   29.54       -       -       -       -       -       -       -       -
+  t3_rank128_rank512_bitonic      6.08    5.02    5.98    9.50   12.38   11.55   29.06   29.92       -       -       -       -       -       -       -       -
+  m3_ref                          5.95    6.21    6.56    8.22   10.24   13.50   15.62   16.00       -       -       -       -       -       -       -       -
+  m3_x512                         5.47    7.52    6.59    8.42    9.66   15.14   15.07   12.45       -       -       -       -       -       -       -       -
+  m4_b128_p                       6.75    6.21    7.39    8.45   12.29   11.65   12.74   16.06       -       -       -       -       -       -       -       -
+  m4_b128                         5.28    5.38    6.72    9.60   12.29   12.38   15.65   15.87       -       -       -       -       -       -       -       -
+  m4_b128e8                       5.12    5.92    6.88    7.68   12.90   12.96   15.65   16.13       -       -       -       -       -       -       -       -
+  m4_b64                          5.50    6.30    6.88    8.16   15.20   14.94   15.55   16.00       -       -       -       -       -       -       -       -
+  m4_b256                         5.44    5.47    6.34    7.78   11.74   12.29   15.30   13.82       -       -       -       -       -       -       -       -
+  s7_256                          5.76    5.92    6.98   10.94   13.50   15.84   18.24   18.91       -       -       -       -       -       -       -       -
+  s7_512                          5.54    5.50    6.50    8.45   12.16   15.07   19.33   20.10       -       -       -       -       -       -       -       -
+  s7_256b                         5.28    5.60    6.05   12.29   14.72   14.82   18.62   19.33       -       -       -       -       -       -       -       -
+  x7_all_256                     10.75   11.07   11.65   13.12   15.71   17.70   19.97   23.94       -       -       -       -       -       -       -       -
+
+  sweep: mean us per iteration by sort size (all 256 sorts of an iteration have that size)
+  algorithm                         32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  pass0_bitonic                  10.56   12.03   14.30   16.96   20.96   21.18   27.39   27.68       -       -       -       -       -       -       -       -
+  s1_radix                       37.02   37.25   37.38   37.12   37.28   37.47   37.47   38.34       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg2048_radix     5.57    5.92    6.78    8.61   11.87   15.17   21.82   22.02       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg4096_radix     5.47    5.79    6.69    8.77   11.36   15.10   21.73   22.05       -       -       -       -       -       -       -       -
+  s3_rank512_bitreg2048_radix2    5.60    6.59    6.56    8.61   11.42   15.33   22.69   22.53       -       -       -       -       -       -       -       -
+  s4_3tier_rx3r                   5.82    6.11    6.40    8.54   12.06   15.65   22.94   22.56       -       -       -       -       -       -       -       -
+  t2_rank512_bitonic              5.18    4.86    4.70    5.98    7.94   11.07   29.73   29.54       -       -       -       -       -       -       -       -
+  t3_rank128_rank512_bitonic      6.08    5.02    5.98    9.50   12.38   11.55   29.06   29.92       -       -       -       -       -       -       -       -
+  m3_ref                          5.95    6.21    6.56    8.22   10.24   13.50   15.62   16.00       -       -       -       -       -       -       -       -
+  m3_x512                         5.47    7.52    6.59    8.42    9.66   15.14   15.07   12.45       -       -       -       -       -       -       -       -
+  m4_b128_p                       6.75    6.21    7.39    8.45   12.29   11.65   12.74   16.06       -       -       -       -       -       -       -       -
+  m4_b128                         5.28    5.38    6.72    9.60   12.29   12.38   15.65   15.87       -       -       -       -       -       -       -       -
+  m4_b128e8                       5.12    5.92    6.88    7.68   12.90   12.96   15.65   16.13       -       -       -       -       -       -       -       -
+  m4_b64                          5.50    6.30    6.88    8.16   15.20   14.94   15.55   16.00       -       -       -       -       -       -       -       -
+  m4_b256                         5.44    5.47    6.34    7.78   11.74   12.29   15.30   13.82       -       -       -       -       -       -       -       -
+  s7_256                          5.76    5.92    6.98   10.94   13.50   15.84   18.24   18.91       -       -       -       -       -       -       -       -
+  s7_512                          5.54    5.50    6.50    8.45   12.16   15.07   19.33   20.10       -       -       -       -       -       -       -       -
+  s7_256b                         5.28    5.60    6.05   12.29   14.72   14.82   18.62   19.33       -       -       -       -       -       -       -       -
+  x7_all_256                     10.75   11.07   11.65   13.12   15.71   17.70   19.97   23.94       -       -       -       -       -       -       -       -
+
+  sweep: p95 us per iteration by sort size (all 256 sorts of an iteration have that size)
+  algorithm                         32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  pass0_bitonic                  10.56   12.03   14.30   16.96   20.96   21.18   27.39   27.68       -       -       -       -       -       -       -       -
+  s1_radix                       37.02   37.25   37.38   37.12   37.28   37.47   37.47   38.34       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg2048_radix     5.57    5.92    6.78    8.61   11.87   15.17   21.82   22.02       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg4096_radix     5.47    5.79    6.69    8.77   11.36   15.10   21.73   22.05       -       -       -       -       -       -       -       -
+  s3_rank512_bitreg2048_radix2    5.60    6.59    6.56    8.61   11.42   15.33   22.69   22.53       -       -       -       -       -       -       -       -
+  s4_3tier_rx3r                   5.82    6.11    6.40    8.54   12.06   15.65   22.94   22.56       -       -       -       -       -       -       -       -
+  t2_rank512_bitonic              5.18    4.86    4.70    5.98    7.94   11.07   29.73   29.54       -       -       -       -       -       -       -       -
+  t3_rank128_rank512_bitonic      6.08    5.02    5.98    9.50   12.38   11.55   29.06   29.92       -       -       -       -       -       -       -       -
+  m3_ref                          5.95    6.21    6.56    8.22   10.24   13.50   15.62   16.00       -       -       -       -       -       -       -       -
+  m3_x512                         5.47    7.52    6.59    8.42    9.66   15.14   15.07   12.45       -       -       -       -       -       -       -       -
+  m4_b128_p                       6.75    6.21    7.39    8.45   12.29   11.65   12.74   16.06       -       -       -       -       -       -       -       -
+  m4_b128                         5.28    5.38    6.72    9.60   12.29   12.38   15.65   15.87       -       -       -       -       -       -       -       -
+  m4_b128e8                       5.12    5.92    6.88    7.68   12.90   12.96   15.65   16.13       -       -       -       -       -       -       -       -
+  m4_b64                          5.50    6.30    6.88    8.16   15.20   14.94   15.55   16.00       -       -       -       -       -       -       -       -
+  m4_b256                         5.44    5.47    6.34    7.78   11.74   12.29   15.30   13.82       -       -       -       -       -       -       -       -
+  s7_256                          5.76    5.92    6.98   10.94   13.50   15.84   18.24   18.91       -       -       -       -       -       -       -       -
+  s7_512                          5.54    5.50    6.50    8.45   12.16   15.07   19.33   20.10       -       -       -       -       -       -       -       -
+  s7_256b                         5.28    5.60    6.05   12.29   14.72   14.82   18.62   19.33       -       -       -       -       -       -       -       -
+  x7_all_256                     10.75   11.07   11.65   13.12   15.71   17.70   19.97   23.94       -       -       -       -       -       -       -       -
+
+  256 sorts: wall 4.3 s = 2.83 ms per iteration (incl. warmup); CPU per iteration (multithreaded, overlaps the GPU): generate 0.61 ms, record + upload copy 0.13 ms, verify 0.87 ms
+
+  === 512 sorts per iteration (8 measured iterations per workload x algorithm) ===
+  workload       algorithm                          min    median      mean       p95       max  fails
+  mostly_empty   pass0_bitonic                     9.50      9.62      9.77     10.66     10.66      0
+                 s1_radix                         22.75     23.12     23.16     24.00     24.00      0
+                 s1_rank512_bitreg2048_radix       7.01      7.34      7.29      7.49      7.49      0
+                 s1_rank512_bitreg4096_radix       6.94      7.06      7.14      7.81      7.81      0
+                 s3_rank512_bitreg2048_radix2      6.62      7.04      7.02      7.52      7.52      0
+                 s4_3tier_rx3r                     6.88      7.04      7.05      7.33      7.33      0
+                 t2_rank512_bitonic                6.02      6.38      6.31      6.46      6.46      0
+                 t3_rank128_rank512_bitonic        6.11      6.69      6.68      7.17      7.17      0
+                 m3_ref                            7.94      8.03      8.08      8.38      8.38      0
+                 m3_x512                           7.39      7.52      7.53      7.74      7.74      0
+                 m4_b128_p                         7.42      7.74      7.75      8.03      8.03      0
+                 m4_b128                           7.01      7.23      7.25      7.49      7.49      0
+                 m4_b128e8                         7.14      7.25      7.25      7.46      7.46      0
+                 m4_b64                            7.01      7.36      7.41      7.94      7.94      0
+                 m4_b256                           7.33      7.47      7.49      7.68      7.68      0
+                 s7_256                            6.40      6.62      6.62      6.85      6.85      0
+                 s7_512                            6.40      6.61      6.67      7.04      7.04      0
+                 s7_256b                           6.21      6.35      6.44      7.07      7.07      0
+                 x7_all_256                        9.38      9.62      9.56      9.70      9.70      0
+  mostly_small   pass0_bitonic                    19.55     20.05     20.16     21.09     21.09      0
+                 s1_radix                         55.17     62.42     61.52     62.91     62.91      0
+                 s1_rank512_bitreg2048_radix       9.63      9.79      9.78      9.95      9.95      0
+                 s1_rank512_bitreg4096_radix       9.54      9.68      9.68      9.92      9.92      0
+                 s3_rank512_bitreg2048_radix2      9.34      9.55      9.56      9.86      9.86      0
+                 s4_3tier_rx3r                     9.41      9.86      9.82     10.14     10.14      0
+                 t2_rank512_bitonic                6.98      7.14      7.16      7.46      7.46      0
+                 t3_rank128_rank512_bitonic        6.59      7.04      7.08      7.55      7.55      0
+                 m3_ref                            9.02      9.17      9.22      9.44      9.44      0
+                 m3_x512                           8.51      8.69      8.75      9.09      9.09      0
+                 m4_b128_p                         8.22      8.51      8.56      9.06      9.06      0
+                 m4_b128                           7.62      8.02      7.99      8.32      8.32      0
+                 m4_b128e8                         7.74      8.13      8.11      8.51      8.51      0
+                 m4_b64                            8.51      8.90      8.90      9.31      9.31      0
+                 m4_b256                           7.68      8.34      8.26      8.45      8.45      0
+                 s7_256                            9.73     10.03     10.11     10.78     10.78      0
+                 s7_512                            9.18      9.44      9.61     10.53     10.53      0
+                 s7_256b                           8.96      9.12      9.10      9.22      9.22      0
+                 x7_all_256                       17.31     17.62     17.62     17.92     17.92      0
+  realistic_mix  pass0_bitonic                    61.47     65.41     65.10     68.22     68.22      0
+                 s1_radix                         54.24     55.84     56.20     58.94     58.94      0
+                 s1_rank512_bitreg2048_radix      23.36     26.51     26.28     29.54     29.54      0
+                 s1_rank512_bitreg4096_radix      24.16     26.42     26.38     28.32     28.32      0
+                 s3_rank512_bitreg2048_radix2     24.32     27.20     26.82     29.44     29.44      0
+                 s4_3tier_rx3r                    27.07     29.50     29.44     32.29     32.29      0
+                 t2_rank512_bitonic               51.42     52.37     52.27     52.83     52.83      0
+                 t3_rank128_rank512_bitonic       52.35     54.19     54.14     55.36     55.36      0
+                 m3_ref                           18.94     20.78     20.55     21.70     21.70      0
+                 m3_x512                          19.52     20.83     20.93     22.53     22.53      0
+                 m4_b128_p                        19.26     20.59     21.01     23.84     23.84      0
+                 m4_b128                          28.51     31.57     31.35     33.31     33.31      0
+                 m4_b128e8                        27.52     31.18     31.31     33.50     33.50      0
+                 m4_b64                           27.71     31.25     31.28     33.25     33.25      0
+                 m4_b256                          27.94     31.57     31.34     33.02     33.02      0
+                 s7_256                           33.95     36.38     36.99     41.70     41.70      0
+                 s7_512                           24.90     27.81     27.51     30.34     30.34      0
+                 s7_256b                          35.30     37.60     38.20     42.62     42.62      0
+                 x7_all_256                       36.83     39.81     40.06     44.96     44.96      0
+  mostly_large   pass0_bitonic                   234.91    236.38    236.58    238.02    238.02      0
+                 s1_radix                         82.59     83.38     83.37     84.03     84.03      0
+                 s1_rank512_bitreg2048_radix      82.75     84.34    103.71    241.28    241.28      0
+                 s1_rank512_bitreg4096_radix      83.84     84.66     84.56     85.38     85.38      0
+                 s3_rank512_bitreg2048_radix2     83.07     84.26     84.20     85.41     85.41      0
+                 s4_3tier_rx3r                    92.93     95.26     94.88     95.90     95.90      0
+                 t2_rank512_bitonic              236.83    238.13    238.12    238.98    238.98      0
+                 t3_rank128_rank512_bitonic      237.44    238.62    238.63    240.10    240.10      0
+                 m3_ref                           83.23     84.00     84.22     85.50     85.50      0
+                 m3_x512                          87.39     89.74     89.30     90.27     90.27      0
+                 m4_b128_p                        83.39     84.24     84.40     85.47     85.47      0
+                 m4_b128                         127.97    131.44    131.08    133.47    133.47      0
+                 m4_b128e8                       128.00    131.34    131.06    133.41    133.41      0
+                 m4_b64                          128.45    131.82    159.58    358.30    358.30      0
+                 m4_b256                         128.29    131.65    131.15    132.70    132.70      0
+                 s7_256                          129.12    132.88    132.34    134.40    134.40      0
+                 s7_512                           86.85     89.74     89.38     90.50     90.50      0
+                 s7_256b                         127.81    131.49    149.76    280.93    280.93      0
+                 x7_all_256                      127.33    130.74    130.28    131.71    131.71      0
+  worst_case     pass0_bitonic                   306.75    309.97    309.56    311.52    311.52      0
+                 s1_radix                        121.73    125.73    125.05    127.42    127.42      0
+                 s1_rank512_bitreg2048_radix     118.02    120.14    120.51    123.26    123.26      0
+                 s1_rank512_bitreg4096_radix     113.60    115.20    115.09    116.64    116.64      0
+                 s3_rank512_bitreg2048_radix2    122.62    124.67    124.23    125.50    125.50      0
+                 s4_3tier_rx3r                   142.21    143.95    144.14    146.30    146.30      0
+                 t2_rank512_bitonic              310.11    311.44    311.70    313.54    313.54      0
+                 t3_rank128_rank512_bitonic      310.08    312.22    312.24    315.01    315.01      0
+                 m3_ref                          120.35    122.94    122.90    124.61    124.61      0
+                 m3_x512                         132.16    132.66    160.72    356.22    356.22      0
+                 m4_b128_p                       121.02    124.48    124.24    126.88    126.88      0
+                 m4_b128                         201.31    201.86    201.88    202.88    202.88      0
+                 m4_b128e8                       201.34    201.81    201.96    203.30    203.30      0
+                 m4_b64                          201.44    202.24    202.25    203.23    203.23      0
+                 m4_b256                         201.50    201.95    229.06    417.41    417.41      0
+                 s7_256                          202.53    203.86    259.24    431.01    431.01      0
+                 s7_512                          134.05    136.88    136.72    138.98    138.98      0
+                 s7_256b                         201.79    202.94    203.16    205.31    205.31      0
+                 x7_all_256                      200.13    201.01    219.95    350.88    350.88      0
+  edges          pass0_bitonic                    90.40     90.75     90.80     91.30     91.30      0
+                 s1_radix                         68.42     68.93     69.29     70.75     70.75      0
+                 s1_rank512_bitreg2048_radix      40.13     40.43     40.44     40.80     40.80      0
+                 s1_rank512_bitreg4096_radix      39.20     39.68     39.69     40.29     40.29      0
+                 s3_rank512_bitreg2048_radix2     39.52     40.26     40.39     41.57     41.57      0
+                 s4_3tier_rx3r                    43.58     44.00     44.03     44.35     44.35      0
+                 t2_rank512_bitonic               82.05     82.45     82.44     83.04     83.04      0
+                 t3_rank128_rank512_bitonic       82.02     83.39     83.24     84.13     84.13      0
+                 m3_ref                           32.67     35.76     35.54     38.50     38.50      0
+                 m3_x512                          31.49     33.42     33.11     34.50     34.50      0
+                 m4_b128_p                        33.79     35.84     35.89     37.41     37.41      0
+                 m4_b128                          45.92     46.24     46.37     47.62     47.62      0
+                 m4_b128e8                        45.22     45.95     45.91     46.40     46.40      0
+                 m4_b64                           45.76     46.22     46.24     46.72     46.72      0
+                 m4_b256                          45.86     46.19     46.37     47.33     47.33      0
+                 s7_256                           55.07     55.38     90.22    333.73    333.73      0
+                 s7_512                           40.42     41.01     40.93     41.18     41.18      0
+                 s7_256b                          55.20     55.62     55.63     56.22     56.22      0
+                 x7_all_256                       59.14     59.84     59.81     60.29     60.29      0
+  mostly_mid     pass0_bitonic                    64.16     64.62     64.80     65.73     65.73      0
+                 s1_radix                         64.77     65.20     65.20     65.54     65.54      0
+                 s1_rank512_bitreg2048_radix      44.38     45.04     45.04     45.95     45.95      0
+                 s1_rank512_bitreg4096_radix      44.51     44.93     45.04     45.76     45.76      0
+                 s3_rank512_bitreg2048_radix2     45.18     45.86     45.88     46.69     46.69      0
+                 s4_3tier_rx3r                    46.24     46.46     46.54     46.94     46.94      0
+                 t2_rank512_bitonic               64.83     66.21     66.05     66.88     66.88      0
+                 t3_rank128_rank512_bitonic       65.82     66.88     66.79     67.71     67.71      0
+                 m3_ref                           29.86     31.07     31.03     31.94     31.94      0
+                 m3_x512                          29.38     30.34     30.24     31.30     31.30      0
+                 m4_b128_p                        30.18     31.36     31.25     31.90     31.90      0
+                 m4_b128                          29.22     29.79     29.95     30.91     30.91      0
+                 m4_b128e8                        29.41     30.43     30.88     35.36     35.36      0
+                 m4_b64                           29.50     30.66     30.46     31.23     31.23      0
+                 m4_b256                          29.28     30.18     30.60     34.88     34.88      0
+                 s7_256                           39.07     39.57     39.62     40.22     40.22      0
+                 s7_512                           40.77     41.33     41.35     41.86     41.86      0
+                 s7_256b                          39.71     40.00     40.18     40.99     40.99      0
+                 x7_all_256                       44.67     45.20     45.36     46.59     46.59      0
+  mostly_medium  pass0_bitonic                    31.39     31.92     32.01     33.12     33.12      0
+                 s1_radix                         62.30     62.70     62.70     63.23     63.23      0
+                 s1_rank512_bitreg2048_radix      17.25     17.74     17.68     18.02     18.02      0
+                 s1_rank512_bitreg4096_radix      16.90     17.42     17.39     17.70     17.70      0
+                 s3_rank512_bitreg2048_radix2     17.22     17.34     17.40     17.76     17.76      0
+                 s4_3tier_rx3r                    17.25     17.60     17.59     17.82     17.82      0
+                 t2_rank512_bitonic               11.74     12.43     12.28     12.61     12.61      0
+                 t3_rank128_rank512_bitonic       13.15     14.06     14.05     14.94     14.94      0
+                 m3_ref                           15.39     16.26     16.31     17.34     17.34      0
+                 m3_x512                          15.17     15.76     15.81     16.70     16.70      0
+                 m4_b128_p                        17.06     17.34     17.36     17.76     17.76      0
+                 m4_b128                          15.42     16.74     16.61     17.09     17.09      0
+                 m4_b128e8                        13.92     14.88     14.88     15.68     15.68      0
+                 m4_b64                           15.52     16.77     16.69     17.15     17.15      0
+                 m4_b256                          15.74     16.24     16.15     16.51     16.51      0
+                 s7_256                           19.17     19.25     19.33     19.81     19.81      0
+                 s7_512                           16.83     17.06     17.13     17.63     17.63      0
+                 s7_256b                          22.24     22.37     22.43     22.78     22.78      0
+                 x7_all_256                       23.26     23.73     23.68     23.97     23.97      0
+  sweep          pass0_bitonic                    16.77     31.90     31.67     46.69     46.69      0
+                 s1_radix                         62.56     63.09     63.45     65.34     65.34      0
+                 s1_rank512_bitreg2048_radix       9.28     16.62     20.30     37.79     37.79      0
+                 s1_rank512_bitreg4096_radix       8.83     16.37     20.22     37.50     37.50      0
+                 s3_rank512_bitreg2048_radix2      9.34     16.05     20.12     37.50     37.50      0
+                 s4_3tier_rx3r                     8.93     16.66     20.45     38.18     38.18      0
+                 t2_rank512_bitonic                7.17     11.15     63.32    397.06    397.06      0
+                 t3_rank128_rank512_bitonic        6.34     12.88     20.46     49.44     49.44      0
+                 m3_ref                            8.96     14.35     14.56     20.96     20.96      0
+                 m3_x512                           8.32     13.62     14.04     20.54     20.54      0
+                 m4_b128_p                         7.84     14.88     13.93     19.42     19.42      0
+                 m4_b128                           7.36     14.54     13.53     19.04     19.04      0
+                 m4_b128e8                         7.46     12.85     13.38     22.56     22.56      0
+                 m4_b64                            7.49     14.40     13.61     19.49     19.49      0
+                 m4_b256                           7.81     14.08     13.55     19.07     19.07      0
+                 s7_256                            8.80     18.85     19.58     32.83     32.83      0
+                 s7_512                            8.32     15.84     18.66     33.25     33.25      0
+                 s7_256b                           8.38     23.01     20.20     32.45     32.45      0
+                 x7_all_256                       17.41     23.79     25.24     39.49     39.49      0
+  sparse_keys    pass0_bitonic                   189.60    198.62    219.37    374.14    374.14      0
+                 s1_radix                         77.31     78.64     78.68     80.67     80.67      0
+                 s1_rank512_bitreg2048_radix      70.91     74.18     73.85     76.58     76.58      0
+                 s1_rank512_bitreg4096_radix      71.10     74.43    101.64    295.52    295.52      0
+                 s3_rank512_bitreg2048_radix2     73.18     75.30     75.64     77.89     77.89      0
+                 s4_3tier_rx3r                    80.80     84.59     84.16     86.53     86.53      0
+                 t2_rank512_bitonic              188.29    197.49    198.14    205.34    205.34      0
+                 t3_rank128_rank512_bitonic      190.34    197.39    198.71    207.14    207.14      0
+                 m3_ref                           69.57     73.06     72.94     75.78     75.78      0
+                 m3_x512                          69.89     74.13     74.21     76.51     76.51      0
+                 m4_b128_p                        72.00     74.16     74.04     75.74     75.74      0
+                 m4_b128                          98.24    103.46    103.64    108.19    108.19      0
+                 m4_b128e8                        97.76    104.30    103.93    108.77    108.77      0
+                 m4_b64                           97.63    103.66    103.71    108.58    108.58      0
+                 m4_b256                          97.79    104.37    103.85    108.32    108.32      0
+                 s7_256                          106.98    111.62    110.74    114.02    114.02      0
+                 s7_512                           73.92     76.82     76.57     78.62     78.62      0
+                 s7_256b                         105.66    111.04    110.30    114.34    114.34      0
+                 x7_all_256                      105.95    110.74    110.26    113.44    113.44      0
+
+  sweep: median us per iteration by sort size (all 512 sorts of an iteration have that size)
+  algorithm                         32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  pass0_bitonic                  16.77   19.90   24.13   28.22   35.58   36.03   46.02   46.69       -       -       -       -       -       -       -       -
+  s1_radix                       63.52   63.07   62.56   63.01   63.10   62.88   64.10   65.34       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg2048_radix     9.28    9.76   10.30   13.60   19.65   25.06   36.93   37.79       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg4096_radix     8.83   10.14   10.88   13.86   18.88   24.99   36.67   37.50       -       -       -       -       -       -       -       -
+  s3_rank512_bitreg2048_radix2    9.34    9.44   10.37   13.25   18.85   25.12   37.06   37.50       -       -       -       -       -       -       -       -
+  s4_3tier_rx3r                   8.93    9.44   10.75   13.79   19.52   25.57   37.44   38.18       -       -       -       -       -       -       -       -
+  t2_rank512_bitonic              7.65    7.17    7.55    9.54   12.77   17.70  397.06   47.14       -       -       -       -       -       -       -       -
+  t3_rank128_rank512_bitonic      6.34    7.01    6.69   10.37   15.39   19.71   48.70   49.44       -       -       -       -       -       -       -       -
+  m3_ref                          8.96    9.02    9.95   12.70   16.00   20.96   19.20   19.68       -       -       -       -       -       -       -       -
+  m3_x512                         8.32    9.02    9.34   12.13   15.10   20.54   18.50   19.36       -       -       -       -       -       -       -       -
+  m4_b128_p                       8.03    7.84    9.28   12.32   17.44   18.11   18.98   19.42       -       -       -       -       -       -       -       -
+  m4_b128                         7.36    7.46    8.80   11.62   17.73   17.47   18.75   19.04       -       -       -       -       -       -       -       -
+  m4_b128e8                       7.46    7.58    8.99   10.72   14.98   15.62   19.17   22.56       -       -       -       -       -       -       -       -
+  m4_b64                          7.49    7.97    9.22   11.71   17.09   17.38   18.53   19.49       -       -       -       -       -       -       -       -
+  m4_b256                         7.81    8.16    8.90   11.10   17.06   17.47   18.82   19.07       -       -       -       -       -       -       -       -
+  s7_256                          8.80    9.70   10.34   16.13   21.57   26.40   30.91   32.83       -       -       -       -       -       -       -       -
+  s7_512                          8.32    9.34    9.92   13.06   18.62   24.58   32.22   33.25       -       -       -       -       -       -       -       -
+  s7_256b                         8.38    9.02    9.76   21.34   24.86   24.67   31.10   32.45       -       -       -       -       -       -       -       -
+  x7_all_256                     17.41   17.63   18.37   21.44   26.14   27.87   33.57   39.49       -       -       -       -       -       -       -       -
+
+  sweep: mean us per iteration by sort size (all 512 sorts of an iteration have that size)
+  algorithm                         32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  pass0_bitonic                  16.77   19.90   24.13   28.22   35.58   36.03   46.02   46.69       -       -       -       -       -       -       -       -
+  s1_radix                       63.52   63.07   62.56   63.01   63.10   62.88   64.10   65.34       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg2048_radix     9.28    9.76   10.30   13.60   19.65   25.06   36.93   37.79       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg4096_radix     8.83   10.14   10.88   13.86   18.88   24.99   36.67   37.50       -       -       -       -       -       -       -       -
+  s3_rank512_bitreg2048_radix2    9.34    9.44   10.37   13.25   18.85   25.12   37.06   37.50       -       -       -       -       -       -       -       -
+  s4_3tier_rx3r                   8.93    9.44   10.75   13.79   19.52   25.57   37.44   38.18       -       -       -       -       -       -       -       -
+  t2_rank512_bitonic              7.65    7.17    7.55    9.54   12.77   17.70  397.06   47.14       -       -       -       -       -       -       -       -
+  t3_rank128_rank512_bitonic      6.34    7.01    6.69   10.37   15.39   19.71   48.70   49.44       -       -       -       -       -       -       -       -
+  m3_ref                          8.96    9.02    9.95   12.70   16.00   20.96   19.20   19.68       -       -       -       -       -       -       -       -
+  m3_x512                         8.32    9.02    9.34   12.13   15.10   20.54   18.50   19.36       -       -       -       -       -       -       -       -
+  m4_b128_p                       8.03    7.84    9.28   12.32   17.44   18.11   18.98   19.42       -       -       -       -       -       -       -       -
+  m4_b128                         7.36    7.46    8.80   11.62   17.73   17.47   18.75   19.04       -       -       -       -       -       -       -       -
+  m4_b128e8                       7.46    7.58    8.99   10.72   14.98   15.62   19.17   22.56       -       -       -       -       -       -       -       -
+  m4_b64                          7.49    7.97    9.22   11.71   17.09   17.38   18.53   19.49       -       -       -       -       -       -       -       -
+  m4_b256                         7.81    8.16    8.90   11.10   17.06   17.47   18.82   19.07       -       -       -       -       -       -       -       -
+  s7_256                          8.80    9.70   10.34   16.13   21.57   26.40   30.91   32.83       -       -       -       -       -       -       -       -
+  s7_512                          8.32    9.34    9.92   13.06   18.62   24.58   32.22   33.25       -       -       -       -       -       -       -       -
+  s7_256b                         8.38    9.02    9.76   21.34   24.86   24.67   31.10   32.45       -       -       -       -       -       -       -       -
+  x7_all_256                     17.41   17.63   18.37   21.44   26.14   27.87   33.57   39.49       -       -       -       -       -       -       -       -
+
+  sweep: p95 us per iteration by sort size (all 512 sorts of an iteration have that size)
+  algorithm                         32      64     128     256     384     512     768    1024    1536    2048    2560    3072    4096    5120    6144    8192
+  pass0_bitonic                  16.77   19.90   24.13   28.22   35.58   36.03   46.02   46.69       -       -       -       -       -       -       -       -
+  s1_radix                       63.52   63.07   62.56   63.01   63.10   62.88   64.10   65.34       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg2048_radix     9.28    9.76   10.30   13.60   19.65   25.06   36.93   37.79       -       -       -       -       -       -       -       -
+  s1_rank512_bitreg4096_radix     8.83   10.14   10.88   13.86   18.88   24.99   36.67   37.50       -       -       -       -       -       -       -       -
+  s3_rank512_bitreg2048_radix2    9.34    9.44   10.37   13.25   18.85   25.12   37.06   37.50       -       -       -       -       -       -       -       -
+  s4_3tier_rx3r                   8.93    9.44   10.75   13.79   19.52   25.57   37.44   38.18       -       -       -       -       -       -       -       -
+  t2_rank512_bitonic              7.65    7.17    7.55    9.54   12.77   17.70  397.06   47.14       -       -       -       -       -       -       -       -
+  t3_rank128_rank512_bitonic      6.34    7.01    6.69   10.37   15.39   19.71   48.70   49.44       -       -       -       -       -       -       -       -
+  m3_ref                          8.96    9.02    9.95   12.70   16.00   20.96   19.20   19.68       -       -       -       -       -       -       -       -
+  m3_x512                         8.32    9.02    9.34   12.13   15.10   20.54   18.50   19.36       -       -       -       -       -       -       -       -
+  m4_b128_p                       8.03    7.84    9.28   12.32   17.44   18.11   18.98   19.42       -       -       -       -       -       -       -       -
+  m4_b128                         7.36    7.46    8.80   11.62   17.73   17.47   18.75   19.04       -       -       -       -       -       -       -       -
+  m4_b128e8                       7.46    7.58    8.99   10.72   14.98   15.62   19.17   22.56       -       -       -       -       -       -       -       -
+  m4_b64                          7.49    7.97    9.22   11.71   17.09   17.38   18.53   19.49       -       -       -       -       -       -       -       -
+  m4_b256                         7.81    8.16    8.90   11.10   17.06   17.47   18.82   19.07       -       -       -       -       -       -       -       -
+  s7_256                          8.80    9.70   10.34   16.13   21.57   26.40   30.91   32.83       -       -       -       -       -       -       -       -
+  s7_512                          8.32    9.34    9.92   13.06   18.62   24.58   32.22   33.25       -       -       -       -       -       -       -       -
+  s7_256b                         8.38    9.02    9.76   21.34   24.86   24.67   31.10   32.45       -       -       -       -       -       -       -       -
+  x7_all_256                     17.41   17.63   18.37   21.44   26.14   27.87   33.57   39.49       -       -       -       -       -       -       -       -
+
+  512 sorts: wall 7.0 s = 4.59 ms per iteration (incl. warmup); CPU per iteration (multithreaded, overlaps the GPU): generate 1.49 ms, record + upload copy 0.25 ms, verify 1.33 ms
