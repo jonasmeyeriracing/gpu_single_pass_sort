@@ -693,7 +693,7 @@ details summary { cursor: pointer; color: var(--fg-2); font-size: var(--step-0);
     "Three machines ran the final set: the RX 7900 XTX + Radeon iGPU machine with package 99a07b4, the RTX 5080 + RTX 2060 machine with 3ebe93b, and an i9-13900K machine (RTX 3080 Ti + UHD 770, Intel driver 32.0.101.6129) with 495478d. The later packages add a CPU-side shader-compile fix and the sorts-per-batch option; at 20 sorts the shaders, data, timing and workloads are identical.",
     "Recommended default: m4_b128_p (tier-sized dispatches: rank ≤ 128, bitonic in 128- and 256-thread groups, pass2 radix above 2,048 in 1024-thread groups). It is the most robust across GPUs and batch sizes. s1_rank512_bitreg2048_radix (one 1024-thread dispatch) is slightly faster on high-end NVIDIA with ~20-sort batches.",
     "The UHD 770 prefers the pass7 radix in 256/512-thread groups (s7_512, m3_x512, x7_all_256) for mid and large sorts; no configuration in the set is best everywhere on it yet.",
-    "RTX 2060 and RTX 3080 Ti timestamps tick in about 1 µs steps, so small differences on the small workloads are noise.",
+    "RTX 3080 Ti timestamps tick in 1.024 µs steps (every sample is a multiple of it), so small differences and ties on its small workloads are noise.",
   ];
   for (const n of notes) { const li = document.createElement("li"); li.textContent = n; $("notes").appendChild(li); }
 

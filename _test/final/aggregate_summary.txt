@@ -46,4 +46,4 @@ Rows written:
 #      99a07b4: STIMULATOR
 ####################################################################################################
 
-Problems: none (no verification failures, GPU errors or wave probe warnings; one package commit)
+Problems: none (no verification failures, GPU errors or wave probe warnings; 3 package commits (see warning above))

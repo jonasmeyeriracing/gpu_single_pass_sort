@@ -173,8 +173,10 @@ iterations + 5 warmup per combo.
 | s1_bitreg | 10.40 / 11.42 | 10.43 / 11.46 | 18.16 / 44.54 | 49.09 / 55.23 | 52.74 / 58.88 | 45.06 / 50.14 | 17.76 / 23.90 | 12.22 / 12.29 |
 | s1_radix | 18.40 / 18.46 | 18.43 / 18.56 | 19.31 / 26.98 | 31.07 / 37.06 | 38.82 / 45.06 | 28.38 / 33.66 | 19.33 / 23.26 | 18.43 / 19.52 |
 
-The 2060's timestamps are quantized in steps of about 1.024 µs (6.14, 10.24, 12.29, ... =
-6/10/12 × 1.024), so its small-workload medians are only accurate to about ±1 µs and many tie.
+Many 2060 values are multiples of 1.024 µs (6.14, 10.24, 12.29, ... = 6/10/12 × 1.024), so some
+of its small-workload numbers tie. Its timestamps are only partly coarse, though: in the final run
+(_test/final) 29.1 % of its samples are multiples of 1.024 µs, against 3.1 % expected by chance
+for its 32 ns steps (the RTX 3080 Ti, measured later, is at 100 %).
 
 ### Diagnostic run (hardware `--smoke`, 3 iterations only, one iteration in flight: rough numbers)
 
@@ -218,7 +220,7 @@ handles all sizes in one dispatch. `d_rx*` here is the radix sort *with* `WavePr
   mostly_small it is 3.68 vs 4.10-4.19 µs (-10%). On mostly_mid it is 10.3 vs 11.5 (bitreg). On the
   large workloads radix loses the 0.5-1 µs empty-dispatch penalty from pass1. On the 2060 it is
   better on mid-size (mostly_mid 17.3 vs 18.4, realistic_mix 17.7-18.1 vs 22.7-23.5) and about
-  equal on small workloads (6.0-6.1 vs 5.8-6.1, within the timer quantization).
+  equal on small workloads (6.0-6.1 vs 5.8-6.1, within the noise).
 - **Crossovers:**
   - **rank vs bitonic_reg:** rank sort is still best up to 512. On mostly_medium (129-512) the rank
     tiers measure 5.5-5.8 vs 6.6 for s1_bitreg on the 5080, and 10.2 vs 12.2 on the 2060. For tiny

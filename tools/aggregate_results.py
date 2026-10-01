@@ -483,7 +483,9 @@ def main():
         for line in problems:
             p("  " + line)
     else:
-        p("Problems: none (no verification failures, GPU errors or wave probe warnings; one package commit)")
+        commit_note = ("one package commit" if len(commits) == 1
+                       else f"{len(commits)} package commits (see warning above)")
+        p(f"Problems: none (no verification failures, GPU errors or wave probe warnings; {commit_note})")
     if warnings:
         p("")
         p("Warnings:")

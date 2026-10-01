@@ -219,9 +219,11 @@ Caveats at 20 sorts per batch, from [_test/final/notes.md](_test/final/notes.md)
   20.08 µs on the 7900 XTX, 321.8 vs 260.6 µs on the iGPU). On the UHD 770 the fastest entries are
   1.24x faster on realistic_mix (`m2_x513` 46.95 µs), 1.52x on mostly_mid (`x7_all_256` 81.22 µs)
   and 1.65x on worst_case (`s7_512` 310.23 µs).
-- The RTX 2060's timestamps are quantized in steps of about 1.024 µs, so its small-workload
-  medians are only accurate to about ±1 µs. The RTX 3080 Ti's are quantized in steps of exactly
-  1.024 µs (every sample), with the same consequence.
+- The RTX 3080 Ti's timestamps are quantized in steps of exactly 1.024 µs (every sample of the
+  final run), so its small-workload medians are only accurate to about ±1 µs and many tie. The
+  RTX 5080 and RTX 2060 report times in 32 ns steps. 29.1 % of the RTX 2060's final-run samples
+  are multiples of 1.024 µs (3.1 % would be by chance; the RTX 5080 has 2.8 %), so some of its
+  samples are coarse but its medians are not limited to 1.024 µs steps.
 
 ### Lessons learned
 
