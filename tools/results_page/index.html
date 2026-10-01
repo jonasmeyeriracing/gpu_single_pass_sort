@@ -110,7 +110,7 @@ details summary { cursor: pointer; color: var(--fg-2); font-size: var(--step-0);
   <header class="lede">
     <div class="eyebrow">gpu_single_pass_sort · final run · September 2026</div>
     <h1>Draw-Call Sort Benchmarks</h1>
-    <p>Each measurement is one batch of 20 independent sorts (0 to 8,192 elements each, 16-bit key with a 16-bit payload), dispatched without barriers and timed with GPU timestamps around the sort dispatches only. Values are medians over 1,000 batches on discrete GPUs and 300 on the integrated GPU, with the data evicted from the caches before every batch.</p>
+    <p>Each measurement is one batch of 20 independent sorts (0 to 8,192 elements each, 16-bit key with a 16-bit payload), dispatched without barriers and timed with GPU timestamps around the sort dispatches only. Values are medians over 1,000 batches on discrete GPUs and 300 on the integrated GPUs, with the data evicted from the caches before every batch.</p>
     <p class="meta" id="runmeta"></p>
   </header>
 
@@ -234,13 +234,13 @@ details summary { cursor: pointer; color: var(--fg-2); font-size: var(--step-0);
   const PASS_LABEL = { 0: "pass0 · LDS bitonic baseline", 1: "pass1 · size tiers + rank sort",
     2: "pass2 · register bitonic + radix", 3: "pass3 · radix2, mid tier", 4: "pass4 · 4-tier, rolled radix",
     5: "pass5 · measurement method", 7: "pass7 · low-end / integrated" };
-  const SERIES = ["--s1", "--s2", "--s3", "--s4", "--s5"];
+  const SERIES = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6", "--s7"];
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
   const col = (name) => D.cols.indexOf(name);
   const med = (ci, ai, c) => { const v = D.values[ci][ai][c]; return v ? v[2] : null; };
   const algoIdx = (id) => D.algos.findIndex((a) => a.id === id);
   const isMethod = (a) => a.tags.includes("method") || a.id.includes("@");
-  const recFor = (cfg) => cfg.integrated ? "m4_b128_p" : "s1_rank512_bitreg2048_radix";
+  const recFor = () => "m4_b128_p";
   const fmt = (v) => v == null ? "–" : v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
 
   const state = { workload: "realistic_mix", cfg: 0, algo: "s1_radix", log: true };
@@ -321,14 +321,14 @@ details summary { cursor: pointer; color: var(--fg-2); font-size: var(--step-0);
       const ai = algoIdx(recFor(cfg)), v = med(ci, ai, c), b = med(ci, base, c);
       const t = document.createElement("div"); t.className = "tile";
       const n = document.createElement("div"); n.className = "name";
-      const k = document.createElement("span"); k.className = "key"; k.style.background = `var(${SERIES[ci % 5]})`;
+      const k = document.createElement("span"); k.className = "key"; k.style.background = `var(${SERIES[ci % SERIES.length]})`;
       n.appendChild(k); n.appendChild(document.createTextNode(cfg.label)); t.appendChild(n);
       const val = document.createElement("div"); val.className = "val"; val.textContent = fmt(v);
       const u = document.createElement("small"); u.textContent = "µs"; val.appendChild(u); t.appendChild(val);
       const d = document.createElement("div"); d.className = "delta";
       const bb = document.createElement("b"); const rr = b / v; bb.textContent = rr >= 1 ? rr.toFixed(1) + "× faster" : (1 / rr).toFixed(1) + "× slower"; if (rr < 1) bb.style.color = "var(--fg)";
       d.appendChild(bb); d.appendChild(document.createTextNode(` than pass0 (${fmt(b)} µs)`)); t.appendChild(d);
-      const a = document.createElement("div"); a.className = "algo"; a.textContent = recFor(cfg) + (cfg.integrated ? " · integrated" : " · discrete");
+      const a = document.createElement("div"); a.className = "algo"; a.textContent = recFor(cfg) + (cfg.integrated ? " · integrated" : " · discrete") + ` · ${cfg.iterations} batches`;
       t.appendChild(a);
       box.appendChild(t);
     });
@@ -410,7 +410,7 @@ details summary { cursor: pointer; color: var(--fg-2); font-size: var(--step-0);
         D.algos.forEach((a, ai) => { if (isMethod(a)) return; const v = med(ci, ai, c); if (v != null && (!best || v < best.v)) best = { v, algo: a.id }; });
         return best || { v: null, algo: "–" };
       });
-      return { label: cfg.label, color: css(SERIES[ci % 5]), pts, rowLabel: (i) => `${cfg.label} · ${pts[i].algo}` };
+      return { label: cfg.label, color: css(SERIES[ci % SERIES.length]), pts, rowLabel: (i) => `${cfg.label} · ${pts[i].algo}` };
     });
     legend($("c1-legend"), series.map((s) => ({ label: s.label, color: s.color })));
     $("c1-sub").textContent = "For each GPU, the median batch time of the fastest algorithm on that workload (µs per batch of 20 sorts). The fastest algorithm can differ per workload; hover to see which one. Flush-mode variants are left out.";
@@ -594,7 +594,7 @@ details summary { cursor: pointer; color: var(--fg-2); font-size: var(--step-0);
     const rows = D.algos.map((a, ai) => ({ a, v: D.values[ci][ai][c] })).filter((r) => r.v).sort((p, q) => p.v[2] - q.v[2]);
     const rec = recFor(cfg);
     const accent = css("--accent"), de = css("--de");
-    legend($("c3-legend"), [{ label: "recommended for this GPU class", color: accent }, { label: "other algorithms", color: de }, { label: "line: 25th–75th percentile · tick: 95th percentile", color: css("--fg-2") }], true);
+    legend($("c3-legend"), [{ label: "recommended default (m4_b128_p)", color: accent }, { label: "other algorithms", color: de }, { label: "line: 25th–75th percentile · tick: 95th percentile", color: css("--fg-2") }], true);
     $("c3-sub").textContent = `${cfg.label} · ${WL_LABEL[state.workload]}. Bars show the median batch time on a linear axis from zero (the log/linear switch applies to the line charts); ${rows.length} algorithms, fastest first.`;
     const rowH = 20, W = Math.max(560, node.clientWidth || 900), m = { l: 300, r: 70, t: 20, b: 8 };
     const H = m.t + m.b + rows.length * rowH, iw = W - m.l - m.r;
@@ -690,10 +690,10 @@ details summary { cursor: pointer; color: var(--fg-2); font-size: var(--step-0);
   const notes = [
     "Batch time is set by the largest sort in the batch: the 20 sorts run concurrently, one thread group each, so a single 8k sort dominates a batch of otherwise small ones.",
     "The flush before every batch reads and writes 256 MB, then a 50 µs arithmetic-only drain lets the memory system settle; without the drain the RX 7900 XTX measured about 12 µs of flush tail inside the timed window.",
-    "The RX 7900 XTX machine ran package 99a07b4 and the NVIDIA machine ran 3ebe93b. They differ only in a CPU-side fix to shader compilation; shaders, timing and workloads are identical.",
-    "Batches with more sorts (scaling run: 20 to 512 sorts per batch, 19 algorithms): the tier-sized m4_b128_p is the best or within a few percent on the realistic mix at every batch size on the RTX 5080, RX 7900 XTX and Radeon iGPU, while the single-dispatch s1_rank512_bitreg2048_radix is 1.3 to 1.9 times slower at 512 sorts. m4_b128_p is the robust default; s1 only wins with small batches on high-end NVIDIA.",
-    "Recommended: s1_rank512_bitreg2048_radix (one 1024-thread dispatch: rank sort ≤ 512, register bitonic ≤ 2,048, radix above) for discrete GPUs; m4_b128_p (tier-sized dispatches: rank ≤ 128, bitonic in 128- and 256-thread groups, radix above 2,048) for integrated GPUs.",
-    "Intel UHD Graphics 770 results will be added when that machine is available again.",
+    "Three machines ran the final set: the RX 7900 XTX + Radeon iGPU machine with package 99a07b4, the RTX 5080 + RTX 2060 machine with 3ebe93b, and an i9-13900K machine (RTX 3080 Ti + UHD 770, Intel driver 32.0.101.6129) with 495478d. The later packages add a CPU-side shader-compile fix and the sorts-per-batch option; at 20 sorts the shaders, data, timing and workloads are identical.",
+    "Recommended default: m4_b128_p (tier-sized dispatches: rank ≤ 128, bitonic in 128- and 256-thread groups, pass2 radix above 2,048 in 1024-thread groups). It is the most robust across GPUs and batch sizes. s1_rank512_bitreg2048_radix (one 1024-thread dispatch) is slightly faster on high-end NVIDIA with ~20-sort batches.",
+    "The UHD 770 prefers the pass7 radix in 256/512-thread groups (s7_512, m3_x512, x7_all_256) for mid and large sorts; no configuration in the set is best everywhere on it yet.",
+    "RTX 2060 and RTX 3080 Ti timestamps tick in about 1 µs steps, so small differences on the small workloads are noise.",
   ];
   for (const n of notes) { const li = document.createElement("li"); li.textContent = n; $("notes").appendChild(li); }
 

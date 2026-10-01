@@ -1,0 +1,12 @@
+GpuSort portable package GpuSort-portable-495478d
+Built:        2026-09-30 14:55:23 on JONAS-CPH
+Git commit:   495478d (main) 2026-09-30 14:55:12 +0200 Scale run: sorts per iteration as a run parameter (--sorts), 20 to 512
+Shader sets:
+    shaders\     (current)
+    _test\pass0
+    _test\pass1
+    _test\pass2
+    _test\pass3
+    _test\pass4
+    _test\pass5
+    _test\pass7

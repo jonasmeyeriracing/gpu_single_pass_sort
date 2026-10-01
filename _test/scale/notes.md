@@ -12,19 +12,21 @@ dispatches; `algorithm_id` + `sorts_per_iteration`).
 
 | file | content |
 |---|---|
-| all_results.csv | every benchmark results row of both machines (5700 rows = 3 GPUs x 19 algorithms x 4 sort counts x 25 workload rows: 9 distributions + 16 sweep sizes; schema 5, + column `source`); smoke runs left out |
-| all_samples.csv.gz | the per-iteration samples of those rows (721,050 rows, 69 MB unpacked, gzip -9) |
-| all_wave_probe.csv | the wave probe rows of both benchmark runs (5 rows) |
+| all_results.csv | every benchmark results row of the three machines (9500 rows = 5 GPUs x 19 algorithms x 4 sort counts x 25 workload rows: 9 distributions + 16 sweep sizes; schema 5, + column `source`); smoke runs left out |
+| all_samples.csv.gz | the per-iteration samples of those rows (1,128,600 rows, 111 MB unpacked, 8.6 MB gzip -9) |
+| all_wave_probe.csv | the wave probe rows of the three benchmark runs (7 rows) |
 | aggregate_summary.txt | the aggregation summary (runs, GPUs, algorithms, problems) |
 
 The per-run result files (without the samples, dxdiag and logs) are in
-_test/external/JONAS-CPH_20260930_1458 and _test/external/STIMULATOR_20260930_1545. The raw zips
-with the full samples and logs:
-`C:\Users\jonas\Desktop\GpuSort-portable-495478d\results\JONAS-CPH_20260930_1458.zip` and
-`G:\My Drive\STIMULATOR_20260930_1545.zip`.
+_test/external/JONAS-CPH_20260930_1458, _test/external/STIMULATOR_20260930_1545 and
+_test/external/IMS-KCOMBS-INT_20260930_1154. The raw zips with the full samples and logs:
+`C:\Users\jonas\Desktop\GpuSort-portable-495478d\results\JONAS-CPH_20260930_1458.zip`,
+`G:\My Drive\STIMULATOR_20260930_1545.zip` and
+`C:\Users\jonas\Downloads\IMS-KCOMBS-INT_20260930_1154.zip`.
 
 Regenerate: `python tools/aggregate_results.py <JONAS-CPH zip> "G:\My Drive\STIMULATOR_20260930_1545.zip"
--o _test/scale` (it writes an uncompressed all_samples.csv, which is git-ignored here). The
+<IMS-KCOMBS-INT zip> -o _test/scale` (in this order; it writes an uncompressed all_samples.csv,
+which is git-ignored here). The
 results page's scaling section is built from all_results.csv:
 `python tools/results_page/prep_scale.py tools/results_page/scale.js _test/scale/all_results.csv`.
 
@@ -35,12 +37,19 @@ results page's scaling section is built from all_results.csv:
 | JONAS-CPH | NVIDIA GeForce RTX 5080 | 10DE / 2C02 | 32.0.16.1714 | 32 | 1000 / 300 / 200 / 150 |
 | STIMULATOR | AMD Radeon RX 7900 XTX | 1002 / 744C | 32.0.11037.4004 | 32 + [WaveSize(32)] | 1000 / 300 / 200 / 150 |
 | STIMULATOR | AMD Radeon(TM) Graphics (Ryzen 7000 iGPU, integrated) | 1002 / 164E | 32.0.11037.4004 | 32 + [WaveSize(32)] | 300 / 90 / 60 / 45 |
+| IMS-KCOMBS-INT (i9-13900K) | NVIDIA GeForce RTX 3080 Ti | 10DE / 2208 | 32.0.16.1692 | 32 | 1000 / 300 / 200 / 150 |
+| IMS-KCOMBS-INT (i9-13900K) | Intel(R) UHD Graphics 770 (integrated) | 8086 / 4680 | 32.0.101.6129 | 16 (no [WaveSize]) | 300 / 90 / 60 / 45 |
 
-Both machines ran the same package (495478d). Wall time of the whole plan (smoke + full): 7 min
-on JONAS-CPH, 25 min on STIMULATOR (estimates: 8.2 / 28.1 min).
+All three machines ran the same package (495478d). Wall time of the whole plan (smoke + full): 7
+min on JONAS-CPH, 25 min on STIMULATOR, 34 min on IMS-KCOMBS-INT (estimates: 8.2 / 28.1 / 24.5
+min; full run: RTX 3080 Ti 334 s, UHD 770 1500 s).
 
-**Pending: the RTX 2060 (removed from JONAS-CPH for now, to be swapped back in) and the Intel UHD
-Graphics 770 (IMS-MDETURCK).**
+IMS-KCOMBS-INT is a different machine from IMS-MDETURCK (i7-12700, UHD 770 with driver
+31.0.101.3616), whose pass4 results are in _test/external. The RTX 3080 Ti's timestamps tick in
+1.024 µs steps (every sample is a multiple of 1.024 µs), so its medians are quantized and many
+algorithms tie; where they tie, the tables below name the first of them.
+
+**Pending: the RTX 2060 (removed from JONAS-CPH for now, to be swapped back in).**
 
 ## Method
 
@@ -63,18 +72,21 @@ Graphics 770 (IMS-MDETURCK).**
   `s7_256b`, `x7_all_256`. Their dispatches are in algorithms_scale.txt (copied unchanged from
   algorithms_final.txt).
 - **0 verification failures**, no GPU errors, every wave probe OK, every run exit code 0 (smoke
-  and full, both machines).
-- The 20-sort values agree with the final run within ~3 % (realistic_mix, final / scale:
+  and full, all three machines).
+- The 20-sort values agree with the final run within ~4 % (realistic_mix, final / scale:
   RTX 5080 s1 8.88 / 8.80, m4_b128_p 10.38 / 10.06; RX 7900 XTX s1 9.84 / 9.92, m4_b128_p
-  9.44 / 9.44; Radeon iGPU s1 40.06 / 40.18, m4_b128_p 23.40 / 23.52 µs).
+  9.44 / 9.44; Radeon iGPU s1 40.06 / 40.18, m4_b128_p 23.40 / 23.52; UHD 770 s1 80.55 / 77.55,
+  m4_b128_p 58.38 / 57.89 µs), or within one timestamp tick on the RTX 3080 Ti (s1 14.34 /
+  14.34, m4_b128_p 12.29 / 11.26 µs).
 
 ## Results
 
 Median µs per batch. "best" = the fastest of the 19 algorithms; s1 = `s1_rank512_bitreg2048_radix`
 (the final run's discrete recommendation); the ratios are the median divided by the best median.
 Workloads: realistic_mix = 15 % empty, 72 % 16-512, 10 % 513-2048, 3 % 2049-8192; mostly_medium =
-uniform 129-512; mostly_empty = 70 % empty, rest 1-64; worst_case = all 8192. Every workload and
-algorithm is on the results page (tools/results_page, section "Scaling with the number of sorts").
+uniform 129-512; mostly_mid = uniform 513-2048; mostly_empty = 70 % empty, rest 1-64; worst_case =
+all 8192. Every workload and algorithm is on the results page (tools/results_page, section
+"Scaling with the number of sorts").
 
 ### RTX 5080
 
@@ -97,6 +109,15 @@ mostly_medium:
 | 256 | `t2_rank512_bitonic` | 8.08 | 10.37 | 1.28 | 12.16 | 1.50 |
 | 512 | `t2_rank512_bitonic` | 12.13 | 17.38 | 1.43 | 17.46 | 1.44 |
 
+mostly_mid:
+
+| sorts | best | best median | s1 median | s1 / best | m4_b128_p median | m4_b128_p / best |
+|---:|---|---:|---:|---:|---:|---:|
+| 20 | `s7_256` | 8.10 | 8.74 | 1.08 | 9.57 | 1.18 |
+| 128 | `m4_b128e8` | 14.00 | 16.10 | 1.15 | 15.82 | 1.13 |
+| 256 | `s7_256` | 21.98 | 24.67 | 1.12 | 26.94 | 1.23 |
+| 512 | `m3_x512` | 29.89 | 44.98 | 1.50 | 30.37 | 1.02 |
+
 mostly_empty:
 
 | sorts | best | best median | s1 median | s1 / best | m4_b128_p median | m4_b128_p / best |
@@ -114,6 +135,54 @@ worst_case:
 | 128 | `s1_rank512_bitreg4096_radix` | 37.47 | 39.33 | 1.05 | 39.62 | 1.06 |
 | 256 | `s1_rank512_bitreg4096_radix` | 67.01 | 71.04 | 1.06 | 71.46 | 1.07 |
 | 512 | `s1_rank512_bitreg4096_radix` | 114.38 | 120.93 | 1.06 | 121.15 | 1.06 |
+
+### RTX 3080 Ti
+
+
+realistic_mix:
+
+| sorts | best | best median | s1 median | s1 / best | m4_b128_p median | m4_b128_p / best |
+|---:|---|---:|---:|---:|---:|---:|
+| 20 | `m3_x512` | 11.26 | 14.34 | 1.27 | 11.26 | 1.00 |
+| 128 | `s1_rank512_bitreg2048_radix` | 21.50 | 21.50 | 1.00 | 21.50 | 1.00 |
+| 256 | `m3_ref` | 23.55 | 26.62 | 1.13 | 23.55 | 1.00 |
+| 512 | `m4_b128_p` | 27.65 | 39.94 | 1.44 | 27.65 | 1.00 |
+
+mostly_medium:
+
+| sorts | best | best median | s1 median | s1 / best | m4_b128_p median | m4_b128_p / best |
+|---:|---|---:|---:|---:|---:|---:|
+| 20 | `s7_256b` | 6.14 | 7.17 | 1.17 | 7.17 | 1.17 |
+| 128 | `s7_256b` | 7.17 | 11.26 | 1.57 | 9.73 | 1.36 |
+| 256 | `s7_256b` | 11.26 | 16.38 | 1.45 | 18.43 | 1.64 |
+| 512 | `m4_b128e8` | 14.34 | 27.65 | 1.93 | 19.46 | 1.36 |
+
+mostly_mid:
+
+| sorts | best | best median | s1 median | s1 / best | m4_b128_p median | m4_b128_p / best |
+|---:|---|---:|---:|---:|---:|---:|
+| 20 | `m3_ref` | 11.26 | 14.34 | 1.27 | 11.26 | 1.00 |
+| 128 | `x7_all_256` | 16.38 | 26.62 | 1.62 | 37.89 | 2.31 |
+| 256 | `x7_all_256` | 25.60 | 45.06 | 1.76 | 34.82 | 1.36 |
+| 512 | `x7_all_256` | 40.96 | 80.90 | 1.98 | 46.08 | 1.12 |
+
+mostly_empty:
+
+| sorts | best | best median | s1 median | s1 / best | m4_b128_p median | m4_b128_p / best |
+|---:|---|---:|---:|---:|---:|---:|
+| 20 | `s1_rank512_bitreg2048_radix` | 3.07 | 3.07 | 1.00 | 3.07 | 1.00 |
+| 128 | `s1_rank512_bitreg4096_radix` | 3.07 | 4.10 | 1.33 | 5.12 | 1.67 |
+| 256 | `s7_512` | 3.07 | 5.12 | 1.67 | 6.14 | 2.00 |
+| 512 | `s7_256b` | 4.10 | 8.19 | 2.00 | 9.22 | 2.25 |
+
+worst_case:
+
+| sorts | best | best median | s1 median | s1 / best | m4_b128_p median | m4_b128_p / best |
+|---:|---|---:|---:|---:|---:|---:|
+| 20 | `s1_radix` | 24.58 | 24.58 | 1.00 | 24.58 | 1.00 |
+| 128 | `m3_x512` | 56.32 | 57.34 | 1.02 | 58.37 | 1.04 |
+| 256 | `m3_x512` | 101.38 | 108.03 | 1.07 | 108.54 | 1.07 |
+| 512 | `s7_256b` | 165.89 | 187.39 | 1.13 | 189.44 | 1.14 |
 
 ### RX 7900 XTX
 
@@ -135,6 +204,15 @@ mostly_medium:
 | 128 | `s7_256b` | 5.96 | 9.80 | 1.64 | 7.80 | 1.31 |
 | 256 | `m4_b128e8` | 9.32 | 15.02 | 1.61 | 12.36 | 1.33 |
 | 512 | `m4_b128e8` | 11.84 | 25.36 | 2.14 | 14.92 | 1.26 |
+
+mostly_mid:
+
+| sorts | best | best median | s1 median | s1 / best | m4_b128_p median | m4_b128_p / best |
+|---:|---|---:|---:|---:|---:|---:|
+| 20 | `s1_radix` | 9.30 | 9.88 | 1.06 | 9.40 | 1.01 |
+| 128 | `x7_all_256` | 14.60 | 19.00 | 1.30 | 23.72 | 1.62 |
+| 256 | `x7_all_256` | 21.70 | 28.84 | 1.33 | 26.12 | 1.20 |
+| 512 | `x7_all_256` | 33.56 | 50.88 | 1.52 | 38.38 | 1.14 |
 
 mostly_empty:
 
@@ -175,6 +253,15 @@ mostly_medium:
 | 256 | `m4_b128e8` | 164.60 | 464.12 | 2.82 | 195.36 | 1.19 |
 | 512 | `m4_b128e8` | 324.12 | 924.28 | 2.85 | 386.32 | 1.19 |
 
+mostly_mid:
+
+| sorts | best | best median | s1 median | s1 / best | m4_b128_p median | m4_b128_p / best |
+|---:|---|---:|---:|---:|---:|---:|
+| 20 | `m4_b128e8` | 62.76 | 109.46 | 1.74 | 64.10 | 1.02 |
+| 128 | `m4_b256` | 369.00 | 683.62 | 1.85 | 373.84 | 1.01 |
+| 256 | `m4_b256` | 729.52 | 1361.6 | 1.87 | 740.26 | 1.01 |
+| 512 | `m4_b128` | 1455.8 | 2719.6 | 1.87 | 1474.7 | 1.01 |
+
 mostly_empty:
 
 | sorts | best | best median | s1 median | s1 / best | m4_b128_p median | m4_b128_p / best |
@@ -193,50 +280,124 @@ worst_case:
 | 256 | `s1_radix` | 3277.6 | 3317.0 | 1.01 | 3293.6 | 1.00 |
 | 512 | `s1_radix` | 6555.4 | 6632.0 | 1.01 | 6589.4 | 1.01 |
 
+### UHD 770
+
+
+realistic_mix:
+
+| sorts | best | best median | s1 median | s1 / best | m4_b128_p median | m4_b128_p / best |
+|---:|---|---:|---:|---:|---:|---:|
+| 20 | `x7_all_256` | 52.24 | 77.55 | 1.48 | 57.89 | 1.11 |
+| 128 | `m4_b256` | 185.75 | 408.67 | 2.20 | 270.37 | 1.46 |
+| 256 | `m4_b256` | 381.48 | 826.07 | 2.17 | 485.23 | 1.27 |
+| 512 | `m4_b128e8` | 729.63 | 1592.5 | 2.18 | 914.38 | 1.25 |
+
+mostly_medium:
+
+| sorts | best | best median | s1 median | s1 / best | m4_b128_p median | m4_b128_p / best |
+|---:|---|---:|---:|---:|---:|---:|
+| 20 | `m4_b64` | 31.56 | 39.09 | 1.24 | 34.01 | 1.08 |
+| 128 | `m4_b256` | 138.83 | 204.12 | 1.47 | 159.92 | 1.15 |
+| 256 | `m4_b256` | 268.67 | 399.04 | 1.49 | 306.59 | 1.14 |
+| 512 | `m4_b256` | 526.72 | 794.79 | 1.51 | 601.51 | 1.14 |
+
+mostly_mid:
+
+| sorts | best | best median | s1 median | s1 / best | m4_b128_p median | m4_b128_p / best |
+|---:|---|---:|---:|---:|---:|---:|
+| 20 | `x7_all_256` | 81.09 | 247.13 | 3.05 | 124.04 | 1.53 |
+| 128 | `x7_all_256` | 449.48 | 1533.8 | 3.41 | 611.98 | 1.36 |
+| 256 | `x7_all_256` | 894.74 | 3062.4 | 3.42 | 1205.8 | 1.35 |
+| 512 | `x7_all_256` | 1805.6 | 6136.4 | 3.40 | 2419.7 | 1.34 |
+
+mostly_empty:
+
+| sorts | best | best median | s1 median | s1 / best | m4_b128_p median | m4_b128_p / best |
+|---:|---|---:|---:|---:|---:|---:|
+| 20 | `s7_512` | 4.53 | 6.20 | 1.37 | 9.32 | 2.06 |
+| 128 | `s7_256b` | 14.61 | 23.33 | 1.60 | 26.28 | 1.80 |
+| 256 | `s7_256b` | 27.03 | 43.75 | 1.62 | 46.35 | 1.71 |
+| 512 | `s7_256b` | 52.29 | 83.49 | 1.60 | 86.51 | 1.65 |
+
+worst_case:
+
+| sorts | best | best median | s1 median | s1 / best | m4_b128_p median | m4_b128_p / best |
+|---:|---|---:|---:|---:|---:|---:|
+| 20 | `s7_512` | 321.30 | 507.87 | 1.58 | 573.67 | 1.79 |
+| 128 | `s7_512` | 1926.8 | 3167.8 | 1.64 | 3191.0 | 1.66 |
+| 256 | `s7_512` | 4022.8 | 6304.1 | 1.57 | 6365.2 | 1.58 |
+| 512 | `s7_512` | 8362.0 | 12568.0 | 1.50 | 12685.9 | 1.52 |
+
 ### worst_case: the large tier's group size
 
 At 512 sorts of 8192 elements, grouped by the path that sorts 2049+ elements (median / best median
 on that GPU):
 
-| large-sort path | algorithms | RTX 5080 | RX 7900 XTX | Radeon iGPU |
-|---|---|---:|---:|---:|
-| pass2 LDS radix P @1024 | s1_radix, s1_rank512_bitreg2048_radix, s1_rank512_bitreg4096_radix, m3_ref, m4_b128_p | 1.00-1.08 | 1.00-1.03 | 1.00-1.01 |
-| radix2 / radix3 @1024 | s3_rank512_bitreg2048_radix2, s4_3tier_rx3r | 1.09-1.24 | 1.23-1.28 | 1.14-1.17 |
-| ballot radix X @512 | m3_x512, s7_512 | 1.16 | 1.17 | 1.24-1.25 |
-| ballot radix X @256 | m4_b128, m4_b128e8, m4_b64, m4_b256, s7_256, s7_256b, x7_all_256 | 1.70 | 1.46-1.49 | 1.53-1.54 |
-| LDS bitonic @1024 | pass0_bitonic, t2_rank512_bitonic, t3_rank128_rank512_bitonic | 2.71-2.74 | 1.66-1.71 | 2.33-2.34 |
+| large-sort path | algorithms | RTX 5080 | RTX 3080 Ti | RX 7900 XTX | Radeon iGPU | UHD 770 |
+|---|---|---:|---:|---:|---:|---:|
+| pass2 LDS radix P @1024 | s1_radix, s1_rank512_bitreg2048_radix, s1_rank512_bitreg4096_radix, m3_ref, m4_b128_p | 1.00-1.08 | 1.13-1.14 | 1.00-1.03 | 1.00-1.01 | 1.50-1.52 |
+| radix2 / radix3 @1024 | s3_rank512_bitreg2048_radix2, s4_3tier_rx3r | 1.09-1.24 | 1.25-1.33 | 1.23-1.28 | 1.14-1.17 | 2.38-2.57 |
+| ballot radix X @512 | m3_x512, s7_512 | 1.16 | 1.03-1.04 | 1.17 | 1.24-1.25 | 1.00-1.05 |
+| ballot radix X @256 | m4_b128, m4_b128e8, m4_b64, m4_b256, s7_256, s7_256b, x7_all_256 | 1.70 | 1.00-1.10 | 1.46-1.49 | 1.53-1.54 | 1.23-1.35 |
+| LDS bitonic @1024 | pass0_bitonic, t2_rank512_bitonic, t3_rank128_rank512_bitonic | 2.71-2.74 | 2.60-2.61 | 1.66-1.71 | 2.33-2.34 | 1.80-1.81 |
 
-The 256-thread large tiers are 1.5-1.7x slower at 512 sorts (1.5-2.0x at 20 sorts): more, smaller
-groups do not make up for the slower per-sort algorithm even when the GPU is full. The RX 7900
+On the RTX 5080, the RX 7900 XTX and the Radeon iGPU the 256-thread large tiers are 1.5-1.7x
+slower at 512 sorts (1.5-2.0x at 20 sorts): more, smaller groups do not make up for the slower
+per-sort algorithm even when the GPU is full. The two new GPUs differ. On the **RTX 3080 Ti** the
+pass2 radix @1024 is tied for the best at 20 sorts (24.58 µs), but from 128 sorts the X radix in
+512- and 256-thread groups is faster: by one timestamp tick at 128 sorts (m3_x512 56.32 vs
+s1 57.34 µs), clearly at 512 sorts (s7_256b 165.89, m3_x512 171.01, m4_b128_p 189.44 µs). On the **UHD 770** the X radix in 512-thread groups is the best at every
+batch size (s7_512: 321.30 µs at 20 sorts, 8362.0 at 512), and the pass2 radix @1024 is 1.5-1.8x
+slower (m4_b128_p 573.67 / 12685.9 µs). The RX 7900
 XTX's worst_case grows faster than the work from 256 to 512 sorts (best 81.8 -> 243.2 µs, 3.0x for
 2x the elements; RTX 5080 67.0 -> 114.4 µs). 512 x 8192 elements are 16 MB of input plus 16 MB of
 output; a cache capacity effect is a plausible cause but was not investigated.
 
 ## Conclusions
 
-- **realistic_mix: `m4_b128_p` is the best or within 2 % at every batch size on all three GPUs**,
-  except 20 sorts on the RTX 5080 (s7_256 8.03, s1 8.80, m4_b128_p 10.06 µs: the cost of 4
-  dispatches on an idle high-end GPU). The single-dispatch `s1_rank512_bitreg2048_radix` falls
-  behind as the batch grows: at 512 sorts it is 1.31x (RTX 5080), 1.43x (RX 7900 XTX) and 1.91x
-  (Radeon iGPU) slower than the best. Mixed batches need tier-sized groups once the GPU is busy:
-  a 1024-thread group for a 50-element sort takes occupancy the other sorts need.
-- **worst_case: large sorts still need 1024-thread groups.** Every configuration with the pass2
-  LDS radix @1024 for 2049+ (including m4_b128_p) is within 8 % of the best; the 256-thread
-  ballot radix tiers are 1.5-1.7x slower (table above). RX 7900 XTX at 512 sorts: 243 µs, RTX
-  5080: 114 µs.
+- **realistic_mix: `m4_b128_p` is the best or within 2 % at every batch size on the RTX 5080, the
+  RTX 3080 Ti, the RX 7900 XTX and the Radeon iGPU**, except 20 sorts on the RTX 5080 (s7_256
+  8.03, s1 8.80, m4_b128_p 10.06 µs: the cost of 4 dispatches on an idle high-end GPU). On the RTX
+  3080 Ti it is the best (or tied for the best at the 1.024 µs tick) at all four batch sizes. The
+  single-dispatch `s1_rank512_bitreg2048_radix` falls behind as the batch grows: at 512 sorts it
+  is 1.31x (RTX 5080), 1.44x (RTX 3080 Ti), 1.43x (RX 7900 XTX), 1.91x (Radeon iGPU) and 2.18x
+  (UHD 770) slower than the best. Mixed batches need tier-sized groups once the GPU is busy: a
+  1024-thread group for a 50-element sort takes occupancy the other sorts need.
+- **Intel UHD 770: no configuration of the set is the best everywhere.** On realistic_mix
+  m4_b128_p is 1.11x (20 sorts), 1.46x (128), 1.27x (256) and 1.25x (512) slower than the best;
+  the best are `x7_all_256` (20 sorts, 52.24 µs), `m4_b256` (128 / 256 sorts, 185.75 / 381.48 µs)
+  and `m4_b128e8` (512 sorts, 729.63 µs). All three sort 2049+ with the X radix @256, where
+  m4_b128_p uses the pass2 radix @1024. The UHD 770 prefers the pass7 radix X in
+  256 / 512-thread groups for mid and large sorts: `s7_512` is the best on worst_case at every
+  batch size (1.52-1.79x faster than m4_b128_p), `x7_all_256` the best on mostly_mid at every
+  batch size (1.34-1.53x faster) and on mostly_large / sparse_keys from 128 sorts. m4_b128_p is
+  still 1.3-1.7x faster than s1 on realistic_mix at every batch size there. An Intel-tuned tier set
+  (tier-sized small groups plus X @256 / @512 for the large tier) is an open item.
+- **worst_case: on the RTX 5080, the RX 7900 XTX and the Radeon iGPU large sorts still need
+  1024-thread groups.** Every configuration with the pass2 LDS radix @1024 for 2049+ (including
+  m4_b128_p) is within 8 % of the best there; the 256-thread ballot radix tiers are 1.5-1.7x
+  slower (table above). RX 7900 XTX at 512 sorts: 243 µs, RTX 5080: 114 µs. On the RTX 3080 Ti
+  m4_b128_p is 1.04-1.14x behind the X tiers from 128 sorts (189.44 vs 165.89 µs at 512), on the
+  UHD 770 1.52-1.79x behind s7_512.
 - **mostly_medium (129-512)**: `m4_b128e8` (bitonic E8 in 128 threads) wins on AMD at large counts
   (RX 7900 XTX at 512 sorts 11.84 vs m4_b128_p 14.92 µs, 21 % faster; Radeon iGPU 324.1 vs 386.3
-  µs, 16 % faster, and the best at every count). `t2_rank512_bitonic` (rank sort in 512-thread
-  groups) wins at every count on the RTX 5080 (12.13 vs m4_b128_p 17.46 µs at 512 sorts).
-- **mostly_empty**: `s7_256b` is the best on the RTX 5080, `t2_rank512_bitonic` on the RX 7900 XTX
-  (128-512 sorts), `m4_b64` on the Radeon iGPU. m4_b128_p is 1.07-1.88x slower than the best here,
-  but the absolute times are small (RX 7900 XTX at 512 sorts: 4.44 vs 2.36 µs).
-- **Recommendation: `m4_b128_p` becomes the single default**: the best or near the best on the
-  mixed and the large workloads at every batch size on every GPU measured.
-  `s1_rank512_bitreg2048_radix` remains the option for high-end NVIDIA GPUs with small batches
-  (about 20 sorts): on the RTX 5080 it beats m4_b128_p by 13 % on realistic_mix (8.80 vs 10.06 µs)
-  and by 43 % on mostly_empty (2.59 vs 4.53 µs), but it is 1.29x slower at 512 sorts (25.87 vs
-  20.03 µs).
-- Open tuning opportunities for the 129-512 tier at 128-512 sorts: B8 instead of B4 in the
-  128-thread tier on AMD (m4_b128e8), rank sort in 512-thread groups on NVIDIA
+  µs, 16 % faster, and the best at every count) and on the RTX 3080 Ti at 512 sorts (14.34 vs
+  19.46 µs). `t2_rank512_bitonic` (rank sort in 512-thread groups) wins at every count on the RTX
+  5080 (12.13 vs m4_b128_p 17.46 µs at 512 sorts). On the UHD 770 `m4_b256` (rank sort up to 256
+  in 256 threads) is the best from 128 sorts (526.72 vs 601.51 µs at 512).
+- **mostly_empty**: `s7_256b` is the best on the RTX 5080 and the UHD 770 (128-512 sorts),
+  `t2_rank512_bitonic` on the RX 7900 XTX (128-512 sorts), `m4_b64` on the Radeon iGPU. m4_b128_p
+  is 1.00-2.25x slower than the best here, but the absolute times are small (RX 7900 XTX at 512
+  sorts: 4.44 vs 2.36 µs; RTX 3080 Ti 9.22 vs 4.10 µs).
+- **Recommendation: `m4_b128_p` stays the single default**: the best or near the best on the
+  mixed workload at every batch size on every GPU measured except the Intel UHD 770, and on the
+  large workloads on the RTX 5080, RX 7900 XTX and Radeon iGPU. On the UHD 770 it is correct and
+  well ahead of s1 but 1.1-1.5x behind the best on realistic_mix (see above).
+  `s1_rank512_bitreg2048_radix` remains the option for the RTX 5080 with small batches (about 20
+  sorts): it beats m4_b128_p by 13 % on realistic_mix (8.80 vs 10.06 µs) and by 43 % on
+  mostly_empty (2.59 vs 4.53 µs), but it is 1.29x slower at 512 sorts (25.87 vs 20.03 µs). On the
+  RTX 3080 Ti it has no such advantage (realistic_mix at 20 sorts: 14.34 vs 11.26 µs).
+- Open tuning opportunities: an Intel tier set with the X radix in 256 / 512-thread groups for
+  the large tier; for the 129-512 tier at 128-512 sorts, B8 instead of B4 in the 128-thread tier
+  on AMD and the RTX 3080 Ti (m4_b128e8), rank sort in 512-thread groups on the RTX 5080
   (t2_rank512_bitonic).

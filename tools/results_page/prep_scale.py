@@ -8,11 +8,12 @@ for f in files:
     rows += [r for r in csv.DictReader(open(f, encoding="utf-8"))
              if r["run_kind"] == "benchmark" and not r["sweep_size"]]
 
-ORDER = [("NVIDIA GeForce RTX 5080", "32"), ("AMD Radeon RX 7900 XTX", "32"),
+ORDER = [("NVIDIA GeForce RTX 5080", "32"), ("NVIDIA GeForce RTX 3080 Ti", "32"), ("AMD Radeon RX 7900 XTX", "32"),
          ("AMD Radeon RX 7900 XTX", "64"), ("NVIDIA GeForce RTX 2060", "32"),
-         ("AMD Radeon(TM) Graphics", "32")]
+         ("AMD Radeon(TM) Graphics", "32"), ("Intel(R) UHD Graphics 770", "16")]
 SHORT = {"NVIDIA GeForce RTX 5080": "RTX 5080", "AMD Radeon RX 7900 XTX": "RX 7900 XTX",
-         "NVIDIA GeForce RTX 2060": "RTX 2060", "AMD Radeon(TM) Graphics": "Radeon iGPU"}
+         "NVIDIA GeForce RTX 2060": "RTX 2060", "AMD Radeon(TM) Graphics": "Radeon iGPU",
+         "NVIDIA GeForce RTX 3080 Ti": "RTX 3080 Ti", "Intel(R) UHD Graphics 770": "UHD 770"}
 present = {(r["gpu_name"], r["wave_size"]) for r in rows}
 cfgs = [k for k in ORDER if k in present] + sorted(present - set(ORDER))
 labels = []

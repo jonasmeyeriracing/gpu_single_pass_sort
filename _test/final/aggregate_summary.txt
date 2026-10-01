@@ -1,10 +1,13 @@
 GpuSort results aggregation
 ===========================
-Inputs: G:/My Drive/STIMULATOR_20260929_1529.zip, C:/Users/jonas/Desktop/GpuSort-portable-3ebe93b/results/JONAS-CPH_20260929_1658
-CSV files found: 6 results, 6 samples, 6 wave probe, 0 other (ignored)
-Runs: 6 (3 benchmark, 3 smoke); 3 smoke run(s) left out of the output files (--include-smoke)
+Inputs: G:/My Drive/STIMULATOR_20260929_1529.zip, C:/Users/jonas/Desktop/GpuSort-portable-3ebe93b/results/JONAS-CPH_20260929_1658, C:/Users/jonas/Downloads/IMS-KCOMBS-INT_20260930_1653.zip
+CSV files found: 8 results, 8 samples, 8 wave probe, 0 other (ignored)
+Runs: 8 (4 benchmark, 4 smoke); 4 smoke run(s) left out of the output files (--include-smoke)
 
-Machines (2):
+Machines (3):
+  IMS-KCOMBS-INT: 2 run(s), package commit 495478d
+      20260930T165335.352_IMS-KCOMBS-INT  smoke      shaders    1/2: smoke final default wave size, every GPU
+      20260930T165708.833_IMS-KCOMBS-INT  benchmark  shaders    2/2: full final default wave size, every GPU
   JONAS-CPH: 2 run(s), package commit 3ebe93b
       20260929T165915.864_JONAS-CPH  smoke      shaders    1/2: smoke final default wave size, every GPU
       20260929T170056.546_JONAS-CPH  benchmark  shaders    2/2: full final default wave size, every GPU
@@ -14,11 +17,13 @@ Machines (2):
       20260929T153337.200_STIMULATOR  benchmark  shaders    3/4: full final default wave size, every GPU
       20260929T161609.215_STIMULATOR  benchmark  shaders    4/4: full final wave64, discrete GPU only
 
-GPUs (4):
+GPUs (6):
   STIMULATOR: AMD Radeon RX 7900 XTX (0x1002:0x744C), driver 32.0.11037.4004, wave configs 32+attr, 64+attr (WAVE_SIZE; +attr = [WaveSize]), 3450 result rows
   STIMULATOR: AMD Radeon(TM) Graphics (0x1002:0x164E, integrated), driver 32.0.11037.4004, wave configs 32+attr (WAVE_SIZE; +attr = [WaveSize]), 1725 result rows
   JONAS-CPH: NVIDIA GeForce RTX 5080 (0x10DE:0x2C02), driver 32.0.16.1714, wave configs 32 (WAVE_SIZE; +attr = [WaveSize]), 1725 result rows
   JONAS-CPH: NVIDIA GeForce RTX 2060 (0x10DE:0x1F08), driver 32.0.16.1714, wave configs 32 (WAVE_SIZE; +attr = [WaveSize]), 1725 result rows
+  IMS-KCOMBS-INT: NVIDIA GeForce RTX 3080 Ti (0x10DE:0x2208), driver 32.0.16.1692, wave configs 32 (WAVE_SIZE; +attr = [WaveSize]), 1725 result rows
+  IMS-KCOMBS-INT: Intel(R) UHD Graphics 770 (0x8086:0x4680, integrated), driver 32.0.101.6129, wave configs 16 (WAVE_SIZE; +attr = [WaveSize]), 1725 result rows
 
 Shader sets: shaders
 Algorithms (69): m2_x513, m3_b4096_x256, m3_mid_b4, m3_r2, m3_ref, m3_ref_32k, m3_x1025, m3_x256, m3_x512, m4_b128, m4_b128_p, m4_b128e8, m4_b256, m4_b64, pass0_bitonic, s1_bitreg, s1_radix, s1_rank1024_bitreg, s1_rank1024_radix, s1_rank512_bitreg, s1_rank512_bitreg2048_radix, s1_rank512_bitreg2048_radix@code, s1_rank512_bitreg2048_radix@data, s1_rank512_bitreg2048_radix@full, s1_rank512_bitreg2048_radix@full_legacy, s1_rank512_bitreg2048_radix@none, s1_rank512_bitreg4096_radix, s1_rank512_radix, s3_bitE1_rx2, s3_bitE2_rx2, s3_bitE4_rx2, s3_radix2_k1, s3_radix2_k4, s3_radix2_k4_skip, s3_radix2_k8, s3_radix2_k8_skip, s3_rank256_bitreg2048_radix2, s3_rank512_bitE2_2048_radix2, s3_rank512_bitE4_4096_radix2, s3_rank512_bitreg2048_radix2, s3_rank512_bitreg2048_radix2k4, s3_rank512_bitreg2048_radix2s, s3_rank512_bitreg4096_radix2, s3_rank512_radix2, s4_3tier_rx3, s4_3tier_rx3_p3072, s4_3tier_rx3_p5120, s4_3tier_rx3r, s4_4tier_3072, s4_4tier_4096, s4_4tier_5120, s4_radix3, s4_radix3_rolled, s4_radix3_sw, s7_256, s7_256b, s7_512, t2_rank512_bitonic, t2_rank512_bitreg, t2_rank512_bitreg16, t2_rank512_bitreg32, t2_rank512_radix, t2_rank512_radix_waveops, t3_rank128_rank512_bitonic, t3_rank64_rank512_bitonic, t4_rank128_rank512_rank1024_bitonic, t4_rank128_rank512_rank1024x2_bitonic, x7_all_1024, x7_all_256
@@ -26,16 +31,18 @@ Flush modes: code, data, full, none, full_d50, full_legacy
 Stable power: off
 Workloads: edges, mostly_empty, mostly_large, mostly_medium, mostly_mid, mostly_small, realistic_mix, sparse_keys, sweep, worst_case
 Sweep sizes: 32, 64, 128, 256, 384, 512, 768, 1024, 1536, 2048, 2560, 3072, 4096, 5120, 6144, 8192
+Sorts per iteration: 20
 Iterations requested per combo: 300, 1000
 
 Rows written:
-  C:/Users/jonas/AppData/Local/Temp/claude/D--git-gpu-single-pass-sort/9ef8f4da-127d-4ed4-be4f-c649adbd94cf/scratchpad/final_agg\all_results.csv: 8625
-  C:/Users/jonas/AppData/Local/Temp/claude/D--git-gpu-single-pass-sort/9ef8f4da-127d-4ed4-be4f-c649adbd94cf/scratchpad/final_agg\all_samples.csv: 2967000
-  C:/Users/jonas/AppData/Local/Temp/claude/D--git-gpu-single-pass-sort/9ef8f4da-127d-4ed4-be4f-c649adbd94cf/scratchpad/final_agg\all_wave_probe.csv: 8
+  _test/final\all_results.csv: 12075
+  _test/final\all_samples.csv: 3864000
+  _test/final\all_wave_probe.csv: 10
 
 ####################################################################################################
 #  WARNING: THE MACHINES RAN DIFFERENT PACKAGE COMMITS - results may not be comparable:
 #      3ebe93b: JONAS-CPH
+#      495478d: IMS-KCOMBS-INT
 #      99a07b4: STIMULATOR
 ####################################################################################################
 

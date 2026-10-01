@@ -1,4 +1,4 @@
-# External results: AMD RX 7900 XTX, AMD Ryzen iGPU, Intel UHD Graphics 770
+# External results: AMD RX 7900 XTX, AMD Ryzen iGPU, Intel UHD Graphics 770, RTX 3080 Ti
 
 Results of the portable package (tools/package.ps1, tools/run_all.bat) run by other people on
 their machines, archived here with the RTX 5080 (this machine, _test/pass4) as the reference.
@@ -32,7 +32,18 @@ scale-run folders (JONAS-CPH_20260930_1458, STIMULATOR_20260930_1545) are archiv
 no `*_samples.csv` (30 and 39 MB), no dxdiag.txt, no logs. The samples of their benchmark runs
 are in _test/scale/all_samples.csv.gz, the raw zips are
 `C:\Users\jonas\Desktop\GpuSort-portable-495478d\results\JONAS-CPH_20260930_1458.zip` and
-`G:\My Drive\STIMULATOR_20260930_1545.zip`.
+`G:\My Drive\STIMULATOR_20260930_1545.zip`. The two IMS-KCOMBS-INT folders (scale run
+IMS-KCOMBS-INT_20260930_1154, final run IMS-KCOMBS-INT_20260930_1653) are archived the same way:
+no `*_samples.csv` (41 + 1 MB and 93 + 2 MB), no dxdiag.txt, no logs. Their benchmark samples are
+in _test/scale/all_samples.csv.gz and _test/final/all_samples.csv.gz, the raw zips are
+`C:\Users\jonas\Downloads\IMS-KCOMBS-INT_20260930_1154.zip` and
+`C:\Users\jonas\Downloads\IMS-KCOMBS-INT_20260930_1653.zip`.
+
+**Two different Intel machines.** IMS-MDETURCK (i7-12700, UHD 770 driver 31.0.101.3616, 2026-09-28,
+pass4 shaders only) and IMS-KCOMBS-INT (i9-13900K, RTX 3080 Ti + UHD 770 driver 32.0.101.6129,
+2026-09-30, scale and final sets) are separate computers with different Intel drivers. Both iGPUs
+are a UHD Graphics 770 (8086 / 4680, Xe-LP, 32 EUs); compare their numbers with that in mind (see
+"2026-09-30: IMS-KCOMBS-INT").
 
 | folder | GPUs | package (shaders) | mode | runs | result |
 |---|---|---|---|---|---|
@@ -46,6 +57,8 @@ are in _test/scale/all_samples.csv.gz, the raw zips are
 | JONAS-CPH_20260929_1658 | RTX 5080 + RTX 2060 | 3ebe93b (final set) | `run_all.bat final`: smoke + full (1000 iterations), wave32 | 2 of 2 | exit 0, **0 verification failures**; see _test/final/notes.md |
 | JONAS-CPH_20260930_1458 | RTX 5080 (RTX 2060 removed) | 495478d (scale set) | `run_all.bat scale`: smoke + full, 19 algorithms x 10 workloads x 20 / 128 / 256 / 512 sorts per batch (1000 / 300 / 200 / 150 iterations), wave32 | 2 of 2 | exit 0, **0 verification failures**; see _test/scale/notes.md |
 | STIMULATOR_20260930_1545 | 7900 XTX + Ryzen iGPU | 495478d (scale set) | `run_all.bat scale`: as above (iGPU: 300 / 90 / 60 / 45 iterations), default wave32 on both GPUs | 2 of 2 | exit 0, **0 verification failures**; see _test/scale/notes.md |
+| IMS-KCOMBS-INT_20260930_1154 | RTX 3080 Ti + UHD 770 (i9-13900K) | 495478d (scale set) | `run_all.bat scale` (noprompt): 19 algorithms x 10 workloads x 20 / 128 / 256 / 512 sorts; 3080 Ti 1000 / 300 / 200 / 150, UHD 770 300 / 90 / 60 / 45 iterations; default wave size (32 / 16) | 2 of 2 | exit 0, **0 verification failures**; probe OK at 32 / 16 lanes; see _test/scale/notes.md |
+| IMS-KCOMBS-INT_20260930_1653 | RTX 3080 Ti + UHD 770 (i9-13900K) | 495478d (final set) | `run_all.bat final` (noprompt): smoke + full, 69 algorithm entries x 10 workloads (1000 iterations 3080 Ti, 300 UHD 770), default wave size | 2 of 2 | exit 0, **0 verification failures**; see _test/final/notes.md |
 
 ## Machines
 
@@ -54,7 +67,9 @@ are in _test/scale/all_samples.csv.gz, the raw zips are
 | NVIDIA GeForce RTX 5080 (reference) | JONAS-CPH | Blackwell GB203, 84 SMs | 10DE / 2C02 | 32.0.16.1714 | 16 GB | 32 | 1 GHz | WAVE_SIZE=32 |
 | AMD Radeon RX 7900 XTX | STIMULATOR | RDNA3 Navi 31, 48 WGPs, 96 MB Infinity Cache | 1002 / 744C | 32.0.11037.4004 | 24 GB | 32-64 | 100 MHz | WAVE_SIZE=32 + [WaveSize(32)] (default) or 64 + [WaveSize(64)] |
 | AMD Radeon(TM) Graphics | STIMULATOR | Ryzen 7000 desktop iGPU (RDNA2, 2 CUs = 1 WGP), system memory | 1002 / 164E | 32.0.11037.4004 | 485 MB carve-out + shared | 32-64 | 100 MHz | as the XTX |
-| Intel UHD Graphics 770 | IMS-MDETURCK | Xe-LP, 32 EUs (2 subslices), system memory | 8086 / 4680 | 31.0.101.3616 | 128 MB + shared | 16 | 19.2 MHz | WAVE_SIZE=16 (no [WaveSize]) |
+| Intel UHD Graphics 770 | IMS-MDETURCK (i7-12700) | Xe-LP, 32 EUs (2 subslices), system memory | 8086 / 4680 | 31.0.101.3616 | 128 MB + shared | 16 | 19.2 MHz | WAVE_SIZE=16 (no [WaveSize]) |
+| Intel UHD Graphics 770 (a different machine) | IMS-KCOMBS-INT (i9-13900K) | Xe-LP, 32 EUs, system memory | 8086 / 4680 | 32.0.101.6129 | 128 MB + shared | 16 | 19.2 MHz | WAVE_SIZE=16 (no [WaveSize]) |
+| NVIDIA GeForce RTX 3080 Ti | IMS-KCOMBS-INT (i9-13900K) | Ampere GA102 | 10DE / 2208 | 32.0.16.1692 | 12 GB | 32 | 1 GHz reported, samples in 1.024 µs steps | WAVE_SIZE=32 |
 
 Wall time of one full run (15 algorithms x 10 workloads x 1005 iterations): 5080 110 s, 7900 XTX
 118 s, Ryzen iGPU 1455 s (wave32) / 1531 s (wave64), UHD 770 1144 s. The 256 MB flush of every
@@ -352,4 +367,47 @@ carry the ~12 µs artifact (mostly_empty ~13.8 µs for every algorithm). Main re
 
 **Next:** `run_all.bat final` (shaders/algorithms_final.txt: every distinct algorithm of pass0-7,
 default flush `full_d50`, 1000 iterations on discrete / 300 on integrated GPUs, wave64 on the XTX
-only), see tools/README_PORTABLE.txt.
+only), see tools/README_PORTABLE.txt. (Done: _test/final/notes.md, and the scale run
+_test/scale/notes.md.)
+
+## 2026-09-30: IMS-KCOMBS-INT (i9-13900K: RTX 3080 Ti + UHD 770)
+
+Package 495478d, `run_all.bat scale` (IMS-KCOMBS-INT_20260930_1154, 34 min) and `run_all.bat
+final` (IMS-KCOMBS-INT_20260930_1653, 62 min), both without prompts. Every run exit 0, **0
+verification failures**, wave probe OK on both GPUs (3080 Ti 32 lanes, UHD 770 16 lanes, lane =
+SV_GroupIndex % lanes, every cross-lane check OK). This is the first hardware run of the pass7
+shaders (`p7_*`, used by `m4_b128_p`) at wave16. The results are merged into _test/final and
+_test/scale; details there.
+
+**Not the same machine as IMS-MDETURCK.** Same GPU model, different CPU platform and a newer Intel
+driver (32.0.101.6129 vs 31.0.101.3616). For the shaders both ran, the two UHD 770s agree within
+about 7 % (median µs; IMS-MDETURCK pass4 run with the pre-pass5 flush, IMS-KCOMBS-INT final run
+with the same flush, `s1_rank512_bitreg2048_radix@full_legacy`; `s1_radix` with its default):
+
+| | mostly_empty | mostly_medium | realistic_mix | mostly_mid | mostly_large | worst_case |
+|---|---:|---:|---:|---:|---:|---:|
+| s1_rank512_bitreg2048_radix, IMS-MDETURCK | 6.56 | 42.06 | 77.32 | 257 | 422 | 503 |
+| s1_rank512_bitreg2048_radix, IMS-KCOMBS-INT | 7.32 | 40.60 | 82.37 | 245 | 429 | 513 |
+| s1_radix, IMS-MDETURCK (full_legacy) | 117 | 342 | 308 | 354 | 430 | 504 |
+| s1_radix, IMS-KCOMBS-INT (full_d50) | 126 | 341 | 307 | 357 | 434 | 516 |
+
+So the 1024-thread radix floor of conclusion 3 (~340 µs for 20 radix groups of any size) holds on
+the second machine and driver too.
+
+**UHD 770 results (final + scale runs).** Conclusion 3's prediction holds: the pass7 radix X in
+256 / 512-thread groups beats the 1024-thread pass2 radix for large sorts. At 20 sorts (final run)
+worst_case: `s7_512` 310.23 µs, `m3_x512` 346.95, s1 511.07, m4_b128_p 518.78; mostly_mid:
+`x7_all_256` 81.22, m4_b128_p 123.54, s1 244.58; realistic_mix: `m2_x513` 46.95, m4_b128_p 58.38,
+s1 80.55. In the scale run `s7_512` is the best on worst_case at every batch size (1.52-1.79x
+faster than m4_b128_p) and on realistic_mix m4_b128_p is 1.11-1.46x behind the best (`x7_all_256`,
+`m4_b256`, `m4_b128e8`: all with X @256 for 2049+). So no configuration of the set is the best
+everywhere on Intel; the recommended default `m4_b128_p` is correct there and 1.3-2.5x faster than
+s1 on the mixed and mid workloads, and an Intel-tuned tier set is an open item.
+
+**RTX 3080 Ti.** Behaves like the RTX 5080: on realistic_mix `m4_b128_p` equals the best of the 19
+scale algorithms at 20, 128, 256 and 512 sorts (11.26 / 21.50 / 23.55 / 27.65 µs), and s1 falls
+behind as the batch grows (1.44x at 512 sorts). Unlike the 5080, its worst_case at 128-512 sorts
+is fastest with the X radix in 256 / 512-thread groups (512 sorts: s7_256b 165.89 vs m4_b128_p
+189.44 µs). Its timestamps tick in 1.024 µs steps (every sample of both runs is a multiple of
+1.024 µs, although the driver reports 1 GHz), so small differences are below its resolution. Wall
+time of the full final run: 546 s (3080 Ti), 2907 s (UHD 770).

@@ -41,8 +41,9 @@ in one thread group. The design follows from that:
 
 The goal was to be as fast as possible on both low-end and high-end GPUs. The result is one
 default configuration with tier-sized dispatches, `m4_b128_p`, that holds up from 20 to 512 sorts
-per batch on every GPU measured, plus a single-dispatch alternative for high-end NVIDIA GPUs with
-batches of about 20 sorts (see [Results](#results)).
+per batch on every NVIDIA and AMD GPU measured, plus a single-dispatch alternative for the RTX 5080
+with batches of about 20 sorts. On the Intel UHD 770 `m4_b128_p` is correct but not the fastest;
+an Intel-tuned configuration is still open (see [Results](#results)).
 
 ## Results
 
@@ -51,22 +52,24 @@ batches of about 20 sorts (see [Results](#results)).
 | GPU | class | wave size | iterations |
 |---|---|---|---:|
 | NVIDIA GeForce RTX 5080 (Blackwell, 84 SMs) | discrete | 32 | 1000 |
+| NVIDIA GeForce RTX 3080 Ti (Ampere) | discrete | 32 | 1000 |
 | NVIDIA GeForce RTX 2060 (Turing) | discrete | 32 | 1000 |
 | AMD Radeon RX 7900 XTX (RDNA3) | discrete | 32 (default, `[WaveSize(32)]`) and 64 | 1000 |
 | AMD Radeon Graphics, Ryzen 7000 iGPU (RDNA2, 2 CUs) | integrated | 32 | 300 |
-| Intel UHD Graphics 770 (Xe-LP, 32 EUs) | integrated | 16 | final run pending |
+| Intel UHD Graphics 770 (Xe-LP, 32 EUs), in an i9-13900K machine | integrated | 16 | 300 |
 
-The Intel UHD 770 ran earlier shader sets (pass4) with 0 verification failures, but not the final
-set. See [_test/external/notes.md](_test/external/notes.md). The
-[scale run](#scaling-with-more-sorts-per-batch) (20 to 512 sorts per batch) covers the RTX 5080,
-the RX 7900 XTX (wave32) and the Radeon iGPU so far; the RTX 2060 and the Intel UHD 770 are
-pending.
+The GPUs are in three machines: RTX 5080 + RTX 2060; RX 7900 XTX + Ryzen iGPU; and an i9-13900K
+with an RTX 3080 Ti and the UHD 770 (Intel driver 32.0.101.6129). A UHD 770 in a different machine
+(i7-12700, driver 31.0.101.3616) ran the earlier pass4 shaders with 0 verification failures; see
+[_test/external/notes.md](_test/external/notes.md). The
+[scale run](#scaling-with-more-sorts-per-batch) (20 to 512 sorts per batch) covers every GPU above
+except the RTX 2060, which is pending; the RX 7900 XTX ran it at wave32 only.
 
 ### Final run
 
 The final run used all 69 algorithms in
-[shaders/algorithms_final.txt](shaders/algorithms_final.txt) on every GPU above except the Intel
-GPU. Each GPU ran 10 workloads. Every iteration was verified, with 0 verification failures and no
+[shaders/algorithms_final.txt](shaders/algorithms_final.txt) on every GPU above. Each GPU ran 10
+workloads. Every iteration was verified, with 0 verification failures and no
 GPU errors ([_test/final/notes.md](_test/final/notes.md)).
 
 Median µs per batch of 20 sorts, with the default measurement (`full_d50`, see
@@ -82,6 +85,9 @@ that with one default, `m4_b128_p` (see [Recommendation](#recommendation)).
 | RTX 2060 | `pass0_bitonic` (baseline) | 8.29 | 23.70 | 23.97 | 91.30 |
 | RTX 2060 | **`s1_rank512_bitreg2048_radix`** | **6.14** | **20.42** | **17.89** | **38.34** |
 | RTX 2060 | `m4_b128_p` | 6.75 | 19.39 | 20.99 | 38.37 |
+| RTX 3080 Ti | `pass0_bitonic` (baseline) | 5.12 | 18.43 | 18.43 | 62.46 |
+| RTX 3080 Ti | **`s1_rank512_bitreg2048_radix`** | **3.07** | **14.34** | **14.34** | **24.58** |
+| RTX 3080 Ti | `m4_b128_p` | 3.07 | 12.29 | 11.26 | 24.58 |
 | RX 7900 XTX wave32 | `pass0_bitonic` (baseline) | 3.08 | 11.54 | 11.56 | 41.48 |
 | RX 7900 XTX wave32 | **`s1_rank512_bitreg2048_radix`** | **1.76** | **9.84** | **9.88** | **20.08** |
 | RX 7900 XTX wave32 | `m4_b128_p` | 1.80 | 9.44 | 9.32 | 20.06 |
@@ -91,10 +97,14 @@ that with one default, `m4_b128_p` (see [Recommendation](#recommendation)).
 | Radeon iGPU | `pass0_bitonic` (baseline) | 10.76 | 72.22 | 141.56 | 597.16 |
 | Radeon iGPU | `s1_rank512_bitreg2048_radix` | 4.40 | 40.06 | 109.34 | 260.60 |
 | Radeon iGPU | **`m4_b128_p`** | **3.88** | **23.40** | **63.96** | **257.76** |
+| UHD 770 | `pass0_bitonic` (baseline) | 14.01 | 74.71 | 138.98 | 595.47 |
+| UHD 770 | `s1_rank512_bitreg2048_radix` | 7.08 | 80.55 | 244.58 | 511.07 |
+| UHD 770 | **`m4_b128_p`** | **12.40** | **58.38** | **123.54** | **518.78** |
 
 Workloads (all 20 sorts per batch): mostly_empty = 70 % empty, rest 1-64; realistic_mix = 15 %
 empty, 72 % 16-512, 10 % 513-2048, 3 % 2049-8192; mostly_mid = uniform 513-2048; worst_case = all
-8192. The full list is under [Benchmark framework](#workloads).
+8192. The full list is under [Benchmark framework](#workloads). The RTX 3080 Ti's timestamps tick
+in 1.024 µs steps, so its medians are multiples of 1.024 µs.
 
 The tail matters as much as the median. On the RTX 5080, realistic_mix has a p95 of 43.39 µs with
 `pass0_bitonic` and 16.64 µs with `s1_rank512_bitreg2048_radix`. The p95 comes from the rare
@@ -106,8 +116,8 @@ Everything above is for 20 sorts per batch. With 20 sorts most of the GPU is idl
 that a single-dispatch configuration launches a 1024-thread group for every sort, even an empty
 or a 16-element one. The scale run ([_test/scale/notes.md](_test/scale/notes.md)) measured 19
 algorithms ([shaders/algorithms_scale.txt](shaders/algorithms_scale.txt)) at 20, 128, 256 and 512
-sorts per batch on the RTX 5080, the RX 7900 XTX and the Radeon iGPU, with 0 verification
-failures. The RTX 2060 and the Intel UHD 770 are pending.
+sorts per batch on the RTX 5080, RTX 3080 Ti, RX 7900 XTX, Radeon iGPU and Intel UHD 770, with 0
+verification failures. The RTX 2060 is pending.
 
 Median µs per batch on realistic_mix. In parentheses: the time divided by the fastest of the 19
 algorithms on that GPU at that batch size.
@@ -117,34 +127,54 @@ algorithms on that GPU at that batch size.
 | RTX 5080 | `s1_rank512_bitreg2048_radix` | 8.80 (1.10x) | 15.22 (1.04x) | 17.79 (1.08x) | 25.87 (1.31x) |
 | RTX 5080 | `m4_b128_p` | 10.06 (1.25x) | 14.75 (1.00x) | 16.46 (1.00x) | 20.03 (1.01x) |
 | RTX 5080 | fastest | 8.03 `s7_256` | 14.69 `m3_ref` | 16.46 `m4_b128_p` | 19.78 `m3_ref` |
+| RTX 3080 Ti | `s1_rank512_bitreg2048_radix` | 14.34 (1.27x) | 21.50 (1.00x) | 26.62 (1.13x) | 39.94 (1.44x) |
+| RTX 3080 Ti | `m4_b128_p` | 11.26 (1.00x) | 21.50 (1.00x) | 23.55 (1.00x) | 27.65 (1.00x) |
+| RTX 3080 Ti | fastest | 11.26 `m3_x512` | 21.50 `s1_rank512_bitreg2048_radix` | 23.55 `m3_ref` | 27.65 `m4_b128_p` |
 | RX 7900 XTX | `s1_rank512_bitreg2048_radix` | 9.92 (1.05x) | 15.24 (1.00x) | 18.90 (1.11x) | 28.88 (1.43x) |
 | RX 7900 XTX | `m4_b128_p` | 9.44 (1.00x) | 15.56 (1.02x) | 17.00 (1.00x) | 20.14 (1.00x) |
 | RX 7900 XTX | fastest | 9.44 `m4_b128_p` | 15.24 `s1_rank512_bitreg2048_radix` | 17.00 `m4_b128_p` | 20.14 `m4_b128_p` |
 | Radeon iGPU | `s1_rank512_bitreg2048_radix` | 40.18 (1.74x) | 245.96 (1.93x) | 490.66 (1.89x) | 969.52 (1.91x) |
 | Radeon iGPU | `m4_b128_p` | 23.52 (1.02x) | 127.12 (1.00x) | 259.54 (1.00x) | 508.72 (1.00x) |
 | Radeon iGPU | fastest | 23.06 `m4_b128e8` | 127.12 `m4_b128_p` | 259.54 `m4_b128_p` | 508.72 `m4_b128_p` |
+| UHD 770 | `s1_rank512_bitreg2048_radix` | 77.55 (1.48x) | 408.67 (2.20x) | 826.07 (2.17x) | 1592.5 (2.18x) |
+| UHD 770 | `m4_b128_p` | 57.89 (1.11x) | 270.37 (1.46x) | 485.23 (1.27x) | 914.38 (1.25x) |
+| UHD 770 | fastest | 52.24 `x7_all_256` | 185.75 `m4_b256` | 381.48 `m4_b256` | 729.63 `m4_b128e8` |
 
-RTX 5080 (top) and Radeon iGPU (bottom), realistic_mix, log scale:
+On the RTX 3080 Ti several algorithms often tie (1.024 µs timestamp steps); the table names one.
 
-![Batch time by number of sorts per batch, RTX 5080 and Radeon iGPU](docs/images/scaling_realistic_mix.png)
+RTX 5080 (top), Radeon iGPU (middle) and Intel UHD 770 (bottom), realistic_mix, log scale:
+
+![Batch time by number of sorts per batch, RTX 5080, Radeon iGPU and UHD 770](docs/images/scaling_realistic_mix.png)
 
 - **Mixed batches need tier-sized groups.** Once the GPU is busy, a 1024-thread group for a
   50-element sort takes occupancy that the other sorts need. `m4_b128_p` is the fastest or within
-  2 % of the fastest at every batch size on all three GPUs, except 20 sorts on the RTX 5080. The
-  single dispatch falls behind as the batch grows: at 512 sorts it is 1.31x (RTX 5080), 1.43x
-  (RX 7900 XTX) and 1.91x (Radeon iGPU) slower than the fastest.
-- **Large sorts still need 1024-thread groups.** On worst_case (all 8192), every configuration
-  that sorts 2049+ with the pass2 LDS radix in 1024-thread groups (`s1_*`, `m3_ref`,
-  `m4_b128_p`) is within 8 % of the fastest at every batch size. The configurations with the
-  256-thread ballot radix are 1.5-1.7x slower at 512 sorts. More, smaller groups do not make up
-  for the slower algorithm even when the GPU is full. `m4_b128_p` keeps the 1024-thread radix
-  for its large tier, which is why it holds up on both workloads.
+  2 % of the fastest at every batch size on the RTX 5080, RTX 3080 Ti, RX 7900 XTX and Radeon iGPU,
+  except 20 sorts on the RTX 5080. The single dispatch falls behind as the batch grows: at 512
+  sorts it is 1.31x (RTX 5080), 1.44x (RTX 3080 Ti), 1.43x (RX 7900 XTX), 1.91x (Radeon iGPU) and
+  2.18x (UHD 770) slower than the fastest.
+- **Large sorts need 1024-thread groups on most GPUs.** On worst_case (all 8192), on the RTX 5080,
+  the RX 7900 XTX and the Radeon iGPU, every configuration that sorts 2049+ with the pass2 LDS
+  radix in 1024-thread groups (`s1_*`, `m3_ref`, `m4_b128_p`) is within 8 % of the fastest at
+  every batch size. The configurations with the 256-thread ballot radix are 1.5-1.7x slower there
+  at 512 sorts. More, smaller groups do not make up for the slower algorithm even when the GPU is
+  full. `m4_b128_p` keeps the 1024-thread radix for its large tier, which is why it holds up on
+  both workloads. Two GPUs differ: on the RTX 3080 Ti the ballot radix in 256- and 512-thread
+  groups is faster from 128 sorts (512 sorts: `s7_256b` 165.89 vs `m4_b128_p` 189.44 µs), and on
+  the UHD 770 much faster (next point).
+- **The Intel UHD 770 wants smaller groups for large sorts too.** `s7_512` (one dispatch, ballot
+  radix in 512-thread groups above 2048) is the fastest on worst_case at every batch size, 1.52-1.79x
+  faster than `m4_b128_p`; `x7_all_256` (ballot radix in 256 threads for every size) is the fastest
+  on mostly_mid at every batch size, 1.34-1.53x faster. On realistic_mix the fastest at 128-512
+  sorts are `m4_b256` and `m4_b128e8`; `m4_b128_p` is 1.25-1.46x slower there (1.11x at 20
+  sorts). Most of the gap is the large tier: `m4_b128`, which has the same tiers as `m4_b128_p`
+  except the ballot radix in 256 threads for 2049+, takes 191.28 vs 270.37 µs at 128 sorts. No
+  configuration of the set is the fastest on Intel everywhere.
 - **The 129-512 tier can still be tuned for large batches.** On mostly_medium (uniform 129-512)
   at 512 sorts, `m4_b128e8` (bitonic E8 instead of E4 in the 128-thread tier) is 21 % faster
   than `m4_b128_p` on the RX 7900 XTX (11.84 vs 14.92 µs) and 16 % faster on the Radeon iGPU. On
   the RTX 5080, `t2_rank512_bitonic` (rank sort in 512-thread groups) is the fastest at every
-  batch size (12.13 vs 17.46 µs at 512 sorts). Neither is better than `m4_b128_p` across all
-  workloads yet.
+  batch size (12.13 vs 17.46 µs at 512 sorts). `m4_b128e8` is also the fastest on the RTX 3080 Ti
+  at 512 sorts (14.34 vs 19.46 µs). Neither is better than `m4_b128_p` across all workloads yet.
 
 ### Recommendation
 
@@ -152,35 +182,46 @@ RTX 5080 (top) and Radeon iGPU (bottom), realistic_mix, log scale:
   128 elements in 128 threads, bitonic E4 for 129-512 in 128 threads, bitonic E8 for 513-2048 in
   256 threads, and the pass2 LDS radix above 2048 in 1024 threads. On realistic_mix it is the
   fastest or within 2 % of the fastest of the 19 scale-run algorithms at 20 to 512 sorts per
-  batch on the RTX 5080, RX 7900 XTX and Radeon iGPU (the exception: 20 sorts on the RTX 5080),
-  and on worst_case it is within 7 % everywhere. At 20 sorts it is 1.7x faster than
-  `s1_rank512_bitreg2048_radix` on the Ryzen iGPU (realistic_mix 23.4 vs 40.1 µs, mostly_mid
-  64.0 vs 109.3 µs), about 5 % faster on the RX 7900 XTX and on the RTX 2060 (realistic_mix), and
-  3.1x faster than `pass0_bitonic` on the iGPU. Its weak spot is batches of only tiny sorts
-  (mostly_empty: 1.07-1.88x the fastest), where the absolute times are small.
+  batch on the RTX 5080, RTX 3080 Ti, RX 7900 XTX and Radeon iGPU (the exception: 20 sorts on the
+  RTX 5080), and on worst_case it is within 7 % on the RTX 5080, RX 7900 XTX and Radeon iGPU (14 %
+  on the RTX 3080 Ti). At 20 sorts it is 1.7x faster than `s1_rank512_bitreg2048_radix` on the
+  Ryzen iGPU (realistic_mix 23.4 vs 40.1 µs, mostly_mid 64.0 vs 109.3 µs), 1.4x on the UHD 770
+  (realistic_mix 58.38 vs 80.55 µs), about 5 % faster on the RX 7900 XTX and on the RTX 2060
+  (realistic_mix), and 3.1x faster than `pass0_bitonic` on the iGPU. Its weak spot is batches of
+  only tiny sorts (mostly_empty: 1.00-2.25x the fastest on the NVIDIA and AMD GPUs), where the
+  absolute times are small.
 - **High-end NVIDIA with batches of about 20 sorts: `s1_rank512_bitreg2048_radix`.** One
   1024-thread dispatch that uses 32 KB of groupshared memory: rank sort up to 512 elements,
   register bitonic up to 2048, LDS radix above. It avoids the multi-dispatch cost, which is large
   on the RTX 5080: at 20 sorts it beats `m4_b128_p` by 13 % on realistic_mix (8.80 vs 10.06 µs)
   and by 45 % on mostly_empty (2.69 vs 4.90 µs, final run). It loses that lead as the batch
-  grows: 15.22 vs 14.75 µs at 128 sorts, 1.29x slower at 512. Measured on the RTX 5080 only; on
-  the RTX 2060 at 20 sorts (final run) it is faster on mostly_empty and mostly_mid but 5 % slower
-  on realistic_mix, and its scale run is pending.
+  grows: 15.22 vs 14.75 µs at 128 sorts, 1.29x slower at 512. This lead was measured on the RTX
+  5080 only. The RTX 3080 Ti does not show it: there `m4_b128_p` equals or beats it on
+  realistic_mix at every batch size (11.26 vs 14.34 µs at 20 sorts). On the RTX 2060 at 20 sorts
+  (final run) it is faster on mostly_empty and mostly_mid but 5 % slower on realistic_mix, and
+  the 2060's scale run is pending.
 - **AMD: wave32.** This is the default (`WAVE_SIZE=32` + `[WaveSize(32)]`). On the RX 7900 XTX,
   wave64 costs about 70 % on realistic_mix and mostly_mid (16.84 vs 9.84 µs for `s1_...`) and
   about 10 % on worst_case.
-- Pending: the Intel UHD 770 (wave16; the `p7_*` shaders that `m4_b128_p` uses have not run on
-  Intel hardware) and the RTX 2060 in the scale run.
+- **Intel: `m4_b128_p` for now, with a caveat.** On the UHD 770 (wave16) it is correct (0
+  verification failures) and 1.3-1.7x faster than `s1_rank512_bitreg2048_radix` on realistic_mix
+  at every batch size, but 1.11-1.46x slower than the fastest configuration there, and 1.52-1.79x
+  slower than `s7_512` on worst_case. An Intel-tuned tier set (the ballot radix in 256- or
+  512-thread groups for the large tier) is an open item.
+- Pending: the RTX 2060 in the scale run.
 
 Caveats at 20 sorts per batch, from [_test/final/notes.md](_test/final/notes.md):
 
-- Everywhere except the RTX 2060, the better of `m4_b128_p` and `s1_rank512_bitreg2048_radix` is
-  within about 10 % of the fastest of all 69 algorithms. On the RTX 2060, `s7_512` (one 512-thread
-  dispatch) is 19 % faster on realistic_mix (15.71 µs) and 13 % faster on mostly_mid. It is slower
-  on large sorts on the other GPUs, though (worst_case: 30.88 vs 20.08 µs on the 7900 XTX, 321.8
-  vs 260.6 µs on the iGPU).
+- Everywhere except the RTX 2060 and the UHD 770, the better of `m4_b128_p` and
+  `s1_rank512_bitreg2048_radix` is within about 10 % of the fastest of all 69 algorithms. On the
+  RTX 2060, `s7_512` (one 512-thread dispatch) is 19 % faster on realistic_mix (15.71 µs) and 13 %
+  faster on mostly_mid. It is slower on large sorts on the AMD GPUs, though (worst_case: 30.88 vs
+  20.08 µs on the 7900 XTX, 321.8 vs 260.6 µs on the iGPU). On the UHD 770 the fastest entries are
+  1.24x faster on realistic_mix (`m2_x513` 46.95 µs), 1.52x on mostly_mid (`x7_all_256` 81.22 µs)
+  and 1.65x on worst_case (`s7_512` 310.23 µs).
 - The RTX 2060's timestamps are quantized in steps of about 1.024 µs, so its small-workload
-  medians are only accurate to about ±1 µs.
+  medians are only accurate to about ±1 µs. The RTX 3080 Ti's are quantized in steps of exactly
+  1.024 µs (every sample), with the same consequence.
 
 ### Lessons learned
 
@@ -216,7 +257,10 @@ Each point links to the pass notes where it was measured.
   cut mostly_medium by 48 %. The gain comes mostly from the thread count, not the LDS size. A
   single dispatch with smaller groups does not get it, because every group reserves the largest
   tier's LDS and threads ([pass7](_test/pass7/notes.md)). Discrete GPUs behave the same once a
-  batch has a few hundred sorts ([scale](_test/scale/notes.md)).
+  batch has a few hundred sorts ([scale](_test/scale/notes.md)). The Intel UHD 770 goes further:
+  even its large tier is faster in 512-thread groups (worst_case at 20 sorts: `s7_512` 310.23 vs
+  511.07 µs for the 1024-thread pass2 radix in `s1_rank512_bitreg2048_radix`), as the pass4 numbers
+  had suggested ([external](_test/external/notes.md), [final](_test/final/notes.md)).
 - **Wave intrinsics are not equally cheap.** On NVIDIA (driver 32.0.16.1714), `WavePrefixSum` costs
   6.4x a `WaveReadLaneAt` shuffle and `WaveMatch` 8.6x. `WaveActiveSum`, `WaveActiveBallot` and
   `WavePrefixCountBits` cost the same as a shuffle ([pass3](_test/pass3/notes.md)). Replacing the
@@ -268,7 +312,7 @@ first chart is the RTX 5080, the second the Radeon iGPU:
 median divided by the fastest algorithm's median on the same GPU:
 
 <details>
-<summary>Heatmap (64 algorithms x 5 GPU configurations)</summary>
+<summary>Heatmap (64 algorithms x 7 GPU configurations)</summary>
 
 ![Slowdown heatmap, realistic_mix](docs/images/heatmap_realistic_mix.png)
 
@@ -285,10 +329,10 @@ median divided by the fastest algorithm's median on the same GPU:
   [tools/results_page/README.md](tools/results_page/README.md)).
 - Raw data: [_test/final/all_results.csv](_test/final/all_results.csv) has one row per GPU x
   algorithm x workload. [_test/final/all_samples.csv.gz](_test/final/all_samples.csv.gz) has
-  every measured iteration (2,967,000 rows). The scale run's data is in
+  every measured iteration (3,864,000 rows). The scale run's data is in
   [_test/scale/all_results.csv](_test/scale/all_results.csv) (one row per GPU x algorithm x
   workload x sorts per batch) and [_test/scale/all_samples.csv.gz](_test/scale/all_samples.csv.gz)
-  (721,050 rows). The columns are described in [tools/CSV_FORMAT.md](tools/CSV_FORMAT.md).
+  (1,128,600 rows). The columns are described in [tools/CSV_FORMAT.md](tools/CSV_FORMAT.md).
 
 ## Integration guide
 
@@ -410,7 +454,7 @@ DXGI_ADAPTER_DESC1 desc = {};
 adapter->GetDesc1(&desc);
 const bool singleDispatch = desc.VendorId == 0x10DE   // NVIDIA
                          && !arch.UMA                 // discrete
-                         && isHighEndGpu              // your own GPU list; measured: RTX 5080
+                         && isHighEndGpu              // your own GPU list; measured: RTX 5080 (not the RTX 3080 Ti)
                          && typicalSortsPerBatch <= 20; // s1 won at 20 sorts, was even at 128, lost at 256+
 ```
 
@@ -418,7 +462,8 @@ Use `m4_b128_p` when in doubt: where `s1_rank512_bitreg2048_radix` wins (RTX 508
 saves about 1.3 µs per batch on realistic_mix (8.80 vs 10.06 µs); where it loses, it costs up to
 5.8 µs on the RTX 5080 and 8.7 µs on the RX 7900 XTX at 512 sorts, and 1.7-1.9x on the Radeon
 iGPU. The measured batch sizes are 20, 128, 256 and 512; the crossover between 20 and 128 was
-not measured.
+not measured. On Intel `m4_b128_p` is the better of the two but not the fastest configuration
+(see [Recommendation](#recommendation)).
 
 The wave-size part is what the benchmark does (`src/Device.cpp`, `src/main.cpp`). The shaders
 assume that lane = `SV_GroupIndex % WAVE_SIZE` and that `WAVE_SIZE` is the real lane count. If the
@@ -434,10 +479,9 @@ checks both assumptions on every GPU before it runs.
   what their size range needs: 512 B for rank ≤ 128, 2 KB for 129-512, 8 KB for 513-2048.
 - Needs Shader Model 6.6 and wave operations: `WaveReadLaneAt`, ballots, and prefix/active sums
   at wave64.
-- Wave sizes that ran on hardware: 32 (NVIDIA, AMD), 64 (AMD), and 16 (Intel UHD 770, pass4
-  shaders only). WARP ran 4. The pass7 shaders (`p7_*`, used by `m4_b128_p`) have not run on
-  Intel hardware. Their wave16 path was only validated by emulation and on 32-lane hardware with
-  a test switch (`SHUFFLE_SPAN_TEST=1`).
+- Wave sizes that ran on hardware: 32 (NVIDIA, AMD), 64 (AMD), and 16 (Intel UHD 770: the pass4
+  shaders on one machine, the final and scale sets on another, including the pass7 shaders
+  `p7_*` that `m4_b128_p` uses, with 0 verification failures). WARP ran 4.
 
 ## Algorithm catalogue
 
@@ -477,77 +521,77 @@ pass3 / pass4 radix, and @n = threads per group. "diag set" marks configurations
 pass3/pass4 diagnostic lists had. The groups column lists each dispatch's threads per group, with
 its groupshared memory per group in parentheses.
 
-| algorithm | pass | groups: threads (groupshared) | tiers / description | RTX 5080 | RTX 2060 | XTX w32 | iGPU |
-|---|---:|---|---|---:|---:|---:|---:|
-| `pass0_bitonic` | 0 | 1024 (32 KB) | LDS bitonic sort for every size, one 1024-thread dispatch (the pass0 baseline) | 12.5 | 23.7 | 11.5 | 72.2 |
-| `t2_rank512_bitonic` | 1 | 512 (2 KB) + 1024 (32 KB) | R ≤512 @512, LDS bitonic 513+ @1024 | 14.8 | 24.6 | 11.6 | 50.1 |
-| `t3_rank128_rank512_bitonic` | 1 | 128 (512 B) + 512 (2 KB) + 1024 (32 KB) | R ≤128 @128, R 129-512 @512, LDS bitonic 513+ @1024 | 15.3 | 28.6 | 11.8 | 49.9 |
-| `t3_rank64_rank512_bitonic` | 1 | 64 (256 B) + 512 (2 KB) + 1024 (32 KB) | R ≤64 @64, R 65-512 @512, LDS bitonic 513+ @1024 | 15.4 | 28.4 | 11.8 | 49.9 |
-| `t4_rank128_rank512_rank1024_bitonic` | 1 | 128 (512 B) + 512 (2 KB) + 1024 (4 KB) + 1024 (32 KB) | R ≤128 @128, R 129-512 @512, R 513-1024 @1024, LDS bitonic 1025+ @1024 | 15.1 | 29.0 | 19.9 | 54.8 |
-| `t4_rank128_rank512_rank1024x2_bitonic` | 1 | 128 (512 B) + 512 (2 KB) + 1024 (8 KB) + 1024 (32 KB) | R ≤128 @128, R 129-512 @512, R x2 513-2048 @1024, LDS bitonic 2049+ @1024 | 30.3 | 68.6 | 55.5 | 83.4 |
-| `t2_rank512_bitreg` | 2 | 512 (2 KB) + 1024 (32 KB) | R ≤512 @512, B8 513+ @1024 | 11.2 | 23.7 | 9.68 | 43.4 |
-| `t2_rank512_bitreg16` | 2 | 512 (2 KB) + 512 (32 KB) | R ≤512 @512, B16 513+ @512 | 12.2 | 24.2 | 10.2 | 42.9 |
-| `t2_rank512_bitreg32` | 2 | 512 (2 KB) + 256 (32 KB) | R ≤512 @512, B32 513+ @256 | 14.1 | 30.7 | 11.8 | 40.6 |
-| `t2_rank512_radix` | 2 | 512 (2 KB) + 1024 (32 KB) | R ≤512 @512, P 513+ @1024 | 13.2 | 22.8 | 9.96 | 38.4 |
-| `t2_rank512_radix_waveops` | 2 | 512 (2 KB) + 1024 (32 KB) | R ≤512 @512, P 513+ @1024 with WavePrefixSum / WaveActiveSum scans instead of shuffles | 19.3 | 40.3 | 10.0 | 37.2 |
-| `s1_rank512_bitreg` | 2 | 1024 (32 KB) | R ≤512, B8 above | 8.99 | 22.8 | 9.76 | 43.4 |
-| `s1_rank1024_bitreg` | 2 | 1024 (32 KB) | R ≤1024, B8 above (= s3_rank1024_bitE8 of the pass3 diag set: identical DXIL) | 10.2 | 23.2 | 16.3 | 48.8 |
-| `s1_rank512_radix` | 2 | 1024 (32 KB) | R ≤512, P above | 12.7 | 19.8 | 9.96 | 40.0 |
-| `s1_rank1024_radix` | 2 | 1024 (32 KB) | R ≤1024, P above | 12.5 | 20.5 | 12.3 | 42.4 |
-| `s1_rank512_bitreg2048_radix` **(alternative: high-end NVIDIA, small batches)** | 2 | 1024 (32 KB) | R ≤512, B8 ≤2048, P above | 8.88 | 20.4 | 9.84 | 40.1 |
-| `s1_rank512_bitreg4096_radix` | 2 | 1024 (32 KB) | R ≤512, B8 ≤4096, P above | 8.90 | 22.5 | 9.90 | 40.9 |
-| `s1_bitreg` | 2 | 1024 (32 KB) | B8 for every size (= s3_bitE8 / s4_bitE8 of the pass3 / pass4 diag sets: identical DXIL) | 8.98 | 22.8 | 9.64 | 57.1 |
-| `s1_radix` | 2 | 1024 (32 KB) | P for every size (the radix fixed-cost anchor) | 11.0 | 19.3 | 9.72 | 93.4 |
-| `s3_radix2_k8` | 3 | 1024 (32 KB) | radix2 (min 8 keys per thread) for every size (= s4_radix2 of pass4: identical DXIL) | 10.3 | 16.4 | **9.24** | 65.6 |
-| `s3_bitE4_rx2` | 3 | 1024 (32 KB) | B4 ≤4096, radix2 above | 8.90 | 22.5 | 10.3 | 55.0 |
-| `s3_rank512_bitreg2048_radix2` | 3 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix2 above | 9.07 | 18.8 | 9.92 | 40.9 |
-| `s3_rank512_bitreg4096_radix2` | 3 | 1024 (32 KB) | R ≤512, B8 ≤4096, radix2 above | 9.15 | 22.5 | 10.0 | 41.9 |
-| `s3_rank512_bitreg2048_radix2s` | 3 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix2 skipping constant digits above | 9.04 | 21.9 | 10.0 | 41.7 |
-| `s3_radix2_k1` | 3 | 1024 (32 KB) | radix2 (min 1 key per thread) for every size (pass3 diag set) | 11.7 | 19.9 | 12.8 | 73.2 |
-| `s3_radix2_k4` | 3 | 1024 (32 KB) | radix2 (min 4 keys per thread) for every size (pass3 diag set) | 10.1 | 16.4 | 9.96 | 61.2 |
-| `s3_radix2_k4_skip` | 3 | 1024 (32 KB) | radix2 (min 4 keys per thread, skip constant digits) for every size (pass3 diag set) | 12.6 | 18.5 | 11.0 | 74.1 |
-| `s3_radix2_k8_skip` | 3 | 1024 (32 KB) | radix2 (min 8 keys per thread, skip constant digits) for every size (pass3 diag set) | 11.5 | 18.4 | 10.2 | 78.9 |
-| `s3_bitE1_rx2` | 3 | 1024 (32 KB) | B1 ≤1024, radix2 above (pass3 diag set) | 10.7 | 17.9 | 10.8 | 61.5 |
-| `s3_bitE2_rx2` | 3 | 1024 (32 KB) | B2 ≤2048, radix2 above (pass3 diag set) | 10.2 | 18.6 | 13.3 | 59.7 |
-| `s3_rank512_radix2` | 3 | 1024 (32 KB) | R ≤512, radix2 above (pass3 diag set) | 10.6 | 18.3 | 9.40 | 38.1 |
-| `s3_rank512_bitreg2048_radix2k4` | 3 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix2 (min 4 keys per thread) above (pass3 diag set) | 9.12 | 20.5 | 9.84 | 41.8 |
-| `s3_rank512_bitE2_2048_radix2` | 3 | 1024 (32 KB) | R ≤512, B2 ≤2048, radix2 above (pass3 diag set) | 10.2 | 19.1 | 13.5 | 45.0 |
-| `s3_rank512_bitE4_4096_radix2` | 3 | 1024 (32 KB) | R ≤512, B4 ≤4096, radix2 above (pass3 diag set) | 8.93 | 20.4 | 10.5 | 43.4 |
-| `s3_rank256_bitreg2048_radix2` | 3 | 1024 (32 KB) | R ≤256, B8 ≤2048, radix2 above (pass3 diag set) | 9.12 | 18.9 | 9.88 | 44.8 |
-| `s4_4tier_4096` | 4 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix2 ≤4096, P above | 8.93 | 18.4 | 9.84 | 40.9 |
-| `s4_4tier_5120` | 4 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix2 ≤5120, P above | 8.83 | 18.2 | 9.84 | 40.9 |
-| `s4_3tier_rx3` | 4 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix3 (unrolled pass loop) above | 9.12 | 22.5 | 9.88 | 41.9 |
-| `s4_3tier_rx3r` | 4 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix3 (rolled pass loop) above | 9.15 | 17.3 | 10.0 | 41.9 |
-| `s4_radix3_rolled` | 4 | 1024 (32 KB) | radix3 (rolled pass loop) for every size | 9.57 | 16.4 | 10.0 | 72.6 |
-| `s4_radix3` | 4 | 1024 (32 KB) | radix3 (unrolled pass loop) for every size (pass4 diag set) | 10.9 | 20.5 | 9.90 | 71.1 |
-| `s4_radix3_sw` | 4 | 1024 (32 KB) | radix3 with the single-wave table scan (RS3_PERWAVE_MAX=0) for every size (pass4 diag set) | 12.3 | 18.6 | 10.2 | 66.5 |
-| `s4_4tier_3072` | 4 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix2 ≤3072, P above (pass4 diag set) | 8.99 | 18.3 | 9.88 | 40.9 |
-| `s4_3tier_rx3_p3072` | 4 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix3 (per-wave table scan up to 3072) above (pass4 diag set) | 9.09 | 20.0 | 9.80 | 41.9 |
-| `s4_3tier_rx3_p5120` | 4 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix3 (per-wave table scan up to 5120) above (pass4 diag set) | 9.09 | 22.5 | 9.92 | 41.9 |
-| `s1_rank512_bitreg2048_radix@full_legacy` | 5 | 1024 (32 KB) | reference, flush full_legacy: 256 MB flush, no drain (the method of pass0-pass4; the RX 7900 XTX times ~13 µs of flush tail) | 10.1 | 18.8 | 22.7 | 39.7 |
-| `s1_rank512_bitreg2048_radix@full` | 5 | 1024 (32 KB) | reference, flush full: 256 MB flush + one-group drain (the default of pass5 to pass7) | 9.74 | 20.5 | 21.8 | 39.7 |
-| `s1_rank512_bitreg2048_radix@data` | 4 | 1024 (32 KB) | reference, flush data: code warm, data cold (untimed run of the same sort after the flush) | 8.86 | 18.2 | 9.80 | 39.7 |
-| `s1_rank512_bitreg2048_radix@code` | 4 | 1024 (32 KB) | reference, flush code: code cold, input data warm (flush before the upload) | 8.61 | 20.5 | 9.60 | 39.7 |
-| `s1_rank512_bitreg2048_radix@none` | 4 | 1024 (32 KB) | reference, flush none: no flush, code and data warm | 7.90 | 20.5 | 9.76 | 39.7 |
-| `x7_all_256` | 7 | 256 (32 KB) | X for every size | 10.3 | 16.4 | 12.0 | 45.1 |
-| `x7_all_1024` | 7 | 1024 (32 KB) | X for every size | 9.18 | 18.4 | 12.5 | 50.3 |
-| `m3_ref` | 7 | 1024 (32 KB) + 256 (8 KB) + 512 (2 KB) | P 2049+ @1024 (32 KB), B8 513-2048 @256 (8 KB), R ≤512 @512 (2 KB) | 10.3 | 19.3 | 9.44 | 31.4 |
-| `m3_ref_32k` | 7 | 1024 (32 KB) + 256 (32 KB) + 512 (32 KB) | as m3_ref with 32 KB groupshared in every dispatch | 10.4 | 18.8 | 9.44 | 33.4 |
-| `m3_x256` | 7 | 256 (32 KB) + 256 (8 KB) + 512 (2 KB) | X 2049+ @256, B8 513-2048 @256, R ≤512 @512 | 10.3 | 17.7 | 9.60 | 31.9 |
-| `m3_x512` | 7 | 512 (32 KB) + 256 (8 KB) + 512 (2 KB) | X 2049+ @512, B8 513-2048 @256, R ≤512 @512 | 9.89 | 16.5 | 9.48 | 31.5 |
-| `m3_b4096_x256` | 7 | 256 (32 KB) + 512 (16 KB) + 512 (2 KB) | X 4097+ @256, B8 513-4096 @512, R ≤512 @512 | 10.9 | 18.4 | 9.40 | 34.4 |
-| `m3_mid_b4` | 7 | 256 (32 KB) + 512 (8 KB) + 512 (2 KB) | X 2049+ @256, B4 513-2048 @512, R ≤512 @512 | 10.7 | 18.4 | 10.3 | 34.9 |
-| `m2_x513` | 7 | 256 (32 KB) + 512 (2 KB) | X 513+ @256, R ≤512 @512 | 10.6 | 18.2 | 12.1 | 34.9 |
-| `m3_x1025` | 7 | 256 (32 KB) + 128 (4 KB) + 512 (2 KB) | X 1025+ @256, B8 513-1024 @128, R ≤512 @512 | 10.8 | 18.4 | 12.2 | 34.2 |
-| `m4_b128` | 7 | 256 (32 KB) + 256 (8 KB) + 128 (2 KB) + 128 (512 B) | X 2049+ @256, B8 513-2048 @256, B4 129-512 @128, R ≤128 @128 | 10.4 | 16.4 | 9.60 | 23.8 |
-| `m4_b64` | 7 | 256 (32 KB) + 256 (8 KB) + 128 (2 KB) + 64 (256 B) | X 2049+ @256, B8 513-2048 @256, B4 65-512 @128, R ≤64 @64 | 10.3 | 16.4 | 9.60 | 23.9 |
-| `m4_b256` | 7 | 256 (32 KB) + 256 (8 KB) + 128 (2 KB) + 256 (1 KB) | X 2049+ @256, B8 513-2048 @256, B4 257-512 @128, R ≤256 @256 | 10.4 | 18.4 | 9.64 | 24.9 |
-| `m4_b128e8` | 7 | 256 (32 KB) + 256 (8 KB) + 128 (2 KB) + 128 (512 B) | X 2049+ @256, B8 513-2048 @256, B8 129-512 @128, R ≤128 @128 | 10.3 | 17.5 | 9.56 | **23.0** |
-| `m3_r2` | 7 | 256 (32 KB) + 256 (8 KB) + 256 (2 KB) | X 2049+ @256, B8 513-2048 @256, R x2 ≤512 @256 | 10.2 | 18.3 | 9.56 | 30.6 |
-| `m4_b128_p` **(recommended default)** | 7 | 1024 (32 KB) + 256 (8 KB) + 128 (2 KB) + 128 (512 B) | P 2049+ @1024, B8 513-2048 @256, B4 129-512 @128, R ≤128 @128 | 10.4 | 19.4 | 9.44 | 23.4 |
-| `s7_256` | 7 | 256 (32 KB) | R x2 ≤512, B8 ≤2048, X above | **8.05** | 19.0 | 9.88 | 42.4 |
-| `s7_512` | 7 | 512 (32 KB) | R ≤512, B8 ≤2048, X above | 8.37 | **15.7** | 9.60 | 39.9 |
-| `s7_256b` | 7 | 256 (32 KB) | R ≤128, B4 ≤512, B8 ≤2048, X above | 8.22 | 16.0 | 9.76 | 45.7 |
+| algorithm | pass | groups: threads (groupshared) | tiers / description | RTX 5080 | RTX 3080 Ti | RTX 2060 | XTX w32 | iGPU | UHD 770 |
+|---|---:|---|---|---:|---:|---:|---:|---:|---:|
+| `pass0_bitonic` | 0 | 1024 (32 KB) | LDS bitonic sort for every size, one 1024-thread dispatch (the pass0 baseline) | 12.5 | 18.4 | 23.7 | 11.5 | 72.2 | 74.7 |
+| `t2_rank512_bitonic` | 1 | 512 (2 KB) + 1024 (32 KB) | R ≤512 @512, LDS bitonic 513+ @1024 | 14.8 | 18.4 | 24.6 | 11.6 | 50.1 | 62.4 |
+| `t3_rank128_rank512_bitonic` | 1 | 128 (512 B) + 512 (2 KB) + 1024 (32 KB) | R ≤128 @128, R 129-512 @512, LDS bitonic 513+ @1024 | 15.3 | 19.5 | 28.6 | 11.8 | 49.9 | 61.2 |
+| `t3_rank64_rank512_bitonic` | 1 | 64 (256 B) + 512 (2 KB) + 1024 (32 KB) | R ≤64 @64, R 65-512 @512, LDS bitonic 513+ @1024 | 15.4 | 18.9 | 28.4 | 11.8 | 49.9 | 62.5 |
+| `t4_rank128_rank512_rank1024_bitonic` | 1 | 128 (512 B) + 512 (2 KB) + 1024 (4 KB) + 1024 (32 KB) | R ≤128 @128, R 129-512 @512, R 513-1024 @1024, LDS bitonic 1025+ @1024 | 15.1 | 20.5 | 29.0 | 19.9 | 54.8 | 69.5 |
+| `t4_rank128_rank512_rank1024x2_bitonic` | 1 | 128 (512 B) + 512 (2 KB) + 1024 (8 KB) + 1024 (32 KB) | R ≤128 @128, R 129-512 @512, R x2 513-2048 @1024, LDS bitonic 2049+ @1024 | 30.3 | 62.5 | 68.6 | 55.5 | 83.4 | 137 |
+| `t2_rank512_bitreg` | 2 | 512 (2 KB) + 1024 (32 KB) | R ≤512 @512, B8 513+ @1024 | 11.2 | 15.4 | 23.7 | 9.68 | 43.4 | 76.0 |
+| `t2_rank512_bitreg16` | 2 | 512 (2 KB) + 512 (32 KB) | R ≤512 @512, B16 513+ @512 | 12.2 | 16.4 | 24.2 | 10.2 | 42.9 | 73.6 |
+| `t2_rank512_bitreg32` | 2 | 512 (2 KB) + 256 (32 KB) | R ≤512 @512, B32 513+ @256 | 14.1 | 18.4 | 30.7 | 11.8 | 40.6 | 89.3 |
+| `t2_rank512_radix` | 2 | 512 (2 KB) + 1024 (32 KB) | R ≤512 @512, P 513+ @1024 | 13.2 | 15.4 | 22.8 | 9.96 | 38.4 | 112 |
+| `t2_rank512_radix_waveops` | 2 | 512 (2 KB) + 1024 (32 KB) | R ≤512 @512, P 513+ @1024 with WavePrefixSum / WaveActiveSum scans instead of shuffles | 19.3 | 21.5 | 40.3 | 10.0 | 37.2 | 68.5 |
+| `s1_rank512_bitreg` | 2 | 1024 (32 KB) | R ≤512, B8 above | 8.99 | 14.3 | 22.8 | 9.76 | 43.4 | 77.3 |
+| `s1_rank1024_bitreg` | 2 | 1024 (32 KB) | R ≤1024, B8 above (= s3_rank1024_bitE8 of the pass3 diag set: identical DXIL) | 10.2 | 19.5 | 23.2 | 16.3 | 48.8 | 76.8 |
+| `s1_rank512_radix` | 2 | 1024 (32 KB) | R ≤512, P above | 12.7 | 15.4 | 19.8 | 9.96 | 40.0 | 96.0 |
+| `s1_rank1024_radix` | 2 | 1024 (32 KB) | R ≤1024, P above | 12.5 | 16.4 | 20.5 | 12.3 | 42.4 | 79.8 |
+| `s1_rank512_bitreg2048_radix` **(alternative: high-end NVIDIA, small batches)** | 2 | 1024 (32 KB) | R ≤512, B8 ≤2048, P above | 8.88 | 14.3 | 20.4 | 9.84 | 40.1 | 80.5 |
+| `s1_rank512_bitreg4096_radix` | 2 | 1024 (32 KB) | R ≤512, B8 ≤4096, P above | 8.90 | 14.3 | 22.5 | 9.90 | 40.9 | 77.7 |
+| `s1_bitreg` | 2 | 1024 (32 KB) | B8 for every size (= s3_bitE8 / s4_bitE8 of the pass3 / pass4 diag sets: identical DXIL) | 8.98 | 15.4 | 22.8 | 9.64 | 57.1 | 106 |
+| `s1_radix` | 2 | 1024 (32 KB) | P for every size (the radix fixed-cost anchor) | 11.0 | 14.3 | 19.3 | 9.72 | 93.4 | 307 |
+| `s3_radix2_k8` | 3 | 1024 (32 KB) | radix2 (min 8 keys per thread) for every size (= s4_radix2 of pass4: identical DXIL) | 10.3 | 12.3 | 16.4 | **9.24** | 65.6 | 314 |
+| `s3_bitE4_rx2` | 3 | 1024 (32 KB) | B4 ≤4096, radix2 above | 8.90 | 13.3 | 22.5 | 10.3 | 55.0 | 109 |
+| `s3_rank512_bitreg2048_radix2` | 3 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix2 above | 9.07 | 14.3 | 18.8 | 9.92 | 40.9 | 84.0 |
+| `s3_rank512_bitreg4096_radix2` | 3 | 1024 (32 KB) | R ≤512, B8 ≤4096, radix2 above | 9.15 | 14.3 | 22.5 | 10.0 | 41.9 | 81.4 |
+| `s3_rank512_bitreg2048_radix2s` | 3 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix2 skipping constant digits above | 9.04 | 14.3 | 21.9 | 10.0 | 41.7 | 88.7 |
+| `s3_radix2_k1` | 3 | 1024 (32 KB) | radix2 (min 1 key per thread) for every size (pass3 diag set) | 11.7 | 16.4 | 19.9 | 12.8 | 73.2 | 279 |
+| `s3_radix2_k4` | 3 | 1024 (32 KB) | radix2 (min 4 keys per thread) for every size (pass3 diag set) | 10.1 | 13.3 | 16.4 | 9.96 | 61.2 | 263 |
+| `s3_radix2_k4_skip` | 3 | 1024 (32 KB) | radix2 (min 4 keys per thread, skip constant digits) for every size (pass3 diag set) | 12.6 | 15.4 | 18.5 | 11.0 | 74.1 | 298 |
+| `s3_radix2_k8_skip` | 3 | 1024 (32 KB) | radix2 (min 8 keys per thread, skip constant digits) for every size (pass3 diag set) | 11.5 | 13.3 | 18.4 | 10.2 | 78.9 | 357 |
+| `s3_bitE1_rx2` | 3 | 1024 (32 KB) | B1 ≤1024, radix2 above (pass3 diag set) | 10.7 | 14.3 | 17.9 | 10.8 | 61.5 | 151 |
+| `s3_bitE2_rx2` | 3 | 1024 (32 KB) | B2 ≤2048, radix2 above (pass3 diag set) | 10.2 | 15.4 | 18.6 | 13.3 | 59.7 | 125 |
+| `s3_rank512_radix2` | 3 | 1024 (32 KB) | R ≤512, radix2 above (pass3 diag set) | 10.6 | 14.3 | 18.3 | 9.40 | 38.1 | 107 |
+| `s3_rank512_bitreg2048_radix2k4` | 3 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix2 (min 4 keys per thread) above (pass3 diag set) | 9.12 | 15.4 | 20.5 | 9.84 | 41.8 | 85.3 |
+| `s3_rank512_bitE2_2048_radix2` | 3 | 1024 (32 KB) | R ≤512, B2 ≤2048, radix2 above (pass3 diag set) | 10.2 | 15.4 | 19.1 | 13.5 | 45.0 | 83.9 |
+| `s3_rank512_bitE4_4096_radix2` | 3 | 1024 (32 KB) | R ≤512, B4 ≤4096, radix2 above (pass3 diag set) | 8.93 | 13.3 | 20.4 | 10.5 | 43.4 | 78.2 |
+| `s3_rank256_bitreg2048_radix2` | 3 | 1024 (32 KB) | R ≤256, B8 ≤2048, radix2 above (pass3 diag set) | 9.12 | 14.3 | 18.9 | 9.88 | 44.8 | 112 |
+| `s4_4tier_4096` | 4 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix2 ≤4096, P above | 8.93 | 14.3 | 18.4 | 9.84 | 40.9 | 77.9 |
+| `s4_4tier_5120` | 4 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix2 ≤5120, P above | 8.83 | 15.4 | 18.2 | 9.84 | 40.9 | 79.1 |
+| `s4_3tier_rx3` | 4 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix3 (unrolled pass loop) above | 9.12 | 14.3 | 22.5 | 9.88 | 41.9 | 88.7 |
+| `s4_3tier_rx3r` | 4 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix3 (rolled pass loop) above | 9.15 | 14.3 | 17.3 | 10.0 | 41.9 | 79.3 |
+| `s4_radix3_rolled` | 4 | 1024 (32 KB) | radix3 (rolled pass loop) for every size | 9.57 | 12.3 | 16.4 | 10.0 | 72.6 | 239 |
+| `s4_radix3` | 4 | 1024 (32 KB) | radix3 (unrolled pass loop) for every size (pass4 diag set) | 10.9 | 13.3 | 20.5 | 9.90 | 71.1 | 367 |
+| `s4_radix3_sw` | 4 | 1024 (32 KB) | radix3 with the single-wave table scan (RS3_PERWAVE_MAX=0) for every size (pass4 diag set) | 12.3 | 15.4 | 18.6 | 10.2 | 66.5 | 508 |
+| `s4_4tier_3072` | 4 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix2 ≤3072, P above (pass4 diag set) | 8.99 | 14.3 | 18.3 | 9.88 | 40.9 | 79.4 |
+| `s4_3tier_rx3_p3072` | 4 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix3 (per-wave table scan up to 3072) above (pass4 diag set) | 9.09 | 14.3 | 20.0 | 9.80 | 41.9 | 95.3 |
+| `s4_3tier_rx3_p5120` | 4 | 1024 (32 KB) | R ≤512, B8 ≤2048, radix3 (per-wave table scan up to 5120) above (pass4 diag set) | 9.09 | 14.3 | 22.5 | 9.92 | 41.9 | 90.8 |
+| `s1_rank512_bitreg2048_radix@full_legacy` | 5 | 1024 (32 KB) | reference, flush full_legacy: 256 MB flush, no drain (the method of pass0-pass4; the RX 7900 XTX times ~13 µs of flush tail) | 10.1 | 14.3 | 18.8 | 22.7 | 39.7 | 82.4 |
+| `s1_rank512_bitreg2048_radix@full` | 5 | 1024 (32 KB) | reference, flush full: 256 MB flush + one-group drain (the default of pass5 to pass7) | 9.74 | 14.3 | 20.5 | 21.8 | 39.7 | 79.7 |
+| `s1_rank512_bitreg2048_radix@data` | 4 | 1024 (32 KB) | reference, flush data: code warm, data cold (untimed run of the same sort after the flush) | 8.86 | 14.3 | 18.2 | 9.80 | 39.7 | 72.6 |
+| `s1_rank512_bitreg2048_radix@code` | 4 | 1024 (32 KB) | reference, flush code: code cold, input data warm (flush before the upload) | 8.61 | 14.3 | 20.5 | 9.60 | 39.7 | 80.4 |
+| `s1_rank512_bitreg2048_radix@none` | 4 | 1024 (32 KB) | reference, flush none: no flush, code and data warm | 7.90 | 13.3 | 20.5 | 9.76 | 39.7 | 71.9 |
+| `x7_all_256` | 7 | 256 (32 KB) | X for every size | 10.3 | 12.3 | 16.4 | 12.0 | 45.1 | 53.0 |
+| `x7_all_1024` | 7 | 1024 (32 KB) | X for every size | 9.18 | 14.3 | 18.4 | 12.5 | 50.3 | 144 |
+| `m3_ref` | 7 | 1024 (32 KB) + 256 (8 KB) + 512 (2 KB) | P 2049+ @1024 (32 KB), B8 513-2048 @256 (8 KB), R ≤512 @512 (2 KB) | 10.3 | 12.3 | 19.3 | 9.44 | 31.4 | 60.1 |
+| `m3_ref_32k` | 7 | 1024 (32 KB) + 256 (32 KB) + 512 (32 KB) | as m3_ref with 32 KB groupshared in every dispatch | 10.4 | 12.3 | 18.8 | 9.44 | 33.4 | 54.1 |
+| `m3_x256` | 7 | 256 (32 KB) + 256 (8 KB) + 512 (2 KB) | X 2049+ @256, B8 513-2048 @256, R ≤512 @512 | 10.3 | 12.3 | 17.7 | 9.60 | 31.9 | 55.9 |
+| `m3_x512` | 7 | 512 (32 KB) + 256 (8 KB) + 512 (2 KB) | X 2049+ @512, B8 513-2048 @256, R ≤512 @512 | 9.89 | **11.3** | 16.5 | 9.48 | 31.5 | 55.0 |
+| `m3_b4096_x256` | 7 | 256 (32 KB) + 512 (16 KB) + 512 (2 KB) | X 4097+ @256, B8 513-4096 @512, R ≤512 @512 | 10.9 | 12.3 | 18.4 | 9.40 | 34.4 | 57.2 |
+| `m3_mid_b4` | 7 | 256 (32 KB) + 512 (8 KB) + 512 (2 KB) | X 2049+ @256, B4 513-2048 @512, R ≤512 @512 | 10.7 | 12.3 | 18.4 | 10.3 | 34.9 | 58.1 |
+| `m2_x513` | 7 | 256 (32 KB) + 512 (2 KB) | X 513+ @256, R ≤512 @512 | 10.6 | 14.3 | 18.2 | 12.1 | 34.9 | **47.0** |
+| `m3_x1025` | 7 | 256 (32 KB) + 128 (4 KB) + 512 (2 KB) | X 1025+ @256, B8 513-1024 @128, R ≤512 @512 | 10.8 | 14.3 | 18.4 | 12.2 | 34.2 | 50.1 |
+| `m4_b128` | 7 | 256 (32 KB) + 256 (8 KB) + 128 (2 KB) + 128 (512 B) | X 2049+ @256, B8 513-2048 @256, B4 129-512 @128, R ≤128 @128 | 10.4 | 12.3 | 16.4 | 9.60 | 23.8 | 56.7 |
+| `m4_b64` | 7 | 256 (32 KB) + 256 (8 KB) + 128 (2 KB) + 64 (256 B) | X 2049+ @256, B8 513-2048 @256, B4 65-512 @128, R ≤64 @64 | 10.3 | 12.3 | 16.4 | 9.60 | 23.9 | 56.8 |
+| `m4_b256` | 7 | 256 (32 KB) + 256 (8 KB) + 128 (2 KB) + 256 (1 KB) | X 2049+ @256, B8 513-2048 @256, B4 257-512 @128, R ≤256 @256 | 10.4 | 12.3 | 18.4 | 9.64 | 24.9 | 57.3 |
+| `m4_b128e8` | 7 | 256 (32 KB) + 256 (8 KB) + 128 (2 KB) + 128 (512 B) | X 2049+ @256, B8 513-2048 @256, B8 129-512 @128, R ≤128 @128 | 10.3 | 12.3 | 17.5 | 9.56 | **23.0** | 59.9 |
+| `m3_r2` | 7 | 256 (32 KB) + 256 (8 KB) + 256 (2 KB) | X 2049+ @256, B8 513-2048 @256, R x2 ≤512 @256 | 10.2 | 12.3 | 18.3 | 9.56 | 30.6 | 59.0 |
+| `m4_b128_p` **(recommended default)** | 7 | 1024 (32 KB) + 256 (8 KB) + 128 (2 KB) + 128 (512 B) | P 2049+ @1024, B8 513-2048 @256, B4 129-512 @128, R ≤128 @128 | 10.4 | 12.3 | 19.4 | 9.44 | 23.4 | 58.4 |
+| `s7_256` | 7 | 256 (32 KB) | R x2 ≤512, B8 ≤2048, X above | **8.05** | 12.3 | 19.0 | 9.88 | 42.4 | 56.0 |
+| `s7_512` | 7 | 512 (32 KB) | R ≤512, B8 ≤2048, X above | 8.37 | 12.3 | **15.7** | 9.60 | 39.9 | 52.7 |
+| `s7_256b` | 7 | 256 (32 KB) | R ≤128, B4 ≤512, B8 ≤2048, X above | 8.22 | 12.3 | 16.0 | 9.76 | 45.7 | 65.4 |
 
 ## Benchmark framework
 
@@ -700,9 +744,9 @@ The zip has the exe, the DXC DLLs, the shaders, every `_test\passN` snapshot, `r
 | [pass5](_test/pass5/notes.md) | Drained flush (fixes the flush-tail artifact), run-time estimate, wave64 root-cause analysis |
 | pass6 | Spin drains, the flush diagnostic set, `--stable-power`, `run_all.bat diag` (commit 6a12132; results in [external](_test/external/notes.md)) |
 | [pass7](_test/pass7/notes.md) | Low-end / integrated GPUs: tier-sized groups and LDS, ballot radix X. Produced `m4_b128_p` and the final set |
-| [external](_test/external/notes.md) | Results from the RX 7900 XTX, Ryzen iGPU and Intel UHD 770 machines, and the flush diagnostic |
-| [final](_test/final/notes.md) | The final run: 69 algorithms on 4 GPUs (5 configurations), 0 verification failures, recommendations |
-| [scale](_test/scale/notes.md) | 20 to 512 sorts per batch: 19 algorithms on 3 GPUs, 0 verification failures. `m4_b128_p` becomes the single default |
+| [external](_test/external/notes.md) | Results from the RX 7900 XTX + Ryzen iGPU machine, two Intel UHD 770 machines (one with an RTX 3080 Ti), and the flush diagnostic |
+| [final](_test/final/notes.md) | The final run: 69 algorithms on 6 GPUs (7 configurations), 0 verification failures, recommendations |
+| [scale](_test/scale/notes.md) | 20 to 512 sorts per batch: 19 algorithms on 5 GPUs, 0 verification failures. `m4_b128_p` becomes the single default; the Intel UHD 770 prefers smaller groups |
 
 Each `_test/passN/` folder has that pass's shaders, algorithm list, `results.txt` and notes.
 `GpuSort.exe --shaders _test/passN` re-runs a snapshot.
