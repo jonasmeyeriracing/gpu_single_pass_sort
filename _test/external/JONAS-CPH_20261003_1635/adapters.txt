@@ -1,0 +1,18 @@
+[0] NVIDIA GeForce RTX 2060  LUID 00000000:0039CD9C  vendor 10DE device 1F08 subsys 868C1043 rev 161  flags 0x0  vram 5955 MB  sysmem 0 MB  shared 104662 MB
+      desc3 flags 0x2C
+      KMT type 0x231B (render 1 display 1 software 0 indirectDisplay 0)  PCI 1:0.0
+      D3D12 device LUID 00000000:0039CD9C  highest SM 0x66  nodes 1  wave ops 1 lanes 32-32
+[1] Microsoft Basic Render Driver  LUID 00000000:0004F449  vendor 1414 device 008C subsys 00000000 rev 0  flags 0x2  vram 0 MB  sysmem 0 MB  shared 104662 MB
+      desc3 flags 0x2E
+      KMT type 0x105 (render 1 display 0 software 1 indirectDisplay 0)  PCI 4294967295:65535.65535
+      D3D12 device LUID 00000000:0004F449  highest SM 0x66  nodes 1  wave ops 1 lanes 4-4
+[2] NVIDIA GeForce RTX 2060  LUID 00000000:0005A7E3  vendor 10DE device 1F08 subsys 868C1043 rev 161  flags 0x0  vram 5955 MB  sysmem 0 MB  shared 104662 MB
+      desc3 flags 0x2C
+      KMT type 0x342 (render 0 display 1 software 0 indirectDisplay 1)  PCI 4294967295:65535.65535
+      D3D12 device LUID 00000000:0005A7E3  highest SM 0x66  nodes 1  wave ops 1 lanes 32-32
+
+Benchmark adapters (used by a hardware run):
+  [0] NVIDIA GeForce RTX 2060  vendor 10DE device 1F08  driver 32.0.16.1714  vram 5955 MB
+      wave lane range: min 32 max 32  integrated no  vendor 10DE
+  skipped: Microsoft Basic Render Driver: software adapter
+  skipped: NVIDIA GeForce RTX 2060 (LUID 00000000:0005A7E3): indirect display / non-render adapter

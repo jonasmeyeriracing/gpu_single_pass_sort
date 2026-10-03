@@ -37,7 +37,11 @@ IMS-KCOMBS-INT_20260930_1154, final run IMS-KCOMBS-INT_20260930_1653) are archiv
 no `*_samples.csv` (41 + 1 MB and 93 + 2 MB), no dxdiag.txt, no logs. Their benchmark samples are
 in _test/scale/all_samples.csv.gz and _test/final/all_samples.csv.gz, the raw zips are
 `C:\Users\jonas\Downloads\IMS-KCOMBS-INT_20260930_1154.zip` and
-`C:\Users\jonas\Downloads\IMS-KCOMBS-INT_20260930_1653.zip`.
+`C:\Users\jonas\Downloads\IMS-KCOMBS-INT_20260930_1653.zip`. The RTX 2060 scale run
+(JONAS-CPH_20261003_1635) is archived the same way: no `*_samples.csv` (30 + 0.6 MB), no
+dxdiag.txt, no logs. Its benchmark samples are in _test/scale/all_samples.csv.gz, the raw zip is
+`D:\git\gpu_single_pass_sort\dist\GpuSort-portable-495478d\results\JONAS-CPH_20261003_1635.zip`
+(dist/ is git-ignored).
 
 **Two different Intel machines.** IMS-MDETURCK (i7-12700, UHD 770 driver 31.0.101.3616, 2026-09-28,
 pass4 shaders only) and IMS-KCOMBS-INT (i9-13900K, RTX 3080 Ti + UHD 770 driver 32.0.101.6129,
@@ -59,6 +63,7 @@ are a UHD Graphics 770 (8086 / 4680, Xe-LP, 32 EUs); compare their numbers with 
 | STIMULATOR_20260930_1545 | 7900 XTX + Ryzen iGPU | 495478d (scale set) | `run_all.bat scale`: as above (iGPU: 300 / 90 / 60 / 45 iterations), default wave32 on both GPUs | 2 of 2 | exit 0, **0 verification failures**; see _test/scale/notes.md |
 | IMS-KCOMBS-INT_20260930_1154 | RTX 3080 Ti + UHD 770 (i9-13900K) | 495478d (scale set) | `run_all.bat scale` (noprompt): 19 algorithms x 10 workloads x 20 / 128 / 256 / 512 sorts; 3080 Ti 1000 / 300 / 200 / 150, UHD 770 300 / 90 / 60 / 45 iterations; default wave size (32 / 16) | 2 of 2 | exit 0, **0 verification failures**; probe OK at 32 / 16 lanes; see _test/scale/notes.md |
 | IMS-KCOMBS-INT_20260930_1653 | RTX 3080 Ti + UHD 770 (i9-13900K) | 495478d (final set) | `run_all.bat final` (noprompt): smoke + full, 69 algorithm entries x 10 workloads (1000 iterations 3080 Ti, 300 UHD 770), default wave size | 2 of 2 | exit 0, **0 verification failures**; see _test/final/notes.md |
+| JONAS-CPH_20261003_1635 | RTX 2060 only (swapped in for the RTX 5080) | 495478d (scale set) | `run_all.bat scale` (noprompt): smoke + full, 19 algorithms x 10 workloads x 20 / 128 / 256 / 512 sorts (1000 / 300 / 200 / 150 iterations), wave32 | 2 of 2 | exit 0, **0 verification failures**; probe OK at 32 lanes; see _test/scale/notes.md |
 
 ## Machines
 
@@ -70,6 +75,7 @@ are a UHD Graphics 770 (8086 / 4680, Xe-LP, 32 EUs); compare their numbers with 
 | Intel UHD Graphics 770 | IMS-MDETURCK (i7-12700) | Xe-LP, 32 EUs (2 subslices), system memory | 8086 / 4680 | 31.0.101.3616 | 128 MB + shared | 16 | 19.2 MHz | WAVE_SIZE=16 (no [WaveSize]) |
 | Intel UHD Graphics 770 (a different machine) | IMS-KCOMBS-INT (i9-13900K) | Xe-LP, 32 EUs, system memory | 8086 / 4680 | 32.0.101.6129 | 128 MB + shared | 16 | 19.2 MHz | WAVE_SIZE=16 (no [WaveSize]) |
 | NVIDIA GeForce RTX 3080 Ti | IMS-KCOMBS-INT (i9-13900K) | Ampere GA102 | 10DE / 2208 | 32.0.16.1692 | 12 GB | 32 | 1 GHz reported, samples in 1.024 µs steps | WAVE_SIZE=32 |
+| NVIDIA GeForce RTX 2060 | JONAS-CPH (with the RTX 5080 in the final run, alone in the scale run) | Turing TU106 | 10DE / 1F08 | 32.0.16.1714 | 6 GB | 32 | 1 GHz, 32 ns steps (27-29 % of samples on 1.024 µs multiples) | WAVE_SIZE=32 |
 
 Wall time of one full run (15 algorithms x 10 workloads x 1005 iterations): 5080 110 s, 7900 XTX
 118 s, Ryzen iGPU 1455 s (wave32) / 1531 s (wave64), UHD 770 1144 s. The 256 MB flush of every
@@ -411,3 +417,21 @@ is fastest with the X radix in 256 / 512-thread groups (512 sorts: s7_256b 165.8
 189.44 µs). Its timestamps tick in 1.024 µs steps (every sample of both runs is a multiple of
 1.024 µs, although the driver reports 1 GHz), so small differences are below its resolution. Wall
 time of the full final run: 546 s (3080 Ti), 2907 s (UHD 770).
+
+## 2026-10-03: JONAS-CPH with only the RTX 2060
+
+Same computer as the other JONAS-CPH runs (RTX 5080 reference machine), but with the RTX 2060
+swapped in for the RTX 5080: the 2060 was the only GPU installed (PCI bus 1, the 5080's slot; in
+the final run JONAS-CPH_20260929_1658 it sat next to the 5080 on PCI bus 7). Driver 32.0.16.1714
+as before. Package 495478d, `run_all.bat scale` without prompts (JONAS-CPH_20261003_1635, 14 min;
+estimate 15.8 min; full run 774 s). Both runs exit 0, **0 verification failures**, wave probe OK
+(32 lanes, lane = SV_GroupIndex % 32, every cross-lane check OK), no nvlddmkm events. The results
+are merged into _test/scale; details there.
+
+The 2060's 20-sort values in this run are lower than in its final run: median 6 % over the 171
+common algorithm x workload rows, up to 27 % (realistic_mix: s1_rank512_bitreg2048_radix 20.42 ->
+16.38, m4_b128_p 19.39 -> 18.13, s7_512 15.71 -> 14.34 µs; worst_case 38.34 -> 36.86 µs for s1).
+The RTX 5080's final and scale runs (same two packages) agree much better (median 0.2 %; 15 of 171
+rows differ by more than 5 %, all small workloads), so the difference is most likely the hardware
+setup (slot, only GPU in the system), but that was not investigated. Compare the
+2060's scale and final numbers with that in mind.

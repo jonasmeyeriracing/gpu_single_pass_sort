@@ -1,26 +1,29 @@
 GpuSort results aggregation
 ===========================
-Inputs: C:/Users/jonas/Desktop/GpuSort-portable-495478d/results/JONAS-CPH_20260930_1458.zip, G:/My Drive/STIMULATOR_20260930_1545.zip, C:/Users/jonas/Downloads/IMS-KCOMBS-INT_20260930_1154.zip
-CSV files found: 6 results, 6 samples, 6 wave probe, 0 other (ignored)
-Runs: 6 (3 benchmark, 3 smoke); 3 smoke run(s) left out of the output files (--include-smoke)
+Inputs: C:/Users/jonas/Desktop/GpuSort-portable-495478d/results/JONAS-CPH_20260930_1458.zip, G:/My Drive/STIMULATOR_20260930_1545.zip, C:/Users/jonas/Downloads/IMS-KCOMBS-INT_20260930_1154.zip, D:/git/gpu_single_pass_sort/dist/GpuSort-portable-495478d/results/JONAS-CPH_20261003_1635.zip
+CSV files found: 8 results, 8 samples, 8 wave probe, 0 other (ignored)
+Runs: 8 (4 benchmark, 4 smoke); 4 smoke run(s) left out of the output files (--include-smoke)
 
 Machines (3):
   IMS-KCOMBS-INT: 2 run(s), package commit 495478d
       20260930T115522.202_IMS-KCOMBS-INT  smoke      shaders    1/2: smoke scale 20,128,256,512 sorts, default wave size, every GPU
       20260930T115756.795_IMS-KCOMBS-INT  benchmark  shaders    2/2: full scale 20,128,256,512 sorts, default wave size, every GPU
-  JONAS-CPH: 2 run(s), package commit 495478d
+  JONAS-CPH: 4 run(s), package commit 495478d
       20260930T145915.256_JONAS-CPH  smoke      shaders    1/2: smoke scale 20,128,256,512 sorts, default wave size, every GPU
       20260930T145944.386_JONAS-CPH  benchmark  shaders    2/2: full scale 20,128,256,512 sorts, default wave size, every GPU
+      20261003T163631.232_JONAS-CPH  smoke      shaders    1/2: smoke scale 20,128,256,512 sorts, default wave size, every GPU
+      20261003T163706.881_JONAS-CPH  benchmark  shaders    2/2: full scale 20,128,256,512 sorts, default wave size, every GPU
   STIMULATOR: 2 run(s), package commit 495478d
       20260930T154533.235_STIMULATOR  smoke      shaders    1/2: smoke scale 20,128,256,512 sorts, default wave size, every GPU
       20260930T154717.703_STIMULATOR  benchmark  shaders    2/2: full scale 20,128,256,512 sorts, default wave size, every GPU
 
-GPUs (5):
+GPUs (6):
   JONAS-CPH: NVIDIA GeForce RTX 5080 (0x10DE:0x2C02), driver 32.0.16.1714, wave configs 32 (WAVE_SIZE; +attr = [WaveSize]), 1900 result rows
   STIMULATOR: AMD Radeon RX 7900 XTX (0x1002:0x744C), driver 32.0.11037.4004, wave configs 32+attr (WAVE_SIZE; +attr = [WaveSize]), 1900 result rows
   STIMULATOR: AMD Radeon(TM) Graphics (0x1002:0x164E, integrated), driver 32.0.11037.4004, wave configs 32+attr (WAVE_SIZE; +attr = [WaveSize]), 1900 result rows
   IMS-KCOMBS-INT: NVIDIA GeForce RTX 3080 Ti (0x10DE:0x2208), driver 32.0.16.1692, wave configs 32 (WAVE_SIZE; +attr = [WaveSize]), 1900 result rows
   IMS-KCOMBS-INT: Intel(R) UHD Graphics 770 (0x8086:0x4680, integrated), driver 32.0.101.6129, wave configs 16 (WAVE_SIZE; +attr = [WaveSize]), 1900 result rows
+  JONAS-CPH: NVIDIA GeForce RTX 2060 (0x10DE:0x1F08), driver 32.0.16.1714, wave configs 32 (WAVE_SIZE; +attr = [WaveSize]), 1900 result rows
 
 Shader sets: shaders
 Algorithms (19): m3_ref, m3_x512, m4_b128, m4_b128_p, m4_b128e8, m4_b256, m4_b64, pass0_bitonic, s1_radix, s1_rank512_bitreg2048_radix, s1_rank512_bitreg4096_radix, s3_rank512_bitreg2048_radix2, s4_3tier_rx3r, s7_256, s7_256b, s7_512, t2_rank512_bitonic, t3_rank128_rank512_bitonic, x7_all_256
@@ -32,8 +35,8 @@ Sorts per iteration: 20, 128, 256, 512
 Iterations requested per combo: 45, 60, 90, 150, 200, 300, 1000
 
 Rows written:
-  _test/scale\all_results.csv: 9500
-  _test/scale\all_samples.csv: 1128600
-  _test/scale\all_wave_probe.csv: 7
+  _test/scale\all_results.csv: 11400
+  _test/scale\all_samples.csv: 1442100
+  _test/scale\all_wave_probe.csv: 8
 
 Problems: none (no verification failures, GPU errors or wave probe warnings; one package commit)

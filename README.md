@@ -62,8 +62,9 @@ The GPUs are in three machines: RTX 5080 + RTX 2060; RX 7900 XTX + Ryzen iGPU; a
 with an RTX 3080 Ti and the UHD 770 (Intel driver 32.0.101.6129). A UHD 770 in a different machine
 (i7-12700, driver 31.0.101.3616) ran the earlier pass4 shaders with 0 verification failures; see
 [_test/external/notes.md](_test/external/notes.md). The
-[scale run](#scaling-with-more-sorts-per-batch) (20 to 512 sorts per batch) covers every GPU above
-except the RTX 2060, which is pending; the RX 7900 XTX ran it at wave32 only.
+[scale run](#scaling-with-more-sorts-per-batch) (20 to 512 sorts per batch) covers every GPU above;
+the RX 7900 XTX ran it at wave32 only, and the RTX 2060 ran it later as the only GPU in its machine
+(in the RTX 5080's slot).
 
 ### Final run
 
@@ -116,8 +117,8 @@ Everything above is for 20 sorts per batch. With 20 sorts most of the GPU is idl
 that a single-dispatch configuration launches a 1024-thread group for every sort, even an empty
 or a 16-element one. The scale run ([_test/scale/notes.md](_test/scale/notes.md)) measured 19
 algorithms ([shaders/algorithms_scale.txt](shaders/algorithms_scale.txt)) at 20, 128, 256 and 512
-sorts per batch on the RTX 5080, RTX 3080 Ti, RX 7900 XTX, Radeon iGPU and Intel UHD 770, with 0
-verification failures. The RTX 2060 is pending.
+sorts per batch on the RTX 5080, RTX 3080 Ti, RTX 2060, RX 7900 XTX, Radeon iGPU and Intel UHD
+770, with 0 verification failures.
 
 Median µs per batch on realistic_mix. In parentheses: the time divided by the fastest of the 19
 algorithms on that GPU at that batch size.
@@ -130,6 +131,9 @@ algorithms on that GPU at that batch size.
 | RTX 3080 Ti | `s1_rank512_bitreg2048_radix` | 14.34 (1.27x) | 21.50 (1.00x) | 26.62 (1.13x) | 39.94 (1.44x) |
 | RTX 3080 Ti | `m4_b128_p` | 11.26 (1.00x) | 21.50 (1.00x) | 23.55 (1.00x) | 27.65 (1.00x) |
 | RTX 3080 Ti | fastest | 11.26 `m3_x512` | 21.50 `s1_rank512_bitreg2048_radix` | 23.55 `m3_ref` | 27.65 `m4_b128_p` |
+| RTX 2060 | `s1_rank512_bitreg2048_radix` | 16.38 (1.14x) | 31.74 (1.19x) | 49.15 (1.49x) | 85.06 (1.80x) |
+| RTX 2060 | `m4_b128_p` | 18.13 (1.26x) | 26.62 (1.00x) | 32.93 (1.00x) | 52.38 (1.11x) |
+| RTX 2060 | fastest | 14.34 `s7_256` | 26.62 `m3_ref` | 32.93 `m4_b128_p` | 47.17 `m4_b64` |
 | RX 7900 XTX | `s1_rank512_bitreg2048_radix` | 9.92 (1.05x) | 15.24 (1.00x) | 18.90 (1.11x) | 28.88 (1.43x) |
 | RX 7900 XTX | `m4_b128_p` | 9.44 (1.00x) | 15.56 (1.02x) | 17.00 (1.00x) | 20.14 (1.00x) |
 | RX 7900 XTX | fastest | 9.44 `m4_b128_p` | 15.24 `s1_rank512_bitreg2048_radix` | 17.00 `m4_b128_p` | 20.14 `m4_b128_p` |
@@ -141,6 +145,11 @@ algorithms on that GPU at that batch size.
 | UHD 770 | fastest | 52.24 `x7_all_256` | 185.75 `m4_b256` | 381.48 `m4_b256` | 729.63 `m4_b128e8` |
 
 On the RTX 3080 Ti several algorithms often tie (1.024 µs timestamp steps); the table names one.
+The RTX 2060 ties too where its medians land on 1.024 µs multiples (20 sorts: `s7_256`, `s7_512`
+and `s7_256b` at 14.34 µs; 128 sorts: `m3_ref` and `m4_b128_p`). Its scale-run values at 20 sorts
+are up to 27 % lower than its final-run values above (realistic_mix `s1_...` 16.38 vs 20.42 µs),
+most likely because of the different hardware setup; compare it within one run only
+([_test/external/notes.md](_test/external/notes.md)).
 
 RTX 5080 (top), Radeon iGPU (middle) and Intel UHD 770 (bottom), realistic_mix, log scale:
 
@@ -149,18 +158,26 @@ RTX 5080 (top), Radeon iGPU (middle) and Intel UHD 770 (bottom), realistic_mix, 
 - **Mixed batches need tier-sized groups.** Once the GPU is busy, a 1024-thread group for a
   50-element sort takes occupancy that the other sorts need. `m4_b128_p` is the fastest or within
   2 % of the fastest at every batch size on the RTX 5080, RTX 3080 Ti, RX 7900 XTX and Radeon iGPU,
-  except 20 sorts on the RTX 5080. The single dispatch falls behind as the batch grows: at 512
-  sorts it is 1.31x (RTX 5080), 1.44x (RTX 3080 Ti), 1.43x (RX 7900 XTX), 1.91x (Radeon iGPU) and
-  2.18x (UHD 770) slower than the fastest.
-- **Large sorts need 1024-thread groups on most GPUs.** On worst_case (all 8192), on the RTX 5080,
+  except 20 sorts on the RTX 5080. On the RTX 2060 it equals the fastest at 128 and 256 sorts and
+  is 1.26x behind at 20 sorts and 1.11x at 512 (`m4_b64` 47.17 µs). The single dispatch falls
+  behind as the batch grows: at 512 sorts it is 1.31x (RTX 5080), 1.44x (RTX 3080 Ti), 1.80x
+  (RTX 2060), 1.43x (RX 7900 XTX), 1.91x (Radeon iGPU) and 2.18x (UHD 770) slower than the
+  fastest.
+- **Large sorts: 1024-thread groups on half of the GPUs, 512 on the other half.** On worst_case (all 8192), on the RTX 5080,
   the RX 7900 XTX and the Radeon iGPU, every configuration that sorts 2049+ with the pass2 LDS
   radix in 1024-thread groups (`s1_*`, `m3_ref`, `m4_b128_p`) is within 8 % of the fastest at
   every batch size. The configurations with the 256-thread ballot radix are 1.5-1.7x slower there
   at 512 sorts. More, smaller groups do not make up for the slower algorithm even when the GPU is
   full. `m4_b128_p` keeps the 1024-thread radix for its large tier, which is why it holds up on
-  both workloads. Two GPUs differ: on the RTX 3080 Ti the ballot radix in 256- and 512-thread
-  groups is faster from 128 sorts (512 sorts: `s7_256b` 165.89 vs `m4_b128_p` 189.44 µs), and on
-  the UHD 770 much faster (next point).
+  both workloads. Three GPUs differ: on the RTX 3080 Ti the ballot radix in 256- and 512-thread
+  groups is faster from 128 sorts (512 sorts: `s7_256b` 165.89 vs `m4_b128_p` 189.44 µs), on the
+  RTX 2060 `m3_x512` (ballot radix in 512-thread groups for 2049+) is the fastest at every batch
+  size and `m4_b128_p` is 1.05 / 1.26 / 1.30 / 1.31x slower at 20 / 128 / 256 / 512 sorts
+  (512 sorts: 547.30 vs 417.73 µs), and on the UHD 770 the ballot radix @512 is much faster (next
+  point). So at 128-512 sorts the ballot radix in 512-thread groups wins the large tier (or is
+  within 4 %) on the RTX 2060, RTX 3080 Ti and UHD 770, and the pass2 radix in 1024-thread groups
+  on the RTX 5080, RX 7900 XTX and Radeon iGPU. No configuration of the set has `m4_b128_p`'s
+  small and mid tiers with the ballot radix @512 for 2049+; that is the obvious next candidate.
 - **The Intel UHD 770 wants smaller groups for large sorts too.** `s7_512` (one dispatch, ballot
   radix in 512-thread groups above 2048) is the fastest on worst_case at every batch size, 1.52-1.79x
   faster than `m4_b128_p`; `x7_all_256` (ballot radix in 256 threads for every size) is the fastest
@@ -174,7 +191,8 @@ RTX 5080 (top), Radeon iGPU (middle) and Intel UHD 770 (bottom), realistic_mix, 
   than `m4_b128_p` on the RX 7900 XTX (11.84 vs 14.92 µs) and 16 % faster on the Radeon iGPU. On
   the RTX 5080, `t2_rank512_bitonic` (rank sort in 512-thread groups) is the fastest at every
   batch size (12.13 vs 17.46 µs at 512 sorts). `m4_b128e8` is also the fastest on the RTX 3080 Ti
-  at 512 sorts (14.34 vs 19.46 µs). Neither is better than `m4_b128_p` across all workloads yet.
+  at 512 sorts (14.34 vs 19.46 µs) and on the RTX 2060 at 256 and 512 sorts (34.43 vs 44.06 µs at
+  512). Neither is better than `m4_b128_p` across all workloads yet.
 
 ### Recommendation
 
@@ -183,13 +201,13 @@ RTX 5080 (top), Radeon iGPU (middle) and Intel UHD 770 (bottom), realistic_mix, 
   256 threads, and the pass2 LDS radix above 2048 in 1024 threads. On realistic_mix it is the
   fastest or within 2 % of the fastest of the 19 scale-run algorithms at 20 to 512 sorts per
   batch on the RTX 5080, RTX 3080 Ti, RX 7900 XTX and Radeon iGPU (the exception: 20 sorts on the
-  RTX 5080), and on worst_case it is within 7 % on the RTX 5080, RX 7900 XTX and Radeon iGPU (14 %
-  on the RTX 3080 Ti). At 20 sorts it is 1.7x faster than `s1_rank512_bitreg2048_radix` on the
-  Ryzen iGPU (realistic_mix 23.4 vs 40.1 µs, mostly_mid 64.0 vs 109.3 µs), 1.4x on the UHD 770
-  (realistic_mix 58.38 vs 80.55 µs), about 5 % faster on the RX 7900 XTX and on the RTX 2060
-  (realistic_mix), and 3.1x faster than `pass0_bitonic` on the iGPU. Its weak spot is batches of
-  only tiny sorts (mostly_empty: 1.00-2.25x the fastest on the NVIDIA and AMD GPUs), where the
-  absolute times are small.
+  RTX 5080), and 1.00-1.26x the fastest on the RTX 2060; on worst_case it is within 7 % on the RTX
+  5080, RX 7900 XTX and Radeon iGPU (14 % on the RTX 3080 Ti, 31 % on the RTX 2060). At 20 sorts
+  it is 1.7x faster than `s1_rank512_bitreg2048_radix` on the Ryzen iGPU (realistic_mix 23.4 vs
+  40.1 µs, mostly_mid 64.0 vs 109.3 µs), 1.4x on the UHD 770 (realistic_mix 58.38 vs 80.55 µs),
+  about 5 % faster on the RX 7900 XTX (realistic_mix), and 3.1x faster than `pass0_bitonic` on the
+  iGPU. Its weak spot is batches of only tiny sorts (mostly_empty: 1.00-2.25x the fastest on the
+  NVIDIA and AMD GPUs), where the absolute times are small.
 - **High-end NVIDIA with batches of about 20 sorts: `s1_rank512_bitreg2048_radix`.** One
   1024-thread dispatch that uses 32 KB of groupshared memory: rank sort up to 512 elements,
   register bitonic up to 2048, LDS radix above. It avoids the multi-dispatch cost, which is large
@@ -198,8 +216,10 @@ RTX 5080 (top), Radeon iGPU (middle) and Intel UHD 770 (bottom), realistic_mix, 
   grows: 15.22 vs 14.75 µs at 128 sorts, 1.29x slower at 512. This lead was measured on the RTX
   5080 only. The RTX 3080 Ti does not show it: there `m4_b128_p` equals or beats it on
   realistic_mix at every batch size (11.26 vs 14.34 µs at 20 sorts). On the RTX 2060 at 20 sorts
-  (final run) it is faster on mostly_empty and mostly_mid but 5 % slower on realistic_mix, and
-  the 2060's scale run is pending.
+  it is faster on mostly_empty and mostly_mid in the final run but 5 % slower on realistic_mix;
+  in the scale run it is 10 % faster on realistic_mix (16.38 vs 18.13 µs), but the 256- and
+  512-thread single dispatches `s7_*` are faster still (14.34 µs), and from 128 sorts it is
+  1.19-1.62x slower than `m4_b128_p`.
 - **AMD: wave32.** This is the default (`WAVE_SIZE=32` + `[WaveSize(32)]`). On the RX 7900 XTX,
   wave64 costs about 70 % on realistic_mix and mostly_mid (16.84 vs 9.84 µs for `s1_...`) and
   about 10 % on worst_case.
@@ -208,7 +228,10 @@ RTX 5080 (top), Radeon iGPU (middle) and Intel UHD 770 (bottom), realistic_mix, 
   at every batch size, but 1.11-1.46x slower than the fastest configuration there, and 1.52-1.79x
   slower than `s7_512` on worst_case. An Intel-tuned tier set (the ballot radix in 256- or
   512-thread groups for the large tier) is an open item.
-- Pending: the RTX 2060 in the scale run.
+- Open item: `m4_b128_p`'s small and mid tiers with the ballot radix in 512-thread groups for
+  2049+. That large tier wins at high batch counts on the RTX 2060, RTX 3080 Ti and UHD 770, while
+  the pass2 radix @1024 wins on the RTX 5080, RX 7900 XTX and Radeon iGPU
+  ([scale](_test/scale/notes.md)).
 
 Caveats at 20 sorts per batch, from [_test/final/notes.md](_test/final/notes.md):
 
@@ -251,7 +274,7 @@ Each point links to the pass notes where it was measured.
   bitonic dispatch delayed it by about 1.2 µs ([pass1](_test/pass1/notes.md)). In pass7,
   multi-dispatch cost 1.1-1.6 µs on the RTX 5080's small workloads ([pass7](_test/pass7/notes.md)).
   One dispatch is best on high-end GPUs, but only while the batch is small: at 128 sorts per batch
-  the single and the tier-sized dispatches are about even, and at 512 sorts `m4_b128_p` is 1.3-1.4x
+  the single and the tier-sized dispatches are about even, and at 512 sorts `m4_b128_p` is 1.3-1.6x
   faster than `s1_rank512_bitreg2048_radix` on the discrete GPUs ([scale](_test/scale/notes.md)).
 - **Integrated GPUs are limited by occupancy, not latency. They want tier-sized groups.** The
   Ryzen iGPU holds at most two 1024-thread groups at a time. Putting the same algorithms in
@@ -334,7 +357,7 @@ median divided by the fastest algorithm's median on the same GPU:
   every measured iteration (3,864,000 rows). The scale run's data is in
   [_test/scale/all_results.csv](_test/scale/all_results.csv) (one row per GPU x algorithm x
   workload x sorts per batch) and [_test/scale/all_samples.csv.gz](_test/scale/all_samples.csv.gz)
-  (1,128,600 rows). The columns are described in [tools/CSV_FORMAT.md](tools/CSV_FORMAT.md).
+  (1,442,100 rows). The columns are described in [tools/CSV_FORMAT.md](tools/CSV_FORMAT.md).
 
 ## Integration guide
 
@@ -462,8 +485,8 @@ const bool singleDispatch = desc.VendorId == 0x10DE   // NVIDIA
 
 Use `m4_b128_p` when in doubt: where `s1_rank512_bitreg2048_radix` wins (RTX 5080, 20 sorts), it
 saves about 1.3 µs per batch on realistic_mix (8.80 vs 10.06 µs); where it loses, it costs up to
-5.8 µs on the RTX 5080 and 8.7 µs on the RX 7900 XTX at 512 sorts, and 1.7-1.9x on the Radeon
-iGPU. The measured batch sizes are 20, 128, 256 and 512; the crossover between 20 and 128 was
+5.8 µs on the RTX 5080, 8.7 µs on the RX 7900 XTX and 32.7 µs on the RTX 2060 at 512 sorts, and
+1.7-1.9x on the Radeon iGPU. The measured batch sizes are 20, 128, 256 and 512; the crossover between 20 and 128 was
 not measured. On Intel `m4_b128_p` is the better of the two but not the fastest configuration
 (see [Recommendation](#recommendation)).
 
@@ -748,7 +771,7 @@ The zip has the exe, the DXC DLLs, the shaders, every `_test\passN` snapshot, `r
 | [pass7](_test/pass7/notes.md) | Low-end / integrated GPUs: tier-sized groups and LDS, ballot radix X. Produced `m4_b128_p` and the final set |
 | [external](_test/external/notes.md) | Results from the RX 7900 XTX + Ryzen iGPU machine, two Intel UHD 770 machines (one with an RTX 3080 Ti), and the flush diagnostic |
 | [final](_test/final/notes.md) | The final run: 69 algorithms on 6 GPUs (7 configurations), 0 verification failures, recommendations |
-| [scale](_test/scale/notes.md) | 20 to 512 sorts per batch: 19 algorithms on 5 GPUs, 0 verification failures. `m4_b128_p` becomes the single default; the Intel UHD 770 prefers smaller groups |
+| [scale](_test/scale/notes.md) | 20 to 512 sorts per batch: 19 algorithms on 6 GPUs, 0 verification failures. `m4_b128_p` becomes the single default; the Intel UHD 770 prefers smaller groups |
 
 Each `_test/passN/` folder has that pass's shaders, algorithm list, `results.txt` and notes.
 `GpuSort.exe --shaders _test/passN` re-runs a snapshot.
